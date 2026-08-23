@@ -1,0 +1,37 @@
+# Spring Boot local configuration and secrets
+**/application*.yml
+**/application*.yaml
+**/application*.properties
+**/*-local.yml
+**/*-local.yaml
+**/*-local.properties
+.env
+.env.*
+!.env.example
+
+# Logs and local runtime data
+Logwork/
+*.log
+
+# Java / Maven build output
+target/
+*.class
+*.jar
+*.war
+
+# Frontend dependencies and build output
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# IDE and OS files
+.idea/
+*.iml
+.vscode/
+.DS_Store
+
+# Generated code intelligence/index files
+.codegraph/
+
+# Local tool configuration
+mcp-client-config.json
