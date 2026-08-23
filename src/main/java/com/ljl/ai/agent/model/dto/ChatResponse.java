@@ -50,11 +50,6 @@ public class ChatResponse {
     private List<ToolInvocation> toolInvocations;
     
     /**
-     * Token消耗
-     */
-    private Integer tokenUsage;
-    
-    /**
      * 诊断结果（如有）
      */
     

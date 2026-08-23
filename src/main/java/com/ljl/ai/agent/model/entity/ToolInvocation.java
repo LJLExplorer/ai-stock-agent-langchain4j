@@ -17,6 +17,11 @@ public class ToolInvocation {
     private String toolName;
 
     /**
+     * 工具内部函数名，仅用于调试，不直接作为用户展示名称。
+     */
+    private String functionName;
+
+    /**
      * 调用参数
      */
     private String parameters;

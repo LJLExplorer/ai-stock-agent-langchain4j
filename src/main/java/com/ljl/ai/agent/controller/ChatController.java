@@ -81,7 +81,15 @@ public class ChatController {
             @PathVariable String messageId,
             @RequestBody Map<String, Object> feedbackData) {
 
-        int feedback = (int) feedbackData.getOrDefault("feedback", 0);
+        Object rawFeedback = feedbackData.get("feedback");
+        if (!(rawFeedback instanceof Number number) || number.doubleValue() != number.intValue()
+                || number.intValue() < -1 || number.intValue() > 1) {
+            return ResponseEntity.badRequest().body(Map.of(
+                    "success", false,
+                    "error", "feedback must be -1, 0, or 1"
+            ));
+        }
+        int feedback = number.intValue();
         String detail = (String) feedbackData.getOrDefault("detail", "");
 
         log.info("提交反馈, messageId: {}, feedback: {}", messageId, feedback);

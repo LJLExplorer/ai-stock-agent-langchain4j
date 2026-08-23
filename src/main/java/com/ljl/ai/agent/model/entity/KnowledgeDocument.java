@@ -5,6 +5,7 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import org.springframework.data.annotation.Id;
+import org.springframework.data.annotation.Version;
 import org.springframework.data.mongodb.core.mapping.Document;
 
 import java.time.LocalDateTime;
@@ -26,7 +27,14 @@ public class KnowledgeDocument {
      */
     @Id
     private String documentId;
-    
+
+    /**
+     * 文档版本 - 用于乐观锁，防止并发更新冲突
+     * BUG B003修复: 添加@Version注解支持MongoDB乐观锁
+     */
+    @Version
+    private Long version;
+
     /**
      * 飞书文档Token（如有）
      */
@@ -76,11 +84,20 @@ public class KnowledgeDocument {
      * 同步时间
      */
     private LocalDateTime syncTime;
-    
+
     /**
-     * 文档版本
+     * 删除状态 - 跟踪文档删除过程
+     * ACTIVE: 正常状态
+     * DELETING: 正在删除中
+     * DELETED: 已删除（逻辑删除）
+     * BUG B001修复: 添加删除状态跟踪，防止删除失败导致不一致
      */
-    private Integer version;
+    private String deleteStatus;
+
+    /**
+     * 删除时间戳 - 记录删除操作发起的时间
+     */
+    private LocalDateTime deleteTimestamp;
     
     /**
      * 向量ID列表（Milvus中的ID）

@@ -20,12 +20,12 @@ function App() {
   const [rag, setRag] = useState(true)
   const [tools, setTools] = useState(true)
   const [messages, setMessages] = useState([])
-  const [details, setDetails] = useState({ tools: [], sources: [], tokens: null, duration: null })
+  const [details, setDetails] = useState({ tools: [], sources: [], duration: null })
   const [busy, setBusy] = useState(false)
   const [connection, setConnection] = useState('ready')
   const inputRef = useRef(null)
 
-  const clearSession = () => { setSessionId(''); setMessages([]); setDetails({ tools: [], sources: [], tokens: null, duration: null }) }
+  const clearSession = () => { setSessionId(''); setMessages([]); setDetails({ tools: [], sources: [], duration: null }) }
   const submit = async (event) => {
     event?.preventDefault()
     const text = message.trim()
@@ -47,7 +47,7 @@ function App() {
       if (!response.ok || data.success === false) throw new Error(data.errorMessage || '接口请求失败')
       setSessionId(data.sessionId || '')
       setMessages((items) => [...items.slice(0, -1), { role: 'assistant', content: data.content || '接口返回空内容' }])
-      setDetails({ tools: data.toolInvocations || [], sources: data.knowledgeSources || [], tokens: data.tokenUsage, duration: Math.round(performance.now() - started) })
+      setDetails({ tools: data.toolInvocations || [], sources: data.knowledgeSources || [], duration: Math.round(performance.now() - started) })
       setConnection('ready')
     } catch (error) {
       setMessages((items) => [...items.slice(0, -1), { role: 'assistant', content: `请求失败：${error.message}`, error: true }])
@@ -94,7 +94,7 @@ function App() {
 
       <aside className="panel inspector">
         <SectionTitle icon={<PanelRight size={14} />} title="执行检查" />
-        <div className="stat-grid"><Stat label="会话" value={sessionId ? '已建立' : '未发送'} /><Stat label="响应时间" value={details.duration ? `${details.duration} ms` : '-'} /><Stat label="Token" value={details.tokens ?? '-'} /></div>
+        <div className="stat-grid"><Stat label="会话" value={sessionId ? '已建立' : '未发送'} /><Stat label="响应时间" value={details.duration ? `${details.duration} ms` : '-'} /></div>
         <div className="inspector-block"><div className="block-heading"><span><Wrench size={14} />工具调用</span><em>{details.tools.length}</em></div>{details.tools.length ? details.tools.map((tool, index) => <ToolItem key={index} tool={tool} />) : <Muted>发送请求后显示工具执行结果</Muted>}</div>
         <div className="inspector-block"><div className="block-heading"><span><Database size={14} />知识来源</span><em>{details.sources.length}</em></div>{details.sources.length ? details.sources.map((source, index) => <SourceItem key={index} source={source} />) : <Muted>启用 RAG 后显示引用来源</Muted>}</div>
       </aside>
@@ -109,7 +109,7 @@ function Stat({ label, value }) { return <div className="stat"><span>{label}</sp
 function EmptyState() { return <div className="empty"><div className="empty-icon"><Bot size={25} /></div><h2>开始一次股票研究</h2><p>选择股票代码后，输入问题或使用左侧快捷提问</p></div> }
 function Message({ role, content, pending, error }) { return <article className={`message ${role}`}><div className="message-label">{role === 'user' ? '你' : 'Agent'}<span>{role === 'assistant' ? <Bot size={13} /> : <MessageSquare size={13} />}</span></div><div className={`bubble ${error ? 'error' : ''}`}>{pending ? <span className="loading"><i /><i /><i /></span> : content}</div></article> }
 function ToolItem({ tool }) { return <div className="tool-item"><div><span className={`tool-dot ${tool.success ? 'done' : 'fail'}`} />{tool.toolName || '工具调用'}{tool.success ? <CheckCircle2 className="tool-icon done" size={13} /> : <XCircle className="tool-icon fail" size={13} />}</div><small>{tool.errorMessage || `${tool.executionTime || 0} ms`}</small></div> }
-function SourceItem({ source }) { return <a className="source-item" href={source.url || '#'} target="_blank" rel="noreferrer"><FileText size={14} /><span>{source.title || source.source || '知识来源'}</span></a> }
+function SourceItem({ source }) { return <a className="source-item" href={source.documentUrl || '#'} target="_blank" rel="noreferrer"><FileText size={14} /><span>{source.documentTitle || source.source || '知识来源'}</span></a> }
 function Muted({ children }) { return <p className="muted">{children}</p> }
 
 export default App

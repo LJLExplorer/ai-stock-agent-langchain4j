@@ -44,7 +44,7 @@ public class MongoChatMemoryStore implements ChatMemoryStore {
             return messages;
         } catch (Exception e) {
             log.error("反序列化ChatMemory失败, sessionId: {}", sessionId, e);
-            return Collections.emptyList();
+            throw new IllegalStateException("ChatMemory反序列化失败: " + sessionId, e);
         }
     }
 
@@ -67,6 +67,7 @@ public class MongoChatMemoryStore implements ChatMemoryStore {
             log.debug("ChatMemory更新完成, sessionId: {}", sessionId);
         } catch (Exception e) {
             log.error("序列化ChatMemory失败, sessionId: {}", sessionId, e);
+            throw new IllegalStateException("ChatMemory持久化失败: " + sessionId, e);
         }
     }
 

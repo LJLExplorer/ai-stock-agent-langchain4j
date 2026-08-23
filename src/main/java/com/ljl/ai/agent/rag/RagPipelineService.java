@@ -61,26 +61,58 @@ public class RagPipelineService {
     }
 
     /**
-     * TODO
      * 验证回答与知识库的一致性（幻觉抑制）
+     * BUG B004修复: 修复置信度计算逻辑，无检索结果时置信度应为0
+     *
+     * 置信度计算规则:
+     * - 无检索结果: 0.0 (无知识库支持，完全不可信)
+     * - 有结果但无匹配: 0.3 (有知识库但回答未引用，可信度低)
+     * - 部分匹配: (matchCount / totalCount) * 0.7 + 0.3 (范围: 0.3 ~ 1.0)
+     * - 可信阈值: >= 0.6
      */
     public FactCheckResult factCheck(String answer, List<RetrievalResult> retrievalResults) {
         log.info("执行事实核查");
 
-        // 简单的关键词匹配验证
-        // TODO: 可以接入更复杂的事实核查模型
-        int matchCount = 0;
-        int totalStatements = 1; // 简化处理
+        // 无检索结果 -> 置信度为0（不可信）
+        if (retrievalResults == null || retrievalResults.isEmpty()) {
+            log.debug("无检索结果，置信度为0");
+            return FactCheckResult.builder()
+                    .isFactual(false)
+                    .confidence(0.0)
+                    .verifiedSources(0)
+                    .totalSources(0)
+                    .build();
+        }
 
+        // 统计匹配的知识源
+        int matchCount = 0;
         for (RetrievalResult result : retrievalResults) {
             if (answer.contains(result.getTitle()) || containsKeywords(answer, result.getContent())) {
                 matchCount++;
             }
         }
 
-        double confidence = retrievalResults.isEmpty() ? 0.5 : Math.min(1.0, (double) matchCount / retrievalResults.size() + 0.3);
+        // 置信度计算
+        double confidence;
+        if (matchCount == 0) {
+            // 有知识库但回答未引用 -> 置信度0.3（可信度低）
+            confidence = 0.3;
+        } else {
+            // 部分或完全匹配 -> 置信度 = (匹配比例 * 0.7) + 0.3
+            confidence = (double) matchCount / retrievalResults.size() * 0.7 + 0.3;
+        }
 
-        return FactCheckResult.builder().isFactual(confidence > 0.6).confidence(confidence).verifiedSources(matchCount).totalSources(retrievalResults.size()).build();
+        boolean isFactual = confidence >= 0.6;  // 置信度阈值: 0.6
+
+        log.info("事实核查完成: 匹配度 {}/{}, 置信度: {:.2f}, 可信: {}",
+                matchCount, retrievalResults.size(), confidence, isFactual);
+
+        return FactCheckResult.builder()
+                .isFactual(isFactual)
+                .confidence(confidence)
+                .verifiedSources(matchCount)
+                .totalSources(retrievalResults.size())
+                .build();
     }
 
     /**

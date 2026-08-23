@@ -8,15 +8,23 @@ import com.ljl.ai.agent.model.dto.ChatResponse;
 import com.ljl.ai.agent.model.entity.ChatMessage;
 import com.ljl.ai.agent.model.entity.ChatSession;
 import com.ljl.ai.agent.model.entity.KnowledgeSource;
+import com.ljl.ai.agent.model.entity.ToolInvocation;
 import com.ljl.ai.agent.rag.RagPipelineService;
 import com.ljl.ai.agent.rag.RagResult;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -27,8 +35,23 @@ import java.util.UUID;
 @Service
 public class ChatService {
 
+    private static final Map<String, String> TOOL_DISPLAY_NAMES = Map.ofEntries(
+            Map.entry("getRealtimeQuote", "查询实时行情"),
+            Map.entry("analyzeTechnicalIndicators", "分析技术指标"),
+            Map.entry("analyzeFinancialReport", "分析财务报告"),
+            Map.entry("searchStockNewsAndAnnouncements", "搜索新闻与公告"),
+            Map.entry("predictStockTrend", "预测股票趋势"),
+            Map.entry("compareStocks", "比较多只股票"),
+            Map.entry("analyzePortfolio", "分析投资组合"),
+            Map.entry("screenStocks", "筛选股票")
+    );
+
     @Resource
     private StockAnalysisAssistant stockAnalysisAssistant;
+
+    @Resource
+    @Qualifier("stockAnalysisAssistantWithoutTools")
+    private StockAnalysisAssistant stockAnalysisAssistantWithoutTools;
 
     @Resource
     private ChatMemoryService chatMemoryService;
@@ -54,6 +77,7 @@ public class ChatService {
             String sessionId = session.getSessionId();
             activeSessionId = sessionId;
             String userMessage = request.getMessage();
+            Set<String> previousToolInvocationIds = collectToolInvocationIds(sessionId);
 
             // 2. 执行RAG检索（如果启用）
             List<KnowledgeSource> knowledgeSources = null;
@@ -78,13 +102,17 @@ public class ChatService {
             }
 
             String aiResponse;
+            StockAnalysisAssistant assistant = Boolean.TRUE.equals(request.getEnableTools())
+                    ? stockAnalysisAssistant : stockAnalysisAssistantWithoutTools;
             if (ragContext != null) {
                 // 有RAG上下文
-                aiResponse = stockAnalysisAssistant.chatWithRag(sessionId, userMessage, ragContext);
+                aiResponse = assistant.chatWithRag(sessionId, userMessage, ragContext);
             } else {
                 // 普通对话
-                aiResponse = stockAnalysisAssistant.chat(sessionId, userMessage);
+                aiResponse = assistant.chat(sessionId, userMessage);
             }
+
+            List<ToolInvocation> toolInvocations = collectToolInvocations(sessionId, previousToolInvocationIds);
 
             // 4. 保存用户消息和AI回复到业务层（chat_messages 集合，用于前端展示）
             chatMemoryService.saveUserMessage(sessionId, userMessage);
@@ -106,6 +134,7 @@ public class ChatService {
                     .content(aiResponse)
                     .responseTime(LocalDateTime.now())
                     .knowledgeSources(knowledgeSources)
+                    .toolInvocations(toolInvocations)
                     .success(true)
                     .build();
 
@@ -128,6 +157,72 @@ public class ChatService {
                     .errorMessage(e.getMessage())
                     .build();
         }
+    }
+
+    private Set<String> collectToolInvocationIds(String sessionId) {
+        Set<String> ids = new HashSet<>();
+        for (dev.langchain4j.data.message.ChatMessage message : chatMemoryProvider.get(sessionId).messages()) {
+            if (message instanceof dev.langchain4j.data.message.AiMessage aiMessage) {
+                List<dev.langchain4j.agent.tool.ToolExecutionRequest> requests =
+                        aiMessage.toolExecutionRequests();
+                if (requests != null) {
+                    requests.forEach(request -> ids.add(request.id()));
+                }
+            }
+        }
+        return ids;
+    }
+
+    private List<ToolInvocation> collectToolInvocations(String sessionId, Set<String> previousIds) {
+        List<dev.langchain4j.data.message.ChatMessage> messages =
+                chatMemoryProvider.get(sessionId).messages();
+        Map<String, ToolInvocation> invocations = new HashMap<>();
+
+        for (dev.langchain4j.data.message.ChatMessage message : messages) {
+            if (message instanceof dev.langchain4j.data.message.AiMessage aiMessage) {
+                List<dev.langchain4j.agent.tool.ToolExecutionRequest> requests = aiMessage.toolExecutionRequests();
+                if (requests == null) {
+                    continue;
+                }
+                for (dev.langchain4j.agent.tool.ToolExecutionRequest request : requests) {
+                    if (previousIds.contains(request.id())) {
+                        continue;
+                    }
+                    String functionName = request.name();
+                    invocations.put(request.id(), ToolInvocation.builder()
+                            .toolName(toDisplayToolName(functionName))
+                            .functionName(functionName)
+                            .parameters(request.arguments())
+                            .success(false)
+                            .invokeTime(LocalDateTime.now())
+                            .build());
+                }
+            } else if (message instanceof dev.langchain4j.data.message.ToolExecutionResultMessage resultMessage) {
+                if (previousIds.contains(resultMessage.id())) {
+                    continue;
+                }
+                ToolInvocation invocation = invocations.get(resultMessage.id());
+                if (invocation == null) {
+                    String functionName = resultMessage.toolName();
+                    invocation = ToolInvocation.builder()
+                            .toolName(toDisplayToolName(functionName))
+                            .functionName(functionName)
+                            .invokeTime(LocalDateTime.now())
+                            .build();
+                }
+                invocation.setResult(resultMessage.text());
+                invocation.setSuccess(true);
+                invocations.put(resultMessage.id(), invocation);
+            }
+        }
+        return new ArrayList<>(invocations.values());
+    }
+
+    private String toDisplayToolName(String functionName) {
+        if (functionName == null || functionName.isBlank()) {
+            return "工具调用";
+        }
+        return TOOL_DISPLAY_NAMES.getOrDefault(functionName, "执行工具");
     }
 
     private boolean hasMessage(Throwable throwable, String expected) {

@@ -2,14 +2,15 @@ package com.ljl.ai.agent.controller;
 
 import com.ljl.ai.agent.knowledge.KnowledgeService;
 import com.ljl.ai.agent.model.entity.KnowledgeDocument;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
+import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import java.util.Map;
+import java.nio.charset.StandardCharsets;
 
 /**
  * 知识库管理控制器
@@ -46,22 +47,73 @@ public class KnowledgeController {
     /**
      * 添加知识文档
      * POST /api/knowledge/documents
+     * BUG B005修复: 添加参数验证，防止null或过大的内容导致异常
      */
     @PostMapping("/documents")
-    public ResponseEntity<KnowledgeDocument> addDocument(@RequestBody Map<String, Object> request) {
+    public ResponseEntity<?> addDocument(@RequestBody Map<String, Object> request) {
+        // 参数验证
         String title = (String) request.get("title");
         String content = (String) request.get("content");
+
+        if (!StringUtils.hasText(title)) {
+            return ResponseEntity.badRequest().body(Map.of(
+                    "success", false,
+                    "errorCode", "INVALID_TITLE",
+                    "errorMessage", "文档标题不能为空"
+            ));
+        }
+
+        if (!StringUtils.hasText(content)) {
+            return ResponseEntity.badRequest().body(Map.of(
+                    "success", false,
+                    "errorCode", "INVALID_CONTENT",
+                    "errorMessage", "文档内容不能为空"
+            ));
+        }
+
+        // 标题长度限制
+        if (title.length() > 200) {
+            return ResponseEntity.badRequest().body(Map.of(
+                    "success", false,
+                    "errorCode", "TITLE_TOO_LONG",
+                    "errorMessage", "标题长度不能超过200字符"
+            ));
+        }
+
+        // 内容大小限制（10MB）
+        if (content.getBytes(StandardCharsets.UTF_8).length > 10 * 1024 * 1024) {
+            return ResponseEntity.badRequest().body(Map.of(
+                    "success", false,
+                    "errorCode", "CONTENT_TOO_LARGE",
+                    "errorMessage", "文档内容不能超过10MB"
+            ));
+        }
+
         String documentType = (String) request.getOrDefault("documentType", "MANUAL");
         @SuppressWarnings("unchecked")
         List<String> tags = (List<String>) request.getOrDefault("tags", List.of());
         @SuppressWarnings("unchecked")
         Map<String, String> metadata = (Map<String, String>) request.getOrDefault("metadata", Map.of());
-        
-        log.info("添加知识文档, title: {}", title);
-        KnowledgeDocument document = knowledgeService.addKnowledgeDocument(
-                title, content, documentType, tags, metadata);
-        
-        return ResponseEntity.ok(document);
+
+        log.info("添加知识文档, title: {}, size: {}", title, content.length());
+
+        try {
+            KnowledgeDocument document = knowledgeService.addKnowledgeDocument(
+                    title, content, documentType, tags, metadata);
+
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "data", document,
+                    "message", "文档添加成功"
+            ));
+        } catch (Exception e) {
+            log.error("添加文档失败", e);
+            return ResponseEntity.status(500).body(Map.of(
+                    "success", false,
+                    "errorCode", "ADD_DOCUMENT_ERROR",
+                    "errorMessage", "文档添加失败: " + e.getMessage()
+            ));
+        }
     }
     
     /**

@@ -8,33 +8,34 @@
 - 技术分析：MA、MACD、RSI、KDJ、布林带
 - 基本面分析：营收、净利润、ROE、PE、PB、现金流
 - 新闻/公告/财报 RAG 检索
-- LSTM、Transformer、PatchTST 等外部时序模型预测
+- 通过 `daily_stock_analysis` 分析流水线生成股票趋势预测
 - 多股票比较、自然语言选股、投资组合分析
 - MongoDB 会话记忆与 Milvus 知识库
 
 ## Agent Tools
 
-智能体通过 LangChain4j 自动选择并调用以下 Tool：
+智能体通过 LangChain4j 自动选择并调用以下 Tool。括号中的英文名称是内部函数名，界面返回中文名称：
 
-- `getRealtimeQuote`：查询股票实时价格、涨跌幅、成交量和换手率
-- `analyzeTechnicalIndicators`：计算 MA、MACD、RSI、KDJ、布林带等技术指标
-- `analyzeFinancialReport`：分析营收、净利润、ROE、PE、PB 和现金流
-- `searchStockNewsAndAnnouncements`：检索股票新闻、公告、财报和行业报告，并返回来源与摘要
-- `predictStockTrend`：调用 LSTM、Transformer、PatchTST 等外部时序模型预测趋势
-- `compareStocks`：对比多只股票的行情、技术面、基本面和预测结果
-- `analyzePortfolio`：分析持仓收益、行业分布、集中度、风险和预测趋势
-- `screenStocks`：根据自然语言条件筛选股票
+- `查询实时行情`（`getRealtimeQuote`）：查询股票实时价格、涨跌幅、成交量和换手率
+- `分析技术指标`（`analyzeTechnicalIndicators`）：计算 MA、MACD、RSI、KDJ、布林带等技术指标
+- `分析财务报告`（`analyzeFinancialReport`）：分析营收、净利润、ROE、PE、PB 和现金流
+- `搜索新闻与公告`（`searchStockNewsAndAnnouncements`）：检索股票新闻、公告、财报和行业报告，并返回来源与摘要
+- `预测股票趋势`（`predictStockTrend`）：调用 `daily_stock_analysis` 分析流水线生成趋势预测
+- `比较多只股票`（`compareStocks`）：对比多只股票的行情、技术面、基本面和预测结果
+- `分析投资组合`（`analyzePortfolio`）：分析持仓收益、行业分布、集中度、风险和预测趋势
+- `筛选股票`（`screenStocks`）：根据自然语言条件筛选股票
 
 ## 技术亮点
 
 - 基于 Spring Boot 3.3、Java 21 和 LangChain4j 构建，使用 `AiServices` 编排对话智能体和 Tool 调用。
 - 使用阿里云百炼 OpenAI-compatible 接口接入 `qwen3.7-flash`，embedding 使用 `qwen3.7-text-embedding`。
-- 支持 ReAct 风格的多 Tool 调用，模型可根据问题自动组合行情、技术面、基本面、新闻和预测能力。
+- 支持 ReAct 风格的多 Tool 调用，模型可根据问题自动选择工具、读取工具结果并继续调用其他工具，最后生成回答。
+- ReAct 编排由 LangChain4j `AiServices`、ChatMemory 和模型原生 Tool Calling 协议共同完成；当前没有单独实现 `Thought/Action/Observation` 文本状态机。
 - 通过 MongoDB 持久化会话、消息和 LangChain4j ChatMemory，支持多用户、多会话连续对话。
 - 使用 Milvus 保存向量知识库，结合 embedding、相似度检索和上下文增强实现 RAG。
 - 支持飞书文档同步，将外部知识文档接入统一知识库。
 - 通过独立数据客户端封装行情、财务和新闻来源，便于替换数据供应商和扩展适配器。
-- 支持外部 LSTM、Transformer、PatchTST 预测服务，预测服务与 Agent 解耦。
+- 预测 Tool 通过 `PREDICTION_BASE_URL` 调用 `daily_stock_analysis` 的 `POST /api/v1/analysis/analyze` 接口，预测服务与 Agent 解耦。
 - 使用 Spring Validation、全局异常处理和结构化 DTO，统一前后端接口响应。
 - 使用 Logback 将日志写入 `Logwork/`，按天滚动并限制文件大小、保留周期和总容量。
 
@@ -64,6 +65,58 @@ mvn spring-boot:run
 
 请求中的 `orderId` 字段兼容原模板，当前作为股票代码使用；建议后续将其重命名为 `symbol`。
 
+## 对话记忆与注意力
+
+### 短期记忆
+
+- 使用 LangChain4j `MessageWindowChatMemory` 实现会话上下文窗口。
+- 每个会话最多保留最近 20 条 LangChain4j 消息作为模型当前请求的上下文。
+- 消息包含用户消息、AI 回复、工具调用请求和工具执行结果，因此模型可以在同一轮中继续基于 Tool 结果推理。
+
+### 长期记忆
+
+- ChatMemory 会持久化到 MongoDB 的 `chat_memory_records` 集合，保存当前窗口内序列化后的消息列表；超过 20 条后，较早消息会从模型上下文窗口中淘汰。
+- 业务层会话保存到 `chat_sessions`，用户可见的对话消息保存到 `chat_messages`。
+- 当前实现是“业务历史存储 + 最近窗口注意力”：用户和 AI 的历史内容保存在 `chat_messages`，但不会自动全部放入模型上下文；模型默认只关注最近 20 条 LangChain4j 消息。
+- `ChatSession.summary` 字段可保存会话摘要，但当前对话流程没有自动摘要和摘要回注入机制，因此尚未实现基于摘要的长期语义注意力。
+
+### 记忆存储位置
+
+| 数据 | 存储位置 | 用途 |
+|------|----------|------|
+| 当前窗口内的 LangChain4j 消息、Tool 请求和 Tool 结果 | MongoDB `chat_memory_records` | Agent 当前上下文与工具调用链 |
+| 用户可见的对话消息 | MongoDB `chat_messages` | 前端历史消息展示 |
+| 会话元数据、标题、标签、摘要 | MongoDB `chat_sessions` | 会话管理 |
+| RAG 文档元数据 | MongoDB `knowledge_documents` | 文档管理与来源信息 |
+| RAG 向量和文本片段 | Milvus | 相似度检索和知识增强 |
+
+### MongoDB、Milvus、Redis 和模型的边界
+
+- **MongoDB**：保存可持久化的会话数据，包括当前 ChatMemory 窗口、用户可见消息、会话信息和知识文档元数据。默认连接 `mongodb://localhost:27017/customer_memory`。
+- **Milvus**：只保存知识库文档的 embedding 和文本片段，用于 RAG 相似度检索；它不是对话记忆库，也不保存模型参数。
+- **Redis**：当前项目没有 Redis 依赖、配置或读写逻辑，短期记忆和长期记忆都不存 Redis。
+- **模型本身**：模型服务不保存本项目的会话记忆。每次请求由 Java 从 MongoDB 读取最近 20 条消息，组装为请求上下文后发送给模型；模型只在本次请求中使用这些上下文。
+- **模型参数**：模型参数属于外部模型服务，由模型服务提供方管理，不存储在 MongoDB、Milvus 或 Redis 中。
+
+## Agent 请求开关
+
+`POST /api/chat/send` 支持按请求控制能力：
+
+```json
+{
+  "userId": "demo-user",
+  "message": "分析 600519 的技术面和近期风险",
+  "orderId": "600519.SH",
+  "enableTools": true,
+  "enableRag": true
+}
+```
+
+- `enableTools=true`：使用带有行情、技术、财务、新闻、预测、比较、组合和选股 Tool 的 Agent。
+- `enableTools=false`：使用不注册 Tool 的普通对话 Agent。
+- `enableRag=true`：先从 Milvus 检索知识，再将检索上下文注入 Agent。
+- `enableRag=false`：跳过知识库检索。
+
 前端位于 `frontend/`，启动方式：
 
 ```bash
@@ -82,7 +135,14 @@ npm run dev
 - 按天归档：`Logwork/application.yyyy-MM-dd.i.log`
 - 单文件最大 50 MB，最多保留 30 天
 
-预测服务需提供 `POST {PREDICTION_BASE_URL}/predict`，请求字段为 `symbol`、`horizon`、`model`，返回 JSON 或文本均可。
+预测服务配置：
+
+```bash
+PREDICTION_BASE_URL=http://localhost:8000
+PREDICTION_TIMEOUT_SECONDS=180
+```
+
+Java Agent 会调用 `POST {PREDICTION_BASE_URL}/api/v1/analysis/analyze`，请求 `stock_code`、`report_type`、`async_mode` 和 `notify`，并读取 `report.summary.trend_prediction`。
 
 行情、新闻数据源通过 `MARKET_DATA_BASE_URL` 和 `NEWS_SEARCH_BASE_URL` 预留，接入 AkShare、Tushare、TickFlow、YFinance 或搜索服务时应在对应 Tool 内增加适配器，并保留来源和时间字段。
 

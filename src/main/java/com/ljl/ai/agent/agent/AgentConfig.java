@@ -61,19 +61,36 @@ public class AgentConfig {
     public StockAnalysisAssistant stockAnalysisAssistant() {
         log.info("初始化股票分析智能体...");
 
-        return AiServices.builder(StockAnalysisAssistant.class)
+        return buildAssistant(true);
+    }
+
+    /**
+     * 创建不注册工具的助手，用于请求级别关闭工具调用。
+     */
+    @Bean
+    public StockAnalysisAssistant stockAnalysisAssistantWithoutTools() {
+        log.info("初始化无工具股票分析智能体...");
+        return buildAssistant(false);
+    }
+
+    private StockAnalysisAssistant buildAssistant(boolean enableTools) {
+        var builder = AiServices.builder(StockAnalysisAssistant.class)
                 .chatLanguageModel(chatLanguageModel)
-                .chatMemoryProvider(chatMemoryProvider)
-                .tools(
-                        marketDataTool,
-                        technicalAnalysisTool,
-                        financialAnalysisTool,
-                        newsRagTool,
-                        timeSeriesPredictionTool,
-                        stockComparisonTool,
-                        portfolioAnalysisTool
-                )
-                .build();
+                .chatMemoryProvider(chatMemoryProvider);
+
+        if (enableTools) {
+            builder.tools(
+                    marketDataTool,
+                    technicalAnalysisTool,
+                    financialAnalysisTool,
+                    newsRagTool,
+                    timeSeriesPredictionTool,
+                    stockComparisonTool,
+                    portfolioAnalysisTool
+            );
+        }
+
+        return builder.build();
     }
 
 }
