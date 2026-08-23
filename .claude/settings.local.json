@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mvn clean:*)",
+      "Bash(wc -l \"/Users/ljl/code/Agent/ai-stock-agent-langchain4j/ai/2026-08-23-bug-fix-knowledge-rag/\"*.md)",
+      "Bash(\"/Users/ljl/code/Agent/ai-stock-agent-langchain4j/ai/2026-08-23-bug-fix-knowledge-rag/00-快速导航.txt\":*)"
+    ]
+  }
+}
