@@ -50,8 +50,6 @@ mvn spring-boot:run
 
 默认服务地址为 `http://localhost:8080`，健康检查接口为 `GET /api/health`。
 
-当前对话模型通过阿里云百炼 OpenAI-compatible 接口调用，配置位于 `src/main/resources/application.yml`，使用 `qwen3.7-flash`；embedding 使用 `qwen3.7-text-embedding`。本地配置中已保留硬编码 Key，不需要额外导出 `DASHSCOPE_API_KEY`。
-
 对话接口：`POST /api/chat/send`。示例请求：
 
 ```json
