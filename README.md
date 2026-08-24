@@ -99,6 +99,18 @@ GET    /api/memories/recall?userId=demo-user&query=我的投资偏好
 DELETE /api/memories/{memoryId}?userId=demo-user
 ```
 
+### RAG 诊断
+
+启用 RAG 的每轮对话会在 MongoDB `rag_traces` 保存轻量诊断记录，用于判断问题来自召回还是模型生成。记录包含：
+
+- `retrievalCount`：召回片段数量
+- `topScore`：最高相似度
+- `sourceIds` / `sourceTitles`：召回来源
+- `contextLength` / `answerLength`：上下文和回答长度
+- `success` / `errorMessage`：链路结果
+
+不保存完整 Prompt、完整模型输出或完整增强上下文；诊断记录写入失败不会阻断对话。
+
 ### 记忆存储位置
 
 | 数据 | 存储位置 | 用途 |
@@ -107,6 +119,7 @@ DELETE /api/memories/{memoryId}?userId=demo-user
 | 短期记忆摘要 | Redis String `ai:memory:summary:{userId}:{sessionId}` | 压缩较早对话并保持上下文连贯 |
 | 用户长期记忆原文与元数据 | MongoDB `user_long_term_memories` | 记忆管理、用户隔离和向量关联 |
 | 用户长期记忆向量 | Milvus | 语义相似度召回 |
+| RAG 轻量诊断记录 | MongoDB `rag_traces` | 排查召回、模型和链路问题 |
 | 用户可见的对话消息 | MongoDB `chat_messages` | 前端历史消息展示 |
 | 会话元数据、标题、标签、摘要 | MongoDB `chat_sessions` | 会话管理 |
 | RAG 文档元数据 | MongoDB `knowledge_documents` | 文档管理与来源信息 |
