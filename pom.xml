@@ -43,6 +43,12 @@
             <artifactId>spring-boot-starter-data-mongodb</artifactId>
         </dependency>
 
+        <!-- Redis：短期会话记忆与摘要状态 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
+
         <!-- LangChain4j Core -->
         <dependency>
             <groupId>dev.langchain4j</groupId>

@@ -35,11 +35,18 @@
 
 ### Task 1: 引入 Redis 依赖和记忆配置
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：**
 
-**Green Evidence：** 待填写
+- Command: `mvn -q test -Dtest=MemoryConfigTest`
+- Actual: 测试编译失败，`MemoryConfig` 尚未定义。
+- Match Expected: yes
+
+**Green Evidence:**
+
+- Command: `mvn -q test -Dtest=MemoryConfigTest`
+- Actual: PASS
 
 **涉及文件：**
 - Modify: `pom.xml`
