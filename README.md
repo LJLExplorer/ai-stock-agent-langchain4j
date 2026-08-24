@@ -11,6 +11,7 @@
 - 通过 `daily_stock_analysis` 分析流水线生成股票趋势预测
 - 多股票比较、自然语言选股、投资组合分析
 - Redis 短期会话记忆、字符窗口和滚动摘要
+- 用户主动录入、向量化和语义召回的长期记忆
 - MongoDB 业务会话历史与 Milvus 知识库
 
 ## Agent Tools
@@ -35,6 +36,7 @@
 - 使用 Redis List 持久化 LangChain4j 短期记忆，支持多用户、多会话隔离；Redis Key 使用 `userId:sessionId`，保留工具调用消息链。
 - 短期记忆按字符数控制，默认上限为 32,000 字符；超限后生成滚动摘要并保留最新窗口，摘要和消息窗口分开存储。
 - MongoDB 继续保存会话元数据和用户可见的业务消息，Redis 负责 Agent 即时上下文。
+- 支持通过前端长期记忆区域或 `/api/memories` 主动保存用户偏好；对话时按用户和语义相似度自动召回。
 - 使用 Milvus 保存向量知识库，结合 embedding、相似度检索和上下文增强实现 RAG。
 - 支持飞书文档同步，将外部知识文档接入统一知识库。
 - 通过独立数据客户端封装行情、财务和新闻来源，便于替换数据供应商和扩展适配器。
@@ -84,7 +86,18 @@ mvn spring-boot:run
 ### 长期记忆
 
 - 业务层会话保存到 `chat_sessions`，用户可见的对话消息保存到 `chat_messages`。
-- 当前已实现的是“Redis 短期窗口 + 滚动摘要”；用户主动录入、向量化存储和语义召回的长期记忆正在同一 Issue 的后续任务中实现。
+- 用户主动录入的长期记忆原文和元数据保存到 MongoDB `user_long_term_memories`，向量保存到 Milvus。
+- 长期记忆向量包含 `userId` 和 `memoryId` 元数据，召回时先按相似度检索，再进行用户隔离和启用状态过滤。
+- 每轮对话会将召回的长期记忆和短期摘要注入当前问题；长期记忆服务异常时自动降级，不阻断普通聊天。
+
+长期记忆接口：
+
+```text
+POST   /api/memories
+GET    /api/memories?userId=demo-user
+GET    /api/memories/recall?userId=demo-user&query=我的投资偏好
+DELETE /api/memories/{memoryId}?userId=demo-user
+```
 
 ### 记忆存储位置
 
@@ -92,6 +105,8 @@ mvn spring-boot:run
 |------|----------|------|
 | 当前窗口内的 LangChain4j 消息、Tool 请求和 Tool 结果 | Redis List `ai:memory:messages:{userId}:{sessionId}` | Agent 当前上下文与工具调用链 |
 | 短期记忆摘要 | Redis String `ai:memory:summary:{userId}:{sessionId}` | 压缩较早对话并保持上下文连贯 |
+| 用户长期记忆原文与元数据 | MongoDB `user_long_term_memories` | 记忆管理、用户隔离和向量关联 |
+| 用户长期记忆向量 | Milvus | 语义相似度召回 |
 | 用户可见的对话消息 | MongoDB `chat_messages` | 前端历史消息展示 |
 | 会话元数据、标题、标签、摘要 | MongoDB `chat_sessions` | 会话管理 |
 | RAG 文档元数据 | MongoDB `knowledge_documents` | 文档管理与来源信息 |
@@ -101,6 +116,7 @@ mvn spring-boot:run
 
 - **MongoDB**：保存可持久化的业务会话数据、用户可见消息和知识文档元数据。默认连接 `mongodb://localhost:27017/customer_memory`。
 - **Redis**：保存带 TTL 的短期消息窗口和滚动摘要，作为 Agent 的即时上下文缓存。
+- **长期记忆**：MongoDB 保存可管理的原文和元数据，Milvus 保存向量；长期记忆通过 `userId` 做数据隔离。
 - **Milvus**：只保存知识库文档的 embedding 和文本片段，用于 RAG 相似度检索；它不是对话记忆库，也不保存模型参数。
 - **模型本身**：模型服务不保存本项目的会话记忆。每次请求由 Java 从 Redis 读取短期消息窗口和摘要，组装为请求上下文后发送给模型；模型只在本次请求中使用这些上下文。
 - **模型参数**：模型参数属于外部模型服务，由模型服务提供方管理，不存储在 MongoDB、Milvus 或 Redis 中。

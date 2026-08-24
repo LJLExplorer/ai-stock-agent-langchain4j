@@ -3,6 +3,7 @@ package com.ljl.ai.agent.service;
 import com.ljl.ai.agent.agent.StockAnalysisAssistant;
 import com.ljl.ai.agent.memoery.ChatMemoryService;
 import com.ljl.ai.agent.memoery.MongoChatMemoryProvider;
+import com.ljl.ai.agent.memoery.ShortTermSummaryService;
 import com.ljl.ai.agent.model.dto.ChatRequest;
 import com.ljl.ai.agent.model.dto.ChatResponse;
 import com.ljl.ai.agent.model.entity.ChatMessage;
@@ -26,6 +27,7 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
  * 对话服务 - 核心业务逻辑
@@ -62,6 +64,15 @@ public class ChatService {
     @Resource
     private RagPipelineService ragPipelineService;
 
+    @Resource
+    private ShortTermSummaryService shortTermSummaryService;
+
+    @Resource
+    private LongTermMemoryService longTermMemoryService;
+
+    @Resource
+    private RagTraceService ragTraceService;
+
     public ChatResponse chat(ChatRequest request) {
         log.info("处理对话请求, userId: {}, sessionId: {}", request.getUserId(), request.getSessionId());
         String activeSessionId = request.getSessionId();
@@ -83,10 +94,12 @@ public class ChatService {
             // 2. 执行RAG检索（如果启用）
             List<KnowledgeSource> knowledgeSources = null;
             String ragContext = null;
+            com.ljl.ai.agent.model.entity.RagTrace ragTrace = null;
 
             if (Boolean.TRUE.equals(request.getEnableRag())) {
                 RagResult ragResult = ragPipelineService.executeRag(userMessage);
                 knowledgeSources = ragResult.getKnowledgeSources();
+                ragTrace = ragPipelineService.buildTrace(request.getUserId(), sessionId, userMessage, ragResult);
 
                 if (!ragResult.getRetrievalResults().isEmpty()) {
                     // 获取RAG上下文，作为系统消息的一部分
@@ -100,6 +113,11 @@ public class ChatService {
             // 兼容模板请求字段：此处将 orderId 作为当前分析标的代码传递。
             if (StringUtils.isNotBlank(request.getOrderId())) {
                 userMessage = userMessage + "\n当前用户正在咨询股票：" + request.getOrderId();
+            }
+
+            String memoryContext = buildMemoryContext(request.getUserId(), sessionId, userMessage);
+            if (StringUtils.isNotBlank(memoryContext)) {
+                userMessage = memoryContext + "\n\n当前问题：" + userMessage;
             }
 
             String aiResponse;
@@ -118,6 +136,13 @@ public class ChatService {
             // 4. 保存用户消息和AI回复到业务层（chat_messages 集合，用于前端展示）
             chatMemoryService.saveUserMessage(sessionId, userMessage);
             ChatMessage assistantMessage = chatMemoryService.saveAssistantMessage(sessionId, aiResponse);
+            shortTermSummaryService.refresh(memoryId);
+            if (ragTrace != null) {
+                ragTrace.setMessageId(assistantMessage == null ? null : assistantMessage.getMessageId());
+                ragTrace.setAnswerLength(aiResponse == null ? 0 : aiResponse.length());
+                ragTrace.setSuccess(true);
+                ragTraceService.saveBestEffort(ragTrace);
+            }
 
             // 5. 更新会话标题（使用用户首条消息作为标题）
             String title = userMessage.length() > 30
@@ -162,6 +187,26 @@ public class ChatService {
 
     static String memoryId(String userId, String sessionId) {
         return userId + ":" + sessionId;
+    }
+
+    String buildMemoryContext(String userId, String sessionId, String query) {
+        List<String> sections = new ArrayList<>();
+        String summary = shortTermSummaryService.get(memoryId(userId, sessionId));
+        if (StringUtils.isNotBlank(summary)) {
+            sections.add("【历史对话摘要】\n" + summary);
+        }
+        try {
+            List<com.ljl.ai.agent.model.entity.UserLongTermMemory> memories =
+                    longTermMemoryService.recall(userId, query);
+            if (memories != null && !memories.isEmpty()) {
+                sections.add("【用户长期记忆】\n" + memories.stream()
+                        .map(memory -> "- " + memory.getContent())
+                        .collect(Collectors.joining("\n")));
+            }
+        } catch (Exception e) {
+            log.warn("长期记忆召回失败，本轮跳过: {}", e.getMessage());
+        }
+        return String.join("\n\n", sections);
     }
 
     private Set<String> collectToolInvocationIds(String sessionId) {

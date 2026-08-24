@@ -315,11 +315,18 @@ Expected: PASS。
 
 ### Task 7: 增加轻量 RAG 诊断记录
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：**
 
-**Green Evidence：** 待填写
+- Command: `mvn -q test -Dtest=RagTraceServiceTest`
+- Actual: 测试编译失败，`RagTrace` 和 `RagTraceService` 尚未定义。
+- Match Expected: yes
+
+**Green Evidence:**
+
+- Command: `mvn -q test -Dtest=RagTraceServiceTest`
+- Actual: PASS（仅有 Byte Buddy 动态加载警告）
 
 **涉及文件：**
 - Create: `src/main/java/com/ljl/ai/agent/model/entity/RagTrace.java`
@@ -355,11 +362,18 @@ Expected: PASS。
 
 ### Task 8: 集成全部记忆与诊断链路
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：**
 
-**Green Evidence：** 待填写
+- Command: `mvn -q test -Dtest=ChatServiceIntegrationTest`
+- Actual: 测试编译失败，ChatService 尚未提供记忆上下文组装方法。
+- Match Expected: yes
+
+**Green Evidence:**
+
+- Command: `mvn -q test -Dtest=ChatServiceIntegrationTest`
+- Actual: PASS（仅有 Byte Buddy 动态加载警告）
 
 **涉及文件：**
 - Modify: `src/main/java/com/ljl/ai/agent/service/ChatService.java`
@@ -393,11 +407,18 @@ Expected: PASS。
 
 ### Task 9: 全量验证与文档更新
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：**
 
-**Green Evidence：** 待填写
+- Command: `mvn -q test`
+- Actual: PASS；完整 Spring 上下文、MongoDB 和 Milvus 连接测试通过。
+- Match Expected: yes
+
+**Green Evidence:**
+
+- Command: `mvn -q test && mvn -q -DskipTests compile`；`npm run build`（`frontend/`）
+- Actual: 全部 PASS。
 
 **涉及文件：**
 - Modify: `.ai/ISSUE-2026-08-24-conversation-memory/changelog.md`

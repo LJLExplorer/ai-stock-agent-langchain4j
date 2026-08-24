@@ -1,11 +1,13 @@
 package com.ljl.ai.agent.rag;
 
 import com.ljl.ai.agent.model.entity.KnowledgeSource;
+import com.ljl.ai.agent.model.entity.RagTrace;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.UUID;
 
 /**
  * RAG管道服务 - 整合检索和生成
@@ -39,6 +41,21 @@ public class RagPipelineService {
                 .originalQuery(userQuery).augmentedPrompt(augmentedPrompt)
                 .augmentedContext(augmentedContext).knowledgeSources(sources)
                 .retrievalResults(retrievalResults).build();
+    }
+
+    public RagTrace buildTrace(String userId, String sessionId, String query, RagResult result) {
+        List<RetrievalResult> matches = result.getRetrievalResults();
+        return RagTrace.builder()
+                .traceId(UUID.randomUUID().toString())
+                .userId(userId)
+                .sessionId(sessionId)
+                .query(query)
+                .retrievalCount(matches == null ? 0 : matches.size())
+                .topScore(matches == null || matches.isEmpty() ? 0D : matches.get(0).getSimilarity())
+                .sourceIds(matches == null ? List.of() : matches.stream().map(RetrievalResult::getDocumentId).toList())
+                .sourceTitles(matches == null ? List.of() : matches.stream().map(RetrievalResult::getTitle).toList())
+                .contextLength(result.getAugmentedContext() == null ? 0 : result.getAugmentedContext().length())
+                .build();
     }
 
     /**
