@@ -3,8 +3,8 @@ package com.ljl.ai.agent.memoery;
 import dev.langchain4j.memory.ChatMemory;
 import dev.langchain4j.memory.chat.ChatMemoryProvider;
 import dev.langchain4j.memory.chat.MessageWindowChatMemory;
-import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 /**
@@ -14,33 +14,29 @@ import org.springframework.stereotype.Component;
  */
 @Slf4j
 @Component
+@RequiredArgsConstructor
 public class MongoChatMemoryProvider implements ChatMemoryProvider {
 
-    @Resource
-    private MongoChatMemoryStore mongoChatMemoryStore;
-
-    /**
-     * 默认最大消息数
-     */
-    private static final int DEFAULT_MAX_MESSAGES = 20;
+    private final RedisChatMemoryStore redisChatMemoryStore;
+    private final com.ljl.ai.agent.config.MemoryConfig memoryConfig;
 
     @Override
     public ChatMemory get(Object memoryId) {
-        String sessionId = memoryId.toString();
-        log.debug("获取ChatMemory, sessionId: {}", sessionId);
+        String scopedMemoryId = memoryId.toString();
+        log.debug("获取Redis ChatMemory, memoryId: {}", scopedMemoryId);
 
         return MessageWindowChatMemory.builder()
-                .id(sessionId)
-                .maxMessages(DEFAULT_MAX_MESSAGES)
-                .chatMemoryStore(mongoChatMemoryStore)
+                .id(scopedMemoryId)
+                .maxMessages(memoryConfig.getShortTerm().getMaxMessages())
+                .chatMemoryStore(redisChatMemoryStore)
                 .build();
     }
 
     /**
      * 清除指定会话的 ChatMemory
      */
-    public void clearMemory(String sessionId) {
-        mongoChatMemoryStore.deleteMessages(sessionId);
-        log.debug("清除ChatMemory, sessionId: {}", sessionId);
+    public void clearMemory(String memoryId) {
+        redisChatMemoryStore.deleteMessages(memoryId);
+        log.debug("清除Redis ChatMemory, memoryId: {}", memoryId);
     }
 }

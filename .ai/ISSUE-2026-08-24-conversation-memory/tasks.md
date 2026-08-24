@@ -174,11 +174,18 @@ Expected: PASS。
 
 ### Task 4: 接入 LangChain4j 会话窗口和用户会话 Key
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：**
 
-**Green Evidence：** 待填写
+- Command: `mvn -q test -Dtest=MongoChatMemoryProviderTest`
+- Actual: 测试编译失败，Provider 尚无 Redis Store 和 MemoryConfig 构造方式。
+- Match Expected: yes
+
+**Green Evidence:**
+
+- Command: `mvn -q test -Dtest=MongoChatMemoryProviderTest,ChatServiceMemoryKeyTest`
+- Actual: PASS（仅有 Byte Buddy 动态加载警告）
 
 **涉及文件：**
 - Modify: `src/main/java/com/ljl/ai/agent/memoery/MongoChatMemoryProvider.java`
@@ -216,7 +223,11 @@ Expected: PASS。
 
 **状态：** pending
 
-**Red Evidence：** 待填写
+**Red Evidence：**
+
+- Command: `mvn -q test -Dtest=ChatServiceMemoryKeyTest`
+- Actual: 测试编译失败，ChatService 尚未提供用户/会话作用域 Key。
+- Match Expected: yes
 
 **Green Evidence：** 待填写
 

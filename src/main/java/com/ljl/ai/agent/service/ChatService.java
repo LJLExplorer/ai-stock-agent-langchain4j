@@ -76,8 +76,9 @@ public class ChatService {
 
             String sessionId = session.getSessionId();
             activeSessionId = sessionId;
+            String memoryId = memoryId(request.getUserId(), sessionId);
             String userMessage = request.getMessage();
-            Set<String> previousToolInvocationIds = collectToolInvocationIds(sessionId);
+            Set<String> previousToolInvocationIds = collectToolInvocationIds(memoryId);
 
             // 2. 执行RAG检索（如果启用）
             List<KnowledgeSource> knowledgeSources = null;
@@ -106,13 +107,13 @@ public class ChatService {
                     ? stockAnalysisAssistant : stockAnalysisAssistantWithoutTools;
             if (ragContext != null) {
                 // 有RAG上下文
-                aiResponse = assistant.chatWithRag(sessionId, userMessage, ragContext);
+                aiResponse = assistant.chatWithRag(memoryId, userMessage, ragContext);
             } else {
                 // 普通对话
-                aiResponse = assistant.chat(sessionId, userMessage);
+                aiResponse = assistant.chat(memoryId, userMessage);
             }
 
-            List<ToolInvocation> toolInvocations = collectToolInvocations(sessionId, previousToolInvocationIds);
+            List<ToolInvocation> toolInvocations = collectToolInvocations(memoryId, previousToolInvocationIds);
 
             // 4. 保存用户消息和AI回复到业务层（chat_messages 集合，用于前端展示）
             chatMemoryService.saveUserMessage(sessionId, userMessage);
@@ -144,7 +145,7 @@ public class ChatService {
             // 模型在工具调用中断时可能把不完整的消息序列持久化下来，
             // 清掉 LangChain4j 记忆，避免下一次请求重复提交坏消息。
             if (StringUtils.isNotBlank(activeSessionId) && hasMessage(e, "url error")) {
-                chatMemoryProvider.clearMemory(activeSessionId);
+                chatMemoryProvider.clearMemory(memoryId(request.getUserId(), activeSessionId));
                 log.warn("已清理异常会话的模型记忆，可使用同一会话重试, sessionId: {}", activeSessionId);
             }
 
@@ -157,6 +158,10 @@ public class ChatService {
                     .errorMessage(e.getMessage())
                     .build();
         }
+    }
+
+    static String memoryId(String userId, String sessionId) {
+        return userId + ":" + sessionId;
     }
 
     private Set<String> collectToolInvocationIds(String sessionId) {
