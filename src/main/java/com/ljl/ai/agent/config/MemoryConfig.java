@@ -16,6 +16,7 @@ public class MemoryConfig {
         private int maxMessages = 20;
         private int summaryTriggerMessages = 12;
         private int maxChars = 32_000;
+        private int summaryMaxChars = 8_000;
         private long ttl = 86_400;
     }
 

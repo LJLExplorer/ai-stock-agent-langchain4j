@@ -2,19 +2,20 @@ package com.ljl.ai.agent.service;
 
 import com.ljl.ai.agent.model.entity.RagTrace;
 import org.junit.jupiter.api.Test;
-import org.springframework.data.mongodb.core.MongoTemplate;
 
-import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RagTraceServiceTest {
     @Test
-    void shouldIgnoreMongoFailureWhenWritingLightweightTrace() {
-        MongoTemplate mongoTemplate = mock(MongoTemplate.class);
-        when(mongoTemplate.save(any(RagTrace.class))).thenThrow(new RuntimeException("mongo unavailable"));
-        RagTraceService service = new RagTraceService(mongoTemplate);
+    void shouldLogTraceWithoutMongoDependency() {
+        RagTraceService service = new RagTraceService();
+        RagTrace trace = RagTrace.builder().query("如何分析贵州茅台").retrievalCount(2).build();
 
-        service.saveBestEffort(RagTrace.builder().traceId("trace-1").retrievalCount(0).build());
+        service.saveBestEffort(trace);
 
-        verify(mongoTemplate).save(any(RagTrace.class));
+        assertNotNull(trace.getTraceId());
+        assertNotNull(trace.getCreateTime());
+        assertTrue(trace.getTraceId().length() > 0);
     }
 }

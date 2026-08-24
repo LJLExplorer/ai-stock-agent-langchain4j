@@ -22,7 +22,7 @@ public class PortfolioAnalysisTool {
         try {
             JSONArray positions = JSON.parseArray(holdings);
             double marketValue = 0;
-            StringBuilder result = new StringBuilder("组合实时估值（腾讯财经）\\n");
+            StringBuilder result = new StringBuilder("组合实时估值（腾讯财经）\n");
             for (int i = 0; i < positions.size(); i++) {
                 JSONObject position = positions.getJSONObject(i);
                 String symbol = position.getString("symbol");
@@ -34,7 +34,7 @@ public class PortfolioAnalysisTool {
                         .append(quote.getPrice()).append("，市值=").append(value).append('\n');
             }
             return result.append("组合总市值：").append(marketValue)
-                    .append("\\n说明：已使用实时行情；成本收益、行业暴露和风险指标需要持仓数据包含 cost/industry 字段。" ).toString();
+                    .append("\n说明：已使用实时行情；成本收益、行业暴露和风险指标需要持仓数据包含 cost/industry 字段。").toString();
         } catch (Exception e) {
             return "组合分析失败：持仓必须是 JSON 数组，并且行情数据可用。" + e.getMessage();
         }

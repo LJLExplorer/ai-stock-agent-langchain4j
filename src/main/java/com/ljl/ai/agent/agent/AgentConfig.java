@@ -1,5 +1,6 @@
 package com.ljl.ai.agent.agent;
 
+import com.ljl.ai.agent.config.AgentToolConfig;
 import com.ljl.ai.agent.memoery.MongoChatMemoryProvider;
 import com.ljl.ai.agent.tools.FinancialAnalysisTool;
 import com.ljl.ai.agent.tools.MarketDataTool;
@@ -11,7 +12,6 @@ import com.ljl.ai.agent.tools.TimeSeriesPredictionTool;
 import dev.langchain4j.model.chat.ChatLanguageModel;
 import dev.langchain4j.service.AiServices;
 import jakarta.annotation.Resource;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -53,6 +53,8 @@ public class AgentConfig {
     @Resource
     private PortfolioAnalysisTool portfolioAnalysisTool;
 
+    @Resource
+    private AgentToolConfig agentToolConfig;
 
     /**
      * 配置股票分析智能体
@@ -76,7 +78,8 @@ public class AgentConfig {
     private StockAnalysisAssistant buildAssistant(boolean enableTools) {
         var builder = AiServices.builder(StockAnalysisAssistant.class)
                 .chatLanguageModel(chatLanguageModel)
-                .chatMemoryProvider(chatMemoryProvider);
+                .chatMemoryProvider(chatMemoryProvider)
+                .maxSequentialToolsInvocations(agentToolConfig.getMaxSequentialInvocations());
 
         if (enableTools) {
             builder.tools(

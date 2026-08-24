@@ -1,14 +1,18 @@
 package com.ljl.ai.agent.model.dto;
 
 import jakarta.validation.constraints.NotBlank;
+import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
+import lombok.NoArgsConstructor;
 
 /**
  * 对话请求DTO
  */
 @Data
 @Builder
+@NoArgsConstructor
+@AllArgsConstructor
 public class ChatRequest {
     /**
      * 会话ID（可选，为空则创建新会话）

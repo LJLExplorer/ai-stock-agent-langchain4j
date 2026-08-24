@@ -63,7 +63,8 @@ public class LongTermMemoryService {
 
     public List<UserLongTermMemory> recall(String userId, String query) {
         Embedding queryEmbedding = embeddingModel.embed(query).content();
-        int candidates = Math.max(config.getLongTerm().getTopK() * 5, 10);
+        // 向量库是共享的，必须给用户过滤预留足够候选，不能直接使用全局 Top-K。
+        int candidates = Math.max(config.getLongTerm().getTopK() * 100, 100);
         var result = embeddingStore.search(EmbeddingSearchRequest.builder()
                 .queryEmbedding(queryEmbedding)
                 .maxResults(candidates)
@@ -72,9 +73,11 @@ public class LongTermMemoryService {
         List<UserLongTermMemory> memories = new ArrayList<>();
         for (EmbeddingMatch<TextSegment> match : result.matches()) {
             TextSegment segment = match.embedded();
-            if (!userId.equals(segment.metadata().getString("userId"))) continue;
+            Metadata metadata = segment.metadata();
+            if (metadata == null) continue;
+            if (!userId.equals(metadata.getString("userId"))) continue;
             UserLongTermMemory memory = mongoTemplate.findById(
-                    segment.metadata().getString("memoryId"), UserLongTermMemory.class);
+                    metadata.getString("memoryId"), UserLongTermMemory.class);
             if (memory != null && Boolean.TRUE.equals(memory.getEnabled())) memories.add(memory);
             if (memories.size() >= config.getLongTerm().getTopK()) break;
         }

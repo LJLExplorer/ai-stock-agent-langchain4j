@@ -8,6 +8,7 @@ import dev.langchain4j.store.memory.chat.ChatMemoryStore;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.SessionCallback;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
@@ -50,14 +51,24 @@ public class RedisChatMemoryStore implements ChatMemoryStore {
     @Override
     public void updateMessages(Object memoryId, List<ChatMessage> messages) {
         String redisKey = key(memoryId);
-        redis.delete(redisKey);
-        if (messages != null) {
-            for (ChatMessage message : messages) {
-                redis.opsForList().rightPush(redisKey,
-                        ChatMessageSerializer.messagesToJson(List.of(message)));
+        redis.execute(new SessionCallback<List<Object>>() {
+            @Override
+            @SuppressWarnings("unchecked")
+            public <K, V> List<Object> execute(org.springframework.data.redis.core.RedisOperations<K, V> rawOperations) {
+                org.springframework.data.redis.core.RedisOperations<String, String> operations =
+                        (org.springframework.data.redis.core.RedisOperations<String, String>) rawOperations;
+                operations.multi();
+                operations.delete(redisKey);
+                if (messages != null) {
+                    for (ChatMessage message : messages) {
+                        operations.opsForList().rightPush(redisKey,
+                                ChatMessageSerializer.messagesToJson(List.of(message)));
+                    }
+                }
+                operations.expire(redisKey, Duration.ofSeconds(memoryConfig.getShortTerm().getTtl()));
+                return operations.exec();
             }
-        }
-        redis.expire(redisKey, Duration.ofSeconds(memoryConfig.getShortTerm().getTtl()));
+        });
     }
 
     @Override

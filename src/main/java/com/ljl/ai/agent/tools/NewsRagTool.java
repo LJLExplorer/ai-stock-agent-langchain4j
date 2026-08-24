@@ -21,7 +21,7 @@ public class NewsRagTool {
                                                   @P("检索最近多少天") int days) {
         log.info("检索股票资讯, stock: {}, query: {}, days: {}", stock, query, days);
         try {
-            return "真实资讯检索（Tavily/SerpAPI）\\n" + newsSearchClient.search(stock, query, days, 5);
+            return "真实资讯检索（Tavily/SerpAPI）\n" + newsSearchClient.search(stock, query, days, 5);
         } catch (Exception e) {
             log.error("资讯检索失败, stock: {}", stock, e);
             return "资讯检索失败：" + e.getMessage();

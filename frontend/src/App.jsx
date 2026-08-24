@@ -61,7 +61,7 @@ function App() {
   const loadHistory = async () => {
     if (!sessionId.trim()) return
     try {
-      const response = await fetch(`/api/chat/sessions/${encodeURIComponent(sessionId.trim())}/messages`)
+      const response = await fetch(`/api/chat/sessions/${encodeURIComponent(sessionId.trim())}/messages?userId=${encodeURIComponent(userId.trim())}`)
       if (!response.ok) throw new Error('会话加载失败')
       const data = await response.json()
       setMessages(data.map((item) => ({ role: item.role?.toLowerCase() === 'user' ? 'user' : 'assistant', content: item.content || '' })))

@@ -52,4 +52,25 @@ class ShortTermSummaryServiceTest {
         verify(redis, times(3)).opsForValue();
         verify(store).updateMessages("user-1:session-1", messages.subList(2, 4));
     }
+
+    @Test
+    void shouldKeepTheNewestPartWhenSummaryExceedsConfiguredLimit() {
+        StringRedisTemplate redis = mock(StringRedisTemplate.class);
+        ValueOperations<String, String> values = mock(ValueOperations.class);
+        when(redis.opsForValue()).thenReturn(values);
+        when(values.get(anyString())).thenReturn("old-summary");
+        RedisChatMemoryStore store = mock(RedisChatMemoryStore.class);
+        MemoryConfig config = new MemoryConfig();
+        config.getShortTerm().setMaxChars(1);
+        config.getShortTerm().setSummaryTriggerMessages(1);
+        config.getShortTerm().setSummaryMaxChars(13);
+        when(store.getMessages(anyString())).thenReturn(List.of(
+                UserMessage.from("old"), UserMessage.from("new")));
+
+        ShortTermSummaryService service = new ShortTermSummaryService(redis, store, config,
+                text -> "generated-new");
+        service.refresh("user-1:session-1");
+
+        verify(values).set("ai:memory:summary:user-1:session-1", "generated-new");
+    }
 }

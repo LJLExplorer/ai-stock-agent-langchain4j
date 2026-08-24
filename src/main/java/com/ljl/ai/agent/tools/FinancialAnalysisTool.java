@@ -20,7 +20,7 @@ public class FinancialAnalysisTool {
                                          @P("报告期，如 2024Q4") String period) {
         log.info("分析财报, symbol: {}, period: {}", symbol, period);
         try {
-            return "财务数据（东方财富数据中心）\\n" + financialDataClient.getLatest(symbol, period);
+            return "财务数据（东方财富数据中心）\n" + financialDataClient.getLatest(symbol, period);
         } catch (Exception e) {
             log.error("财务数据查询失败, symbol: {}", symbol, e);
             return "财务数据查询失败：" + e.getMessage();

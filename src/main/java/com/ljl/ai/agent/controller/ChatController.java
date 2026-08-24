@@ -41,9 +41,10 @@ public class ChatController {
      * GET /api/chat/sessions/{sessionId}/messages
      */
     @GetMapping("/sessions/{sessionId}/messages")
-    public ResponseEntity<List<ChatMessage>> getSessionHistory(@PathVariable String sessionId) {
+    public ResponseEntity<List<ChatMessage>> getSessionHistory(@PathVariable String sessionId,
+                                                               @RequestParam String userId) {
         log.info("获取会话历史, sessionId: {}", sessionId);
-        List<ChatMessage> messages = chatService.getSessionHistory(sessionId);
+        List<ChatMessage> messages = chatService.getSessionHistory(sessionId, userId);
         return ResponseEntity.ok(messages);
     }
 
@@ -63,9 +64,10 @@ public class ChatController {
      * POST /api/chat/sessions/{sessionId}/close
      */
     @PostMapping("/sessions/{sessionId}/close")
-    public ResponseEntity<Map<String, Object>> closeSession(@PathVariable String sessionId) {
+    public ResponseEntity<Map<String, Object>> closeSession(@PathVariable String sessionId,
+                                                            @RequestParam String userId) {
         log.info("关闭会话, sessionId: {}", sessionId);
-        chatService.closeSession(sessionId);
+        chatService.closeSession(sessionId, userId);
         return ResponseEntity.ok(Map.of(
                 "success", true,
                 "message", "会话已关闭"
@@ -82,15 +84,22 @@ public class ChatController {
             @RequestBody Map<String, Object> feedbackData) {
 
         Object rawFeedback = feedbackData.get("feedback");
-        if (!(rawFeedback instanceof Number number) || number.doubleValue() != number.intValue()
-                || number.intValue() < -1 || number.intValue() > 1) {
+        if (!(rawFeedback instanceof Number number)) {
+            return ResponseEntity.badRequest().body(Map.of(
+                    "success", false,
+                    "error", "feedback must be a number"
+            ));
+        }
+        int feedback = number.intValue();
+        if (feedback < -1 || feedback > 1) {
             return ResponseEntity.badRequest().body(Map.of(
                     "success", false,
                     "error", "feedback must be -1, 0, or 1"
             ));
         }
-        int feedback = number.intValue();
-        String detail = (String) feedbackData.getOrDefault("detail", "");
+
+        Object rawDetail = feedbackData.getOrDefault("detail", "");
+        String detail = (rawDetail instanceof String) ? (String) rawDetail : "";
 
         log.info("提交反馈, messageId: {}, feedback: {}", messageId, feedback);
         chatService.submitFeedback(messageId, feedback, detail);

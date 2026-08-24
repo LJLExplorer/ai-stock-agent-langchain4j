@@ -108,7 +108,15 @@ public class MarketDataClient {
         if (!plain.matches("\\d{6}")) {
             throw new IllegalArgumentException("当前实时行情适配器仅支持 6 位 A 股代码: " + rawSymbol);
         }
-        return (plain.startsWith("6") || plain.startsWith("5") || plain.startsWith("9") ? "sh" : "sz") + plain;
+        String market;
+        if (plain.startsWith("6") || plain.startsWith("5") || plain.startsWith("9")) {
+            market = "sh";
+        } else if (plain.startsWith("4") || plain.startsWith("8")) {
+            market = "bj";
+        } else {
+            market = "sz";
+        }
+        return market + plain;
     }
 
     private static BigDecimal decimal(String[] values, int index) {

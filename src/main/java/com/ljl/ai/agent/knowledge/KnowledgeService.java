@@ -214,8 +214,8 @@ public class KnowledgeService {
         // 检查是否有失败
         if (!failedSegmentIndices.isEmpty()) {
             double successRate = (double) successVectorIds.size() / segments.size();
-            log.warn("部分segment处理失败: {}/{}, 成功率: {:.1f}%",
-                    failedSegmentIndices.size(), segments.size(), successRate * 100);
+            log.warn("部分segment处理失败: {}/{}, 成功率: {}%",
+                    failedSegmentIndices.size(), segments.size(), String.format("%.1f", successRate * 100));
 
             // A document must not be published with missing chunks. Roll back
             // all vectors created for this document and let the caller retry.

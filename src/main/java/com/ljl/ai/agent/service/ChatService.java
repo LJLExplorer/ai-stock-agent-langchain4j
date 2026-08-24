@@ -25,6 +25,8 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -47,6 +49,8 @@ public class ChatService {
             Map.entry("analyzePortfolio", "分析投资组合"),
             Map.entry("screenStocks", "筛选股票")
     );
+
+    private final ConcurrentMap<String, Object> sessionLocks = new ConcurrentHashMap<>();
 
     @Resource
     private StockAnalysisAssistant stockAnalysisAssistant;
@@ -74,6 +78,21 @@ public class ChatService {
     private RagTraceService ragTraceService;
 
     public ChatResponse chat(ChatRequest request) {
+        if (StringUtils.isBlank(request.getSessionId())) {
+            return chatInternal(request);
+        }
+        String lockKey = request.getSessionId();
+        Object lock = sessionLocks.computeIfAbsent(lockKey, ignored -> new Object());
+        try {
+            synchronized (lock) {
+                return chatInternal(request);
+            }
+        } finally {
+            sessionLocks.remove(lockKey, lock);
+        }
+    }
+
+    private ChatResponse chatInternal(ChatRequest request) {
         log.info("处理对话请求, userId: {}, sessionId: {}", request.getUserId(), request.getSessionId());
         String activeSessionId = request.getSessionId();
 
@@ -88,7 +107,8 @@ public class ChatService {
             String sessionId = session.getSessionId();
             activeSessionId = sessionId;
             String memoryId = memoryId(request.getUserId(), sessionId);
-            String userMessage = request.getMessage();
+            String originalUserMessage = request.getMessage();
+            String userMessage = originalUserMessage;
             Set<String> previousToolInvocationIds = collectToolInvocationIds(memoryId);
 
             // 2. 执行RAG检索（如果启用）
@@ -117,7 +137,11 @@ public class ChatService {
 
             String memoryContext = buildMemoryContext(request.getUserId(), sessionId, userMessage);
             if (StringUtils.isNotBlank(memoryContext)) {
-                userMessage = memoryContext + "\n\n当前问题：" + userMessage;
+                int maxContextLength = 5000;
+                String truncatedContext = memoryContext.length() > maxContextLength
+                    ? "..." + memoryContext.substring(memoryContext.length() - maxContextLength)
+                    : memoryContext;
+                userMessage = truncatedContext + "\n\n当前问题：" + userMessage;
             }
 
             String aiResponse;
@@ -131,12 +155,24 @@ public class ChatService {
                 aiResponse = assistant.chat(memoryId, userMessage);
             }
 
+            if (aiResponse == null) {
+                log.warn("AI响应为空, memoryId: {}", memoryId);
+                aiResponse = "系统暂未生成回复，请稍后重试";
+            }
+
             List<ToolInvocation> toolInvocations = collectToolInvocations(memoryId, previousToolInvocationIds);
 
             // 4. 保存用户消息和AI回复到业务层（chat_messages 集合，用于前端展示）
-            chatMemoryService.saveUserMessage(sessionId, userMessage);
+            chatMemoryService.saveUserMessage(sessionId, originalUserMessage);
             ChatMessage assistantMessage = chatMemoryService.saveAssistantMessage(sessionId, aiResponse);
-            shortTermSummaryService.refresh(memoryId);
+            if (assistantMessage == null) {
+                log.warn("保存助手消息失败, sessionId: {}", sessionId);
+            }
+            try {
+                shortTermSummaryService.refresh(memoryId);
+            } catch (Exception e) {
+                log.warn("短期记忆刷新失败，本次跳过, memoryId: {}", memoryId, e);
+            }
             if (ragTrace != null) {
                 ragTrace.setMessageId(assistantMessage == null ? null : assistantMessage.getMessageId());
                 ragTrace.setAnswerLength(aiResponse == null ? 0 : aiResponse.length());
@@ -145,9 +181,9 @@ public class ChatService {
             }
 
             // 5. 更新会话标题（使用用户首条消息作为标题）
-            String title = userMessage.length() > 30
-                    ? userMessage.substring(0, 30) + "..."
-                    : userMessage;
+            String title = originalUserMessage.length() > 30
+                    ? originalUserMessage.substring(0, 30) + "..."
+                    : originalUserMessage;
             chatMemoryService.updateSessionTitle(sessionId, title);
 
             // 6. 获取 messageId 用于返回
@@ -167,17 +203,25 @@ public class ChatService {
         } catch (Exception e) {
             log.error("对话处理失败", e);
 
-            // 模型在工具调用中断时可能把不完整的消息序列持久化下来，
-            // 清掉 LangChain4j 记忆，避免下一次请求重复提交坏消息。
-            if (StringUtils.isNotBlank(activeSessionId) && hasMessage(e, "url error")) {
+            boolean toolLoopExceeded = hasMessage(e, "exceeded") && hasMessage(e, "sequential tool executions");
+            String content = "抱歉，处理您的请求时出现了问题，请稍后重试或联系人工投研助手。";
+
+            // 模型在工具调用中断（连接异常）或反复调用工具未收敛（超出循环上限）时，
+            // 都可能把不完整/发散的消息序列持久化下来，清掉 LangChain4j 记忆，避免下一次请求重复提交坏消息。
+            if (StringUtils.isNotBlank(activeSessionId) && (hasMessage(e, "url error") || toolLoopExceeded)) {
                 chatMemoryProvider.clearMemory(memoryId(request.getUserId(), activeSessionId));
                 log.warn("已清理异常会话的模型记忆，可使用同一会话重试, sessionId: {}", activeSessionId);
+            }
+
+            if (toolLoopExceeded) {
+                content = "抱歉，这个问题需要反复调用工具但没有得到明确结果，已重置本次会话的对话上下文。"
+                        + "请换一种更具体的问法重新提问（例如明确股票代码或分析维度）。";
             }
 
             return ChatResponse.builder()
                     .sessionId(request.getSessionId())
                     .messageId(UUID.randomUUID().toString())
-                    .content("抱歉，处理您的请求时出现了问题，请稍后重试或联系人工投研助手。")
+                    .content(content)
                     .responseTime(LocalDateTime.now())
                     .success(false)
                     .errorMessage(e.getMessage())
@@ -203,15 +247,29 @@ public class ChatService {
                         .map(memory -> "- " + memory.getContent())
                         .collect(Collectors.joining("\n")));
             }
+        } catch (IllegalArgumentException e) {
+            log.warn("长期记忆召回 - 非法参数: {}", e.getMessage());
+        } catch (RuntimeException e) {
+            log.error("长期记忆召回异常，本轮跳过，userId: {}", userId, e);
         } catch (Exception e) {
-            log.warn("长期记忆召回失败，本轮跳过: {}", e.getMessage());
+            log.error("长期记忆召回未知异常，本轮跳过，userId: {}", userId, e);
         }
         return String.join("\n\n", sections);
     }
 
-    private Set<String> collectToolInvocationIds(String sessionId) {
+    private Set<String> collectToolInvocationIds(String memoryId) {
         Set<String> ids = new HashSet<>();
-        for (dev.langchain4j.data.message.ChatMessage message : chatMemoryProvider.get(sessionId).messages()) {
+        var chatMemory = chatMemoryProvider.get(memoryId);
+        if (chatMemory == null) {
+            log.debug("ChatMemory不存在或未初始化, memoryId: {}", memoryId);
+            return ids;
+        }
+        List<dev.langchain4j.data.message.ChatMessage> messages = chatMemory.messages();
+        if (messages == null) {
+            log.debug("会话消息列表为空, memoryId: {}", memoryId);
+            return ids;
+        }
+        for (dev.langchain4j.data.message.ChatMessage message : messages) {
             if (message instanceof dev.langchain4j.data.message.AiMessage aiMessage) {
                 List<dev.langchain4j.agent.tool.ToolExecutionRequest> requests =
                         aiMessage.toolExecutionRequests();
@@ -223,9 +281,17 @@ public class ChatService {
         return ids;
     }
 
-    private List<ToolInvocation> collectToolInvocations(String sessionId, Set<String> previousIds) {
-        List<dev.langchain4j.data.message.ChatMessage> messages =
-                chatMemoryProvider.get(sessionId).messages();
+    private List<ToolInvocation> collectToolInvocations(String memoryId, Set<String> previousIds) {
+        var chatMemory = chatMemoryProvider.get(memoryId);
+        if (chatMemory == null) {
+            log.debug("ChatMemory不存在或未初始化, memoryId: {}", memoryId);
+            return Collections.emptyList();
+        }
+        List<dev.langchain4j.data.message.ChatMessage> messages = chatMemory.messages();
+        if (messages == null) {
+            log.debug("会话消息列表为空, memoryId: {}", memoryId);
+            return Collections.emptyList();
+        }
         Map<String, ToolInvocation> invocations = new HashMap<>();
 
         for (dev.langchain4j.data.message.ChatMessage message : messages) {
@@ -244,6 +310,8 @@ public class ChatService {
                             .functionName(functionName)
                             .parameters(request.arguments())
                             .success(false)
+                            .errorMessage("待执行")
+                            .executionTime(0L)
                             .invokeTime(LocalDateTime.now())
                             .build());
                 }
@@ -289,8 +357,8 @@ public class ChatService {
     /**
      * 获取会话历史
      */
-    public List<ChatMessage> getSessionHistory(String sessionId) {
-        return chatMemoryService.getSessionMessages(sessionId);
+    public List<ChatMessage> getSessionHistory(String sessionId, String userId) {
+        return chatMemoryService.getSessionMessages(sessionId, userId);
     }
 
     /**
@@ -303,8 +371,8 @@ public class ChatService {
     /**
      * 关闭会话
      */
-    public void closeSession(String sessionId) {
-        chatMemoryService.closeSession(sessionId);
+    public void closeSession(String sessionId, String userId) {
+        chatMemoryService.closeSession(sessionId, userId);
     }
 
     /**

@@ -121,8 +121,8 @@ public class RagPipelineService {
 
         boolean isFactual = confidence >= 0.6;  // 置信度阈值: 0.6
 
-        log.info("事实核查完成: 匹配度 {}/{}, 置信度: {:.2f}, 可信: {}",
-                matchCount, retrievalResults.size(), confidence, isFactual);
+        log.info("事实核查完成: 匹配度 {}/{}, 置信度: {}, 可信: {}",
+                matchCount, retrievalResults.size(), String.format("%.2f", confidence), isFactual);
 
         return FactCheckResult.builder()
                 .isFactual(isFactual)

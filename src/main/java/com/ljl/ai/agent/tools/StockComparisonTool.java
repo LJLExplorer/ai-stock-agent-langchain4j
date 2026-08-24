@@ -17,7 +17,7 @@ public class StockComparisonTool {
     @Tool(name = "compareStocks", value = "比较多只股票的行情、技术面、基本面和预测结果")
     public String compareStocks(@P("股票代码列表，逗号分隔") String symbols,
                                 @P("比较周期") String horizon) {
-        StringBuilder result = new StringBuilder("多股票实时行情比较（腾讯财经）\\n周期：").append(horizon).append('\n');
+        StringBuilder result = new StringBuilder("多股票实时行情比较（腾讯财经）\n周期：").append(horizon).append('\n');
         for (String symbol : symbols.split(",")) {
             try {
                 StockQuote quote = marketDataClient.getRealtimeQuote(symbol.trim());

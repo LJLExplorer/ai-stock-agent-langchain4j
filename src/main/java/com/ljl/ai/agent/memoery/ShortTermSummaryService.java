@@ -46,7 +46,14 @@ public class ShortTermSummaryService {
 
     public void refresh(String memoryId) {
         List<ChatMessage> messages = memoryStore.getMessages(memoryId);
-        if (messages == null || messages.size() < config.getShortTerm().getSummaryTriggerMessages()
+        if (messages == null || messages.isEmpty()) {
+            return;
+        }
+        if (config.getShortTerm() == null) {
+            log.warn("ShortTerm配置为空, memoryId: {}", memoryId);
+            return;
+        }
+        if (messages.size() < config.getShortTerm().getSummaryTriggerMessages()
                 || characterCount(messages) <= config.getShortTerm().getMaxChars()) {
             return;
         }
@@ -57,14 +64,23 @@ public class ShortTermSummaryService {
                 .collect(Collectors.joining("\n"));
         String oldSummary = get(memoryId);
         String generated = summaryGenerator.apply(source);
-        String summary = oldSummary == null || oldSummary.isBlank()
+        String combinedSummary = oldSummary == null || oldSummary.isBlank()
                 ? generated : oldSummary + "\n" + generated;
+        int maxSummaryChars = config.getShortTerm().getSummaryMaxChars();
+        String summary = combinedSummary.length() > maxSummaryChars
+                ? combinedSummary.substring(combinedSummary.length() - maxSummaryChars)
+                : combinedSummary;
 
         try {
+            memoryStore.updateMessages(memoryId, messages.subList(split, messages.size()));
             redis.opsForValue().set(summaryKey(memoryId), summary);
             redis.opsForValue().set(INDEX_PREFIX + memoryId, Integer.toString(split));
-            memoryStore.updateMessages(memoryId, messages.subList(split, messages.size()));
         } catch (Exception e) {
+            try {
+                memoryStore.updateMessages(memoryId, messages);
+            } catch (Exception rollbackError) {
+                log.error("短期记忆摘要失败且回滚消息窗口失败, memoryId: {}", memoryId, rollbackError);
+            }
             log.error("短期记忆摘要失败，保留原始窗口, memoryId: {}", memoryId, e);
             throw new IllegalStateException("短期记忆摘要失败", e);
         }

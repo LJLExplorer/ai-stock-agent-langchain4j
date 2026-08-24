@@ -30,9 +30,16 @@ public class KnowledgeController {
      */
     @PostMapping("/feishu/sync")
     public ResponseEntity<KnowledgeDocument> syncFeishuDocument(@RequestBody Map<String, Object> request) {
-        String docToken = (String) request.get("docToken");
-        String documentType = (String) request.getOrDefault("documentType", "FEISHU_DOC");
-        List<String> tags = (List<String>) request.getOrDefault("tags", List.of());
+        Object rawDocToken = request.get("docToken");
+        Object rawDocumentType = request.getOrDefault("documentType", "FEISHU_DOC");
+        Object rawTags = request.getOrDefault("tags", List.of());
+        if (!(rawDocToken instanceof String docToken) || !StringUtils.hasText(docToken)
+                || !(rawDocumentType instanceof String documentType)
+                || !(rawTags instanceof List<?> rawTagList)
+                || rawTagList.stream().anyMatch(tag -> !(tag instanceof String))) {
+            return ResponseEntity.badRequest().build();
+        }
+        List<String> tags = rawTagList.stream().map(String.class::cast).toList();
         
         log.info("同步飞书文档, docToken: {}", docToken);
         KnowledgeDocument document = knowledgeService.syncFeishuDocument(docToken, documentType, tags);
@@ -52,8 +59,15 @@ public class KnowledgeController {
     @PostMapping("/documents")
     public ResponseEntity<?> addDocument(@RequestBody Map<String, Object> request) {
         // 参数验证
-        String title = (String) request.get("title");
-        String content = (String) request.get("content");
+        Object rawTitle = request.get("title");
+        Object rawContent = request.get("content");
+        if (!(rawTitle instanceof String title) || !(rawContent instanceof String content)) {
+            return ResponseEntity.badRequest().body(Map.of(
+                    "success", false,
+                    "errorCode", "INVALID_REQUEST",
+                    "errorMessage", "title 和 content 必须是字符串"
+            ));
+        }
 
         if (!StringUtils.hasText(title)) {
             return ResponseEntity.badRequest().body(Map.of(
@@ -89,11 +103,25 @@ public class KnowledgeController {
             ));
         }
 
-        String documentType = (String) request.getOrDefault("documentType", "MANUAL");
-        @SuppressWarnings("unchecked")
-        List<String> tags = (List<String>) request.getOrDefault("tags", List.of());
-        @SuppressWarnings("unchecked")
-        Map<String, String> metadata = (Map<String, String>) request.getOrDefault("metadata", Map.of());
+        Object rawDocumentType = request.getOrDefault("documentType", "MANUAL");
+        Object rawTags = request.getOrDefault("tags", List.of());
+        Object rawMetadata = request.getOrDefault("metadata", Map.of());
+        if (!(rawDocumentType instanceof String documentType)
+                || !(rawTags instanceof List<?> rawTagList)
+                || rawTagList.stream().anyMatch(tag -> !(tag instanceof String))
+                || !(rawMetadata instanceof Map<?, ?> rawMetadataMap)
+                || rawMetadataMap.entrySet().stream().anyMatch(entry ->
+                !(entry.getKey() instanceof String) || !(entry.getValue() instanceof String))) {
+            return ResponseEntity.badRequest().body(Map.of(
+                    "success", false,
+                    "errorCode", "INVALID_REQUEST",
+                    "errorMessage", "documentType、tags 和 metadata 类型不正确"
+            ));
+        }
+        List<String> tags = rawTagList.stream().map(String.class::cast).toList();
+        Map<String, String> metadata = rawMetadataMap.entrySet().stream().collect(
+                java.util.stream.Collectors.toMap(
+                        entry -> (String) entry.getKey(), entry -> (String) entry.getValue()));
 
         log.info("添加知识文档, title: {}, size: {}", title, content.length());
 
@@ -124,9 +152,9 @@ public class KnowledgeController {
     public ResponseEntity<List<KnowledgeDocument>> getAllDocuments() {
         log.info("获取所有知识文档");
         List<KnowledgeDocument> documents = knowledgeService.findAllEnabled();
-        return ResponseEntity.ok(documents);
+        return ResponseEntity.ok(documents != null ? documents : List.of());
     }
-    
+
     /**
      * 根据类型获取知识文档
      * GET /api/knowledge/documents/type/{type}
@@ -135,7 +163,7 @@ public class KnowledgeController {
     public ResponseEntity<List<KnowledgeDocument>> getDocumentsByType(@PathVariable String type) {
         log.info("根据类型获取知识文档, type: {}", type);
         List<KnowledgeDocument> documents = knowledgeService.findByType(type);
-        return ResponseEntity.ok(documents);
+        return ResponseEntity.ok(documents != null ? documents : List.of());
     }
     
     /**

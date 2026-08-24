@@ -33,10 +33,10 @@ public class TechnicalAnalysisTool {
             BigDecimal ma5 = average(bars, 5, 2);
             BigDecimal previous = bars.get(bars.size() - 2).close();
             BigDecimal change = close.subtract(previous).divide(previous, 4, RoundingMode.HALF_UP).multiply(BigDecimal.valueOf(100));
-            return "技术分析（腾讯财经真实日K）\\n股票：" + symbol + "，周期：" + period
-                    + "\\n最新收盘：" + close + "；日涨跌：" + change + "%；MA5：" + ma5 + "；MA20：" + ma20
-                    + "\\n趋势判断：" + (close.compareTo(ma20) >= 0 ? "收盘位于MA20上方" : "收盘位于MA20下方")
-                    + "。\\n说明：当前已使用真实日K计算基础均线，MACD/RSI/KDJ需在历史数据充足后继续计算。";
+            return "技术分析（腾讯财经真实日K）\n股票：" + symbol + "，周期：" + period
+                    + "\n最新收盘：" + close + "；日涨跌：" + change + "%；MA5：" + ma5 + "；MA20：" + ma20
+                    + "\n趋势判断：" + (close.compareTo(ma20) >= 0 ? "收盘位于MA20上方" : "收盘位于MA20下方")
+                    + "。\n说明：当前已使用真实日K计算基础均线，MACD/RSI/KDJ需在历史数据充足后继续计算。";
         } catch (Exception e) {
             log.error("技术分析失败, symbol: {}", symbol, e);
             return "技术分析失败：" + e.getMessage();

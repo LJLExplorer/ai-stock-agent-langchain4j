@@ -62,6 +62,12 @@ public class ChatMemoryService {
         if (sessionId != null) {
             ChatSession session = getSession(sessionId);
             if (session != null) {
+                if (!userId.equals(session.getUserId())) {
+                    throw new SecurityException("无权访问该会话");
+                }
+                if ("CLOSED".equalsIgnoreCase(session.getStatus())) {
+                    throw new IllegalStateException("会话已关闭");
+                }
                 return session;
             }
         }
@@ -75,6 +81,14 @@ public class ChatMemoryService {
         Query query = new Query(Criteria.where("sessionId").is(sessionId))
                 .with(Sort.by(Sort.Direction.ASC, "createTime"));
         return mongoTemplate.find(query, ChatMessage.class);
+    }
+
+    public List<ChatMessage> getSessionMessages(String sessionId, String userId) {
+        ChatSession session = getSession(sessionId);
+        if (session == null || !userId.equals(session.getUserId())) {
+            throw new SecurityException("无权访问该会话");
+        }
+        return getSessionMessages(sessionId);
     }
 
     /**
@@ -97,6 +111,14 @@ public class ChatMemoryService {
             mongoTemplate.save(session);
             log.info("会话已关闭, sessionId: {}", sessionId);
         }
+    }
+
+    public void closeSession(String sessionId, String userId) {
+        ChatSession session = getSession(sessionId);
+        if (session == null || !userId.equals(session.getUserId())) {
+            throw new SecurityException("无权访问该会话");
+        }
+        closeSession(sessionId);
     }
 
     /**

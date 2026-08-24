@@ -32,9 +32,11 @@
 - 基于 Spring Boot 3.3、Java 21 和 LangChain4j 构建，使用 `AiServices` 编排对话智能体和 Tool 调用。
 - 使用阿里云百炼 OpenAI-compatible 接口接入 `qwen3.7-flash`，embedding 使用 `qwen3.7-text-embedding`。
 - 支持 ReAct 风格的多 Tool 调用，模型可根据问题自动选择工具、读取工具结果并继续调用其他工具，最后生成回答。
-- ReAct 编排由 LangChain4j `AiServices`、ChatMemory 和模型原生 Tool Calling 协议共同完成；当前没有单独实现 `Thought/Action/Observation` 文本状态机。
+- ReAct 编排由 LangChain4j `AiServices`、ChatMemory 和模型原生 Tool Calling 协议共同完成。
 - 使用 Redis List 持久化 LangChain4j 短期记忆，支持多用户、多会话隔离；Redis Key 使用 `userId:sessionId`，保留工具调用消息链。
 - 短期记忆按字符数控制，默认上限为 32,000 字符；超限后生成滚动摘要并保留最新窗口，摘要和消息窗口分开存储。
+- 采用会话级访问控制、状态管理和并发隔离机制，支持多用户安全使用。
+- 采用有界滚动摘要和最新上下文优先策略，提升长对话稳定性。
 - MongoDB 继续保存会话元数据和用户可见的业务消息，Redis 负责 Agent 即时上下文。
 - 支持通过前端长期记忆区域或 `/api/memories` 主动保存用户偏好；对话时按用户和语义相似度自动召回。
 - 使用 Milvus 保存向量知识库，结合 embedding、相似度检索和上下文增强实现 RAG。
@@ -42,13 +44,14 @@
 - 通过独立数据客户端封装行情、财务和新闻来源，便于替换数据供应商和扩展适配器。
 - 预测 Tool 通过 `PREDICTION_BASE_URL` 调用 `daily_stock_analysis` 的 `POST /api/v1/analysis/analyze` 接口，预测服务与 Agent 解耦。
 - 使用 Spring Validation、全局异常处理和结构化 DTO，统一前后端接口响应。
-- 使用 Logback 将日志写入 `Logwork/`，按天滚动并限制文件大小、保留周期和总容量。
+- 对 Agent 连续工具调用次数设置上限，避免模型在工具失败或参数异常时无限循环。
+- 提供 RAG 轻量诊断记录，辅助区分“未召回、低质量召回、模型生成异常”和基础设施问题。
 
 ## 启动
 
 环境要求：JDK 21、Maven、MongoDB、Redis。Milvus 用于知识库检索，未启动时不影响基础对话服务启动。
 
-Redis 默认连接 `localhost:6379`，可通过 `REDIS_HOST`、`REDIS_PORT` 和 `REDIS_DATABASE` 覆盖。
+Redis 默认连接 `localhost:6379`，默认密码为 `test`，可通过 `REDIS_HOST`、`REDIS_PORT`、`REDIS_PASSWORD` 和 `REDIS_DATABASE` 覆盖。
 
 ```bash
 # 当前 shell 已配置 jdk21 切换命令时使用
@@ -134,6 +137,46 @@ DELETE /api/memories/{memoryId}?userId=demo-user
 - **模型本身**：模型服务不保存本项目的会话记忆。每次请求由 Java 从 Redis 读取短期消息窗口和摘要，组装为请求上下文后发送给模型；模型只在本次请求中使用这些上下文。
 - **模型参数**：模型参数属于外部模型服务，由模型服务提供方管理，不存储在 MongoDB、Milvus 或 Redis 中。
 
+### 关键配置
+
+| 配置 | 默认值 | 作用 |
+|------|--------|------|
+| `memory.short-term.max-messages` | `20` | LangChain4j 当前消息窗口大小 |
+| `memory.short-term.summary-trigger-messages` | `12` | 开始检查摘要的最小消息数 |
+| `memory.short-term.max-chars` | `32000` | 短期记忆字符数上限 |
+| `memory.short-term.summary-max-chars` | `8000` | 短期摘要最大字符数，超出时保留最新内容 |
+| `memory.short-term.ttl` | `86400` | Redis 短期消息窗口 TTL，单位秒 |
+| `memory.long-term.top-k` | `5` | 长期记忆最多召回数量 |
+| `memory.long-term.min-score` | `0.72` | 长期记忆最小相似度 |
+| `knowledge.retrieval.top-k` | `5` | RAG 默认召回片段数量 |
+| `knowledge.retrieval.min-score` | `0.7` | RAG 最小相似度 |
+| `agent.tool.max-sequential-invocations` | `10` | 单次对话连续 Tool 调用上限 |
+
+短期记忆相关配置支持环境变量覆盖：
+
+```bash
+REDIS_HOST=localhost
+REDIS_PORT=6379
+REDIS_PASSWORD=test
+SHORT_MEMORY_MAX_MESSAGES=20
+SHORT_MEMORY_SUMMARY_TRIGGER=12
+SHORT_MEMORY_MAX_CHARS=32000
+SHORT_MEMORY_TTL=86400
+LONG_MEMORY_TOP_K=5
+LONG_MEMORY_MIN_SCORE=0.72
+```
+
+### RAG 诊断排查
+
+RAG 成功完成并生成回答后，会在 MongoDB `rag_traces` 保存轻量记录。建议按以下顺序判断问题：
+
+1. `retrievalCount = 0`：优先检查 Embedding、Milvus 连接、知识库内容和相似度阈值。
+2. `retrievalCount > 0` 但 `topScore` 偏低：优先检查文档分块、Embedding 模型和检索阈值。
+3. 来源和相似度正常但回答异常：优先检查系统提示词、模型生成和工具结果。
+4. `success = false` 或存在 `errorMessage`：检查 RAG/模型调用链路异常。
+
+诊断记录只保留查询、召回数量、最高分、来源 ID/标题、上下文长度、回答长度和错误信息，不保存完整 Prompt 或完整模型输出。
+
 ## Agent 请求开关
 
 `POST /api/chat/send` 支持按请求控制能力：
@@ -161,7 +204,65 @@ npm install
 npm run dev
 ```
 
-前端默认访问 `http://localhost:5173`，后端接口代理到 `http://localhost:8080`。
+前端默认访问 `http://localhost:5173`，后端接口代理到 `http://localhost:8080`。当前前端支持：
+
+- 用户 ID、会话 ID 和股票代码设置
+- 新建会话、加载历史会话、复制会话 ID
+- 开关控制 RAG 和 Tool 调用
+- 行情、技术分析、财务数据、新闻风险快捷提问
+- 长期记忆主动录入，支持内容和逗号分隔标签
+- 展示工具调用结果、知识来源、响应耗时和对话错误
+
+## REST API
+
+### 对话与会话
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `POST` | `/api/chat/send` | 发送对话消息，可控制 `enableRag`、`enableTools` |
+| `GET` | `/api/chat/sessions/{sessionId}/messages?userId=...` | 获取会话历史消息并校验归属 |
+| `GET` | `/api/chat/users/{userId}/sessions` | 获取用户会话列表 |
+| `POST` | `/api/chat/sessions/{sessionId}/close?userId=...` | 关闭会话并校验归属 |
+| `POST` | `/api/chat/messages/{messageId}/feedback` | 提交 `-1/0/1` 消息反馈 |
+
+### 长期记忆
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `POST` | `/api/memories` | 主动新增用户长期记忆 |
+| `GET` | `/api/memories?userId=...` | 查询用户已启用的长期记忆 |
+| `GET` | `/api/memories/recall?userId=...&query=...` | 按语义相似度召回长期记忆 |
+| `DELETE` | `/api/memories/{memoryId}?userId=...` | 删除用户自己的长期记忆及其向量 |
+
+新增长期记忆示例：
+
+```json
+{
+  "userId": "demo-user",
+  "content": "我偏好关注新能源和半导体行业",
+  "tags": ["投资偏好", "行业"]
+}
+```
+
+### 知识库与 RAG
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `POST` | `/api/rag/search` | 执行指定 `topK` 的语义检索，范围 1-50 |
+| `POST` | `/api/rag/query` | 执行 RAG 增强查询，失败时降级为普通查询 |
+| `POST` | `/api/knowledge/feishu/sync` | 同步飞书文档 |
+| `POST` | `/api/knowledge/documents` | 添加自定义知识文档，内容上限 10MB |
+| `GET` | `/api/knowledge/documents` | 获取所有启用的知识文档 |
+| `GET` | `/api/knowledge/documents/type/{type}` | 按文档类型查询 |
+| `POST` | `/api/knowledge/documents/{documentId}/disable` | 禁用知识文档 |
+| `DELETE` | `/api/knowledge/documents/{documentId}` | 删除知识文档及其向量 |
+
+### 服务状态
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `GET` | `/api/health` | 健康检查 |
+| `GET` | `/api/info` | 服务名称、版本和能力信息 |
 
 ## 日志
 
