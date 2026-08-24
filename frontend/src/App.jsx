@@ -23,6 +23,9 @@ function App() {
   const [details, setDetails] = useState({ tools: [], sources: [], duration: null })
   const [busy, setBusy] = useState(false)
   const [connection, setConnection] = useState('ready')
+  const [memoryContent, setMemoryContent] = useState('')
+  const [memoryTags, setMemoryTags] = useState('')
+  const [memoryBusy, setMemoryBusy] = useState(false)
   const inputRef = useRef(null)
 
   const clearSession = () => { setSessionId(''); setMessages([]); setDetails({ tools: [], sources: [], duration: null }) }
@@ -66,6 +69,23 @@ function App() {
   }
 
   const copySession = async () => { if (sessionId) await navigator.clipboard?.writeText(sessionId) }
+  const saveMemory = async () => {
+    const content = memoryContent.trim()
+    if (!userId.trim()) return window.alert('请填写用户 ID')
+    if (!content || memoryBusy) return
+    setMemoryBusy(true)
+    try {
+      const response = await fetch('/api/memories', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: userId.trim(), content, tags: memoryTags.split(',').map((tag) => tag.trim()).filter(Boolean) })
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.message || '长期记忆保存失败')
+      setMemoryContent(''); setMemoryTags('')
+      window.alert('长期记忆已保存')
+    } catch (error) { window.alert(error.message) }
+    finally { setMemoryBusy(false) }
+  }
   const choosePrompt = (prompt) => { setMessage(prompt.replace('当前股票', symbol || '当前股票')); inputRef.current?.focus() }
 
   return <div className="app-shell">
@@ -82,6 +102,13 @@ function App() {
         <Field label="当前股票代码"><input value={symbol} placeholder="例如 600519" onChange={(e) => setSymbol(e.target.value)} /></Field>
         <Toggle label="启用 RAG" checked={rag} onChange={setRag} />
         <Toggle label="启用工具调用" checked={tools} onChange={setTools} />
+        <div className="memory-section">
+          <SectionTitle icon={<Database size={14} />} title="长期记忆" />
+          <p className="memory-hint">主动保存用户偏好，后续对话会按语义召回。</p>
+          <textarea className="memory-input" value={memoryContent} onChange={(e) => setMemoryContent(e.target.value)} placeholder="例如：我偏好关注新能源和半导体行业" />
+          <input value={memoryTags} onChange={(e) => setMemoryTags(e.target.value)} placeholder="标签，用逗号分隔" />
+          <button className="button subtle full memory-button" onClick={saveMemory} disabled={memoryBusy || !memoryContent.trim()}>{memoryBusy ? '保存中…' : '保存为长期记忆'}</button>
+        </div>
         <div className="quick-section"><SectionTitle icon={<MessageSquare size={14} />} title="快捷提问" /><div className="quick-list">{quickPrompts.map(([label, prompt]) => <button className="quick-button" key={label} onClick={() => choosePrompt(prompt)}>{label}<span>→</span></button>)}</div></div>
         <button className="button subtle full" onClick={clearSession}><Trash2 size={15} />清空当前会话</button>
       </aside>

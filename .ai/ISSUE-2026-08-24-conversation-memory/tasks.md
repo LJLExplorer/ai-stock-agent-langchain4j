@@ -221,15 +221,18 @@ Expected: PASS。
 
 ### Task 5: 实现长期记忆模型和向量服务
 
-**状态：** pending
+**状态：** completed
 
 **Red Evidence：**
 
-- Command: `mvn -q test -Dtest=ChatServiceMemoryKeyTest`
-- Actual: 测试编译失败，ChatService 尚未提供用户/会话作用域 Key。
+- Command: `mvn -q test -Dtest=LongTermMemoryServiceTest`
+- Actual: 测试编译失败，`UserLongTermMemory` 和 `LongTermMemoryService` 尚未定义。
 - Match Expected: yes
 
-**Green Evidence：** 待填写
+**Green Evidence:**
+
+- Command: `mvn -q test -Dtest=LongTermMemoryServiceTest`
+- Actual: PASS（仅有 Byte Buddy 动态加载警告）
 
 **涉及文件：**
 - Create: `src/main/java/com/ljl/ai/agent/model/entity/UserLongTermMemory.java`
@@ -265,15 +268,24 @@ Expected: PASS。
 
 ### Task 6: 暴露长期记忆管理 API
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：**
 
-**Green Evidence：** 待填写
+- Command: `mvn -q test -Dtest=LongTermMemoryControllerTest`
+- Actual: 测试编译失败，`LongTermMemoryController` 尚未定义。
+- Match Expected: yes
+
+**Green Evidence:**
+
+- Command: `mvn -q test -Dtest=LongTermMemoryControllerTest`
+- Actual: PASS（仅有 Byte Buddy 动态加载警告）
 
 **涉及文件：**
 - Create: `src/main/java/com/ljl/ai/agent/controller/LongTermMemoryController.java`
 - Test: `src/test/java/com/ljl/ai/agent/controller/LongTermMemoryControllerTest.java`
+- Modify: `frontend/src/App.jsx`
+- Modify: `frontend/src/styles.css`
 
 **步骤 0：** 更新状态为 `in_progress`。
 
