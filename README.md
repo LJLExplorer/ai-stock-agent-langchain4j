@@ -10,7 +10,8 @@
 - 新闻/公告/财报 RAG 检索
 - 通过 `daily_stock_analysis` 分析流水线生成股票趋势预测
 - 多股票比较、自然语言选股、投资组合分析
-- MongoDB 会话记忆与 Milvus 知识库
+- Redis 短期会话记忆、字符窗口和滚动摘要
+- MongoDB 业务会话历史与 Milvus 知识库
 
 ## Agent Tools
 
@@ -31,7 +32,9 @@
 - 使用阿里云百炼 OpenAI-compatible 接口接入 `qwen3.7-flash`，embedding 使用 `qwen3.7-text-embedding`。
 - 支持 ReAct 风格的多 Tool 调用，模型可根据问题自动选择工具、读取工具结果并继续调用其他工具，最后生成回答。
 - ReAct 编排由 LangChain4j `AiServices`、ChatMemory 和模型原生 Tool Calling 协议共同完成；当前没有单独实现 `Thought/Action/Observation` 文本状态机。
-- 通过 MongoDB 持久化会话、消息和 LangChain4j ChatMemory，支持多用户、多会话连续对话。
+- 使用 Redis List 持久化 LangChain4j 短期记忆，支持多用户、多会话隔离；Redis Key 使用 `userId:sessionId`，保留工具调用消息链。
+- 短期记忆按字符数控制，默认上限为 32,000 字符；超限后生成滚动摘要并保留最新窗口，摘要和消息窗口分开存储。
+- MongoDB 继续保存会话元数据和用户可见的业务消息，Redis 负责 Agent 即时上下文。
 - 使用 Milvus 保存向量知识库，结合 embedding、相似度检索和上下文增强实现 RAG。
 - 支持飞书文档同步，将外部知识文档接入统一知识库。
 - 通过独立数据客户端封装行情、财务和新闻来源，便于替换数据供应商和扩展适配器。
@@ -41,7 +44,9 @@
 
 ## 启动
 
-环境要求：JDK 21、Maven、MongoDB。Milvus 用于知识库检索，未启动时不影响基础对话服务启动。
+环境要求：JDK 21、Maven、MongoDB、Redis。Milvus 用于知识库检索，未启动时不影响基础对话服务启动。
+
+Redis 默认连接 `localhost:6379`，可通过 `REDIS_HOST`、`REDIS_PORT` 和 `REDIS_DATABASE` 覆盖。
 
 ```bash
 # 当前 shell 已配置 jdk21 切换命令时使用
@@ -70,21 +75,23 @@ mvn spring-boot:run
 ### 短期记忆
 
 - 使用 LangChain4j `MessageWindowChatMemory` 实现会话上下文窗口。
-- 每个会话最多保留最近 20 条 LangChain4j 消息作为模型当前请求的上下文。
+- 使用 Redis List 保存短期消息，Key 格式为 `ai:memory:messages:{userId}:{sessionId}`。
+- 每个会话默认最多保留最近 20 条 LangChain4j 消息作为模型当前请求的上下文。
 - 消息包含用户消息、AI 回复、工具调用请求和工具执行结果，因此模型可以在同一轮中继续基于 Tool 结果推理。
+- 当短期消息累计超过默认 32,000 字符时，`ShortTermSummaryService` 将较早内容压缩为摘要，并将摘要保存到 `ai:memory:summary:{userId}:{sessionId}`。
+- Redis 短期记忆默认 TTL 为 86,400 秒，可通过 `SHORT_MEMORY_MAX_MESSAGES`、`SHORT_MEMORY_MAX_CHARS`、`SHORT_MEMORY_SUMMARY_TRIGGER` 和 `SHORT_MEMORY_TTL` 调整。
 
 ### 长期记忆
 
-- ChatMemory 会持久化到 MongoDB 的 `chat_memory_records` 集合，保存当前窗口内序列化后的消息列表；超过 20 条后，较早消息会从模型上下文窗口中淘汰。
 - 业务层会话保存到 `chat_sessions`，用户可见的对话消息保存到 `chat_messages`。
-- 当前实现是“业务历史存储 + 最近窗口注意力”：用户和 AI 的历史内容保存在 `chat_messages`，但不会自动全部放入模型上下文；模型默认只关注最近 20 条 LangChain4j 消息。
-- `ChatSession.summary` 字段可保存会话摘要，但当前对话流程没有自动摘要和摘要回注入机制，因此尚未实现基于摘要的长期语义注意力。
+- 当前已实现的是“Redis 短期窗口 + 滚动摘要”；用户主动录入、向量化存储和语义召回的长期记忆正在同一 Issue 的后续任务中实现。
 
 ### 记忆存储位置
 
 | 数据 | 存储位置 | 用途 |
 |------|----------|------|
-| 当前窗口内的 LangChain4j 消息、Tool 请求和 Tool 结果 | MongoDB `chat_memory_records` | Agent 当前上下文与工具调用链 |
+| 当前窗口内的 LangChain4j 消息、Tool 请求和 Tool 结果 | Redis List `ai:memory:messages:{userId}:{sessionId}` | Agent 当前上下文与工具调用链 |
+| 短期记忆摘要 | Redis String `ai:memory:summary:{userId}:{sessionId}` | 压缩较早对话并保持上下文连贯 |
 | 用户可见的对话消息 | MongoDB `chat_messages` | 前端历史消息展示 |
 | 会话元数据、标题、标签、摘要 | MongoDB `chat_sessions` | 会话管理 |
 | RAG 文档元数据 | MongoDB `knowledge_documents` | 文档管理与来源信息 |
@@ -92,9 +99,9 @@ mvn spring-boot:run
 
 ### MongoDB、Milvus、Redis 和模型的边界
 
-- **MongoDB**：保存可持久化的会话数据，包括当前 ChatMemory 窗口、用户可见消息、会话信息和知识文档元数据。默认连接 `mongodb://localhost:27017/customer_memory`。
+- **MongoDB**：保存可持久化的业务会话数据、用户可见消息和知识文档元数据。默认连接 `mongodb://localhost:27017/customer_memory`。
+- **Redis**：保存带 TTL 的短期消息窗口和滚动摘要，作为 Agent 的即时上下文缓存。
 - **Milvus**：只保存知识库文档的 embedding 和文本片段，用于 RAG 相似度检索；它不是对话记忆库，也不保存模型参数。
-- **Redis**：当前项目没有 Redis 依赖、配置或读写逻辑，短期记忆和长期记忆都不存 Redis。
 - **模型本身**：模型服务不保存本项目的会话记忆。每次请求由 Java 从 MongoDB 读取最近 20 条消息，组装为请求上下文后发送给模型；模型只在本次请求中使用这些上下文。
 - **模型参数**：模型参数属于外部模型服务，由模型服务提供方管理，不存储在 MongoDB、Milvus 或 Redis 中。
 
