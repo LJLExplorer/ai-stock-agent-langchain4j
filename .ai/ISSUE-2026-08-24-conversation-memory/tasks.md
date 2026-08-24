@@ -129,11 +129,18 @@ Expected: PASS。
 
 ### Task 3: 实现字符窗口和滚动摘要
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：**
 
-**Green Evidence：** 待填写
+- Command: `mvn -q test -Dtest=ShortTermSummaryServiceTest`
+- Actual: 测试编译失败，`ShortTermSummaryService` 尚未定义。
+- Match Expected: yes
+
+**Green Evidence:**
+
+- Command: `mvn -q test -Dtest=ShortTermSummaryServiceTest`
+- Actual: PASS（仅有 Byte Buddy 动态加载警告）
 
 **涉及文件：**
 - Create: `src/main/java/com/ljl/ai/agent/memoery/ShortTermSummaryService.java`
