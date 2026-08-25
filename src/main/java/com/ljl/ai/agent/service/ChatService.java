@@ -92,6 +92,16 @@ public class ChatService {
         }
     }
 
+    /**
+     * 立即创建一个空会话，供前端在用户点击“新建会话”时使用。
+     */
+    public ChatSession createSession(String userId, String orderId) {
+        if (StringUtils.isBlank(userId)) {
+            throw new IllegalArgumentException("userId 不能为空");
+        }
+        return chatMemoryService.createSession(userId.trim(), StringUtils.trimToNull(orderId));
+    }
+
     private ChatResponse chatInternal(ChatRequest request) {
         log.info("处理对话请求, userId: {}, sessionId: {}", request.getUserId(), request.getSessionId());
         String activeSessionId = request.getSessionId();
@@ -373,6 +383,30 @@ public class ChatService {
      */
     public void closeSession(String sessionId, String userId) {
         chatMemoryService.closeSession(sessionId, userId);
+    }
+
+    /**
+     * 删除会话及其持久化消息，同时清理模型记忆缓存。
+     */
+    public void deleteSession(String sessionId, String userId) {
+        ChatSession session = chatMemoryService.getSession(sessionId);
+        if (session == null || !userId.equals(session.getUserId())) {
+            throw new SecurityException("无权访问该会话");
+        }
+        chatMemoryProvider.clearMemory(memoryId(userId, sessionId));
+        chatMemoryService.deleteSession(sessionId);
+    }
+
+    /**
+     * 更新当前用户会话标题。
+     */
+    public ChatSession renameSession(String sessionId, String userId, String title) {
+        ChatSession session = chatMemoryService.getSession(sessionId);
+        if (session == null || !userId.equals(session.getUserId())) {
+            throw new SecurityException("无权访问该会话");
+        }
+        chatMemoryService.renameSession(sessionId, title);
+        return chatMemoryService.getSession(sessionId);
     }
 
     /**

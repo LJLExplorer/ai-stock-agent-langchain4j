@@ -135,6 +135,18 @@ public class ChatMemoryService {
     }
 
     /**
+     * 保存用户自定义的会话标题。
+     */
+    public void renameSession(String sessionId, String title) {
+        ChatSession session = getSession(sessionId);
+        if (session == null) return;
+        session.setTitle(title);
+        session.setLastUpdateTime(LocalDateTime.now());
+        mongoTemplate.save(session);
+        log.debug("更新自定义会话标题, sessionId: {}, title: {}", sessionId, title);
+    }
+
+    /**
      * 更新会话摘要
      */
     public void updateSessionSummary(String sessionId, String summary) {

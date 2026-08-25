@@ -37,6 +37,18 @@ public class ChatController {
     }
 
     /**
+     * 创建空会话
+     * POST /api/chat/sessions?userId=demo-user&orderId=600519
+     */
+    @PostMapping("/sessions")
+    public ResponseEntity<ChatSession> createSession(
+            @RequestParam String userId,
+            @RequestParam(required = false) String orderId) {
+        log.info("创建会话, userId: {}, orderId: {}", userId, orderId);
+        return ResponseEntity.ok(chatService.createSession(userId, orderId));
+    }
+
+    /**
      * 获取会话历史
      * GET /api/chat/sessions/{sessionId}/messages
      */
@@ -72,6 +84,36 @@ public class ChatController {
                 "success", true,
                 "message", "会话已关闭"
         ));
+    }
+
+    /**
+     * 删除会话及其历史消息
+     * DELETE /api/chat/sessions/{sessionId}?userId=demo-user
+     */
+    @DeleteMapping("/sessions/{sessionId}")
+    public ResponseEntity<Map<String, Object>> deleteSession(@PathVariable String sessionId,
+                                                             @RequestParam String userId) {
+        log.info("删除会话, sessionId: {}", sessionId);
+        chatService.deleteSession(sessionId, userId);
+        return ResponseEntity.ok(Map.of(
+                "success", true,
+                "message", "会话已删除"
+        ));
+    }
+
+    /**
+     * 更新会话标题
+     * PATCH /api/chat/sessions/{sessionId}/title
+     */
+    @PatchMapping("/sessions/{sessionId}/title")
+    public ResponseEntity<ChatSession> renameSession(@PathVariable String sessionId,
+                                                     @RequestParam String userId,
+                                                     @RequestBody Map<String, String> body) {
+        String title = body.getOrDefault("title", "").trim();
+        if (title.isEmpty() || title.length() > 80) {
+            return ResponseEntity.badRequest().build();
+        }
+        return ResponseEntity.ok(chatService.renameSession(sessionId, userId, title));
     }
 
     /**
