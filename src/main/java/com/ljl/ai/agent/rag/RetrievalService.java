@@ -62,6 +62,12 @@ public class RetrievalService {
         List<RetrievalResult> results = new ArrayList<>();
         for (EmbeddingMatch<TextSegment> match : searchResult.matches()) {
             TextSegment segment = match.embedded();
+            if (segment == null || segment.metadata() == null
+                    || isBlank(segment.metadata().getString("documentId"))
+                    || isBlank(segment.metadata().getString("title"))) {
+                log.warn("跳过缺少知识文档元数据的向量命中, score: {}", match.score());
+                continue;
+            }
 
             RetrievalResult result = RetrievalResult.builder()
                     .content(segment.text())
@@ -120,6 +126,10 @@ public class RetrievalService {
             sources.add(source);
         }
         return sources;
+    }
+
+    private boolean isBlank(String value) {
+        return value == null || value.isBlank();
     }
 
     /**

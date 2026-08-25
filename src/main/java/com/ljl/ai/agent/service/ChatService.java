@@ -38,6 +38,8 @@ import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.Set;
 import java.util.UUID;
 import java.util.Optional;
@@ -50,6 +52,8 @@ import java.util.stream.Collectors;
 @Slf4j
 @Service
 public class ChatService {
+
+    private static final Pattern STOCK_SYMBOL_PATTERN = Pattern.compile("(?<!\\d)(\\d{6})(?:\\.(SH|SZ))?(?!\\d)", Pattern.CASE_INSENSITIVE);
 
     private static final Map<String, String> TOOL_DISPLAY_NAMES = Map.ofEntries(
             Map.entry("getRealtimeQuote", "查询实时行情"),
@@ -206,22 +210,13 @@ public class ChatService {
                 aiResponse = assistant.chat(memoryId, userMessage);
             }
 
-            if (aiResponse == null) {
+            if (StringUtils.isBlank(aiResponse)) {
                 log.warn("AI响应为空, memoryId: {}", memoryId);
-                aiResponse = "系统暂未生成回复，请稍后重试";
+                aiResponse = "系统暂未生成有效回复，请稍后重试。";
             }
             aiResponse = AnswerTextFormatter.format(aiResponse);
 
             List<ToolInvocation> toolInvocations = collectToolInvocations(memoryId, previousToolInvocationIds);
-            List<KnowledgeSource> webSources = extractWebSources(toolInvocations);
-            if (!webSources.isEmpty()) {
-                List<KnowledgeSource> allSources = new ArrayList<>();
-                if (knowledgeSources != null) {
-                    allSources.addAll(knowledgeSources);
-                }
-                allSources.addAll(webSources);
-                knowledgeSources = allSources;
-            }
 
             // 4. 保存用户消息和AI回复到业务层（chat_messages 集合，用于前端展示）
             chatMemoryService.saveUserMessage(sessionId, originalUserMessage);
@@ -297,7 +292,17 @@ public class ChatService {
             }
             String rawPlan = agentPlannerAssistant.plan(userMessage);
             log.warn("Planner 原始返回: {}", abbreviatePlannerOutput(rawPlan));
-            AgentPlan candidate = JSON.parseObject(extractJsonObject(rawPlan), AgentPlan.class);
+            AgentPlan candidate;
+            try {
+                candidate = JSON.parseObject(extractJsonObject(rawPlan), AgentPlan.class);
+            } catch (Exception parseException) {
+                candidate = inferPlanFromText(rawPlan, userMessage);
+                if (candidate == null) {
+                    throw parseException;
+                }
+                log.warn("Planner 非 JSON，已从文本推断受限计划: symbol={}, tasks={}",
+                        candidate.getSymbol(), candidate.getTasks());
+            }
             PlanValidator.ValidatedPlan validated = planValidator.validate(candidate);
             if (!validated.valid()) {
                 log.warn("Planner 计划校验失败，降级到完整工具助手: {}", validated.errorMessage());
@@ -308,6 +313,53 @@ public class ChatService {
             log.warn("Planner 执行失败，降级到完整工具助手", e);
             return Optional.empty();
         }
+    }
+
+    private AgentPlan inferPlanFromText(String plannerText, String userMessage) {
+        String combined = (plannerText == null ? "" : plannerText) + "\n"
+                + (userMessage == null ? "" : userMessage);
+        Matcher matcher = STOCK_SYMBOL_PATTERN.matcher(userMessage == null ? "" : userMessage);
+        boolean found = matcher.find();
+        if (!found) {
+            matcher = STOCK_SYMBOL_PATTERN.matcher(plannerText == null ? "" : plannerText);
+            found = matcher.find();
+        }
+        if (!found) {
+            return null;
+        }
+
+        String rawSymbol = matcher.group(1);
+        String market = matcher.group(2);
+        String symbol = rawSymbol + (market == null
+                ? (rawSymbol.startsWith("6") ? ".SH" : ".SZ")
+                : "." + market.toUpperCase());
+        String normalized = combined.toLowerCase();
+        List<com.ljl.ai.agent.planner.StockAnalysisTask> tasks = new ArrayList<>();
+        if (containsAny(normalized, "实时", "行情", "涨跌", "价格", "报价")) {
+            tasks.add(com.ljl.ai.agent.planner.StockAnalysisTask.MARKET_DATA);
+        }
+        if (containsAny(normalized, "技术", "macd", "rsi", "kdj", "均线", "趋势")) {
+            tasks.add(com.ljl.ai.agent.planner.StockAnalysisTask.TECHNICAL_ANALYSIS);
+        }
+        if (containsAny(normalized, "财务", "财报", "营收", "利润", "基本面")) {
+            tasks.add(com.ljl.ai.agent.planner.StockAnalysisTask.FINANCIAL_ANALYSIS);
+        }
+        if (containsAny(normalized, "新闻", "公告", "舆情", "资讯", "消息", "购买", "买不买")) {
+            tasks.add(com.ljl.ai.agent.planner.StockAnalysisTask.NEWS_ANALYSIS);
+        }
+        if (tasks.isEmpty()) {
+            tasks.add(com.ljl.ai.agent.planner.StockAnalysisTask.MARKET_DATA);
+        }
+        return AgentPlan.builder().intent("STOCK_ANALYSIS").symbol(symbol).tasks(tasks).build();
+    }
+
+    private boolean containsAny(String text, String... keywords) {
+        for (String keyword : keywords) {
+            if (text.contains(keyword.toLowerCase())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     static List<KnowledgeSource> extractWebSources(List<ToolInvocation> toolInvocations) {
