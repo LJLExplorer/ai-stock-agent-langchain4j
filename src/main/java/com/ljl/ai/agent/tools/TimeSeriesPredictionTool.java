@@ -4,6 +4,7 @@ import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
+import com.ljl.ai.agent.model.dto.ToolResult;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -28,13 +29,18 @@ public class TimeSeriesPredictionTool {
     private long timeoutSeconds;
 
     @Tool(name = "predictStockTrend", value = "调用 daily_stock_analysis 的股票分析流水线，返回趋势预测、当前价格、操作建议和风险提示")
-    public String predictStockTrend(@P("股票代码") String symbol,
+    public ToolResult<String> predictStockTrend(@P("股票代码") String symbol,
+                                                @P("预测未来交易日数量，如 1/3/5/10") int horizon,
+                                                @P("模型名称，如 LSTM/Transformer/PatchTST") String model) {
+        return ToolResultExecutor.executeResult("PREDICTION_ERROR",
+                () -> doPredictStockTrend(symbol, horizon, model));
+    }
+
+    private ToolResult<String> doPredictStockTrend(@P("股票代码") String symbol,
                                     @P("预测未来交易日数量，如 1/3/5/10") int horizon,
                                     @P("模型名称，如 LSTM/Transformer/PatchTST") String model) {
         if (predictionBaseUrl == null || predictionBaseUrl.isBlank()) {
-            return "预测服务未配置（prediction.base-url）。请将它设置为 daily_stock_analysis 的地址，"
-                    + "例如 http://localhost:8000。请求参数：symbol=" + symbol
-                    + ", horizon=" + horizon + ", model=" + model;
+            return ToolResult.failure("PREDICTION_NOT_CONFIGURED", "预测服务未配置（prediction.base-url）");
         }
         try {
             // daily_stock_analysis 的预测来自完整分析流水线，不是独立的 /predict 模型接口。
@@ -51,8 +57,8 @@ public class TimeSeriesPredictionTool {
                     .POST(HttpRequest.BodyPublishers.ofString(JSON.toJSONString(payload))).build();
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() / 100 != 2) {
-                return "daily_stock_analysis 预测调用失败，HTTP " + response.statusCode()
-                        + "：" + response.body();
+                return ToolResult.failure("PREDICTION_HTTP_ERROR",
+                        "daily_stock_analysis 预测调用失败，HTTP " + response.statusCode());
             }
 
             JSONObject result = JSON.parseObject(response.body());
@@ -71,10 +77,10 @@ public class TimeSeriesPredictionTool {
                     : report.getJSONObject("details") == null ? null
                     : report.getJSONObject("details").getString("risk_warning"));
             output.put("source_query_id", result.getString("query_id"));
-            return JSON.toJSONString(output);
+            return ToolResult.success(JSON.toJSONString(output));
         } catch (Exception e) {
             log.warn("预测服务调用失败, symbol: {}", symbol, e);
-            return "预测服务调用失败：" + e.getMessage();
+            return ToolResult.failure("PREDICTION_ERROR", e.getMessage());
         }
     }
 }

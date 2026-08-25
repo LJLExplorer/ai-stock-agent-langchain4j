@@ -99,6 +99,13 @@
             <version>${langchain4j.version}</version>
         </dependency>
 
+        <!-- LangGraph4j：显式状态图、条件分支和可恢复工作流 -->
+        <dependency>
+            <groupId>org.bsc.langgraph4j</groupId>
+            <artifactId>langgraph4j-core</artifactId>
+            <version>1.6.1</version>
+        </dependency>
+
         <!-- HTTP Client for Feishu API -->
         <dependency>
             <groupId>com.squareup.okhttp3</groupId>

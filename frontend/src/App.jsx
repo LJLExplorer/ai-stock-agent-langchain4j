@@ -300,9 +300,17 @@ function ChatPage() {
 
       <aside className="panel inspector">
         <SectionTitle icon={<PanelRight size={14} />} title="执行检查" />
+        <div className="sample-block">
+          <div className="block-heading"><span><Sparkles size={14} />试试这些</span><em>快捷提问</em></div>
+          <div className="sample-list">
+            {quickPrompts.map(([label, prompt]) => <button key={label} type="button" className="sample-button" onClick={() => choosePrompt(prompt)}>
+              <span>{label}</span><MessageSquare size={13} />
+            </button>)}
+          </div>
+        </div>
         <div className="stat-grid"><Stat label="会话" value={sessionId ? '已建立' : '未发送'} /><Stat label="响应时间" value={details.duration ? `${details.duration} ms` : '-'} /></div>
         <div className="inspector-block"><div className="block-heading"><span><Wrench size={14} />工具调用</span><em>{details.tools.length}</em></div>{details.tools.length ? details.tools.map((tool, index) => <ToolItem key={index} tool={tool} />) : <Muted>发送请求后显示工具执行结果</Muted>}</div>
-        <div className="inspector-block"><div className="block-heading"><span><Database size={14} />知识来源</span><em>{details.sources.length}</em></div>{details.sources.length ? details.sources.map((source, index) => <SourceItem key={index} source={source} />) : <Muted>启用 RAG 后显示引用来源</Muted>}</div>
+        <div className="inspector-block"><div className="block-heading"><span><Database size={14} />知识来源</span><em>{details.sources.length}</em></div>{details.sources.length ? details.sources.map((source, index) => <SourceItem key={index} source={source} />) : <Muted>启用 RAG 或新闻检索后显示引用来源</Muted>}</div>
       </aside>
     </main>
   </div>
@@ -329,7 +337,7 @@ function SessionItem({ session, active, pinned, deleting, onClick, onPin, onDele
 }
 function formatSessionTime(value) { if (!value) return ''; const date = new Date(value); return Number.isNaN(date.getTime()) ? '' : date.toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) }
 function ToolItem({ tool }) { return <div className="tool-item"><div><span className={`tool-dot ${tool.success ? 'done' : 'fail'}`} />{tool.toolName || '工具调用'}{tool.success ? <CheckCircle2 className="tool-icon done" size={13} /> : <XCircle className="tool-icon fail" size={13} />}</div><small>{tool.errorMessage || `${tool.executionTime || 0} ms`}</small></div> }
-function SourceItem({ source }) { return <a className="source-item" href={source.documentUrl || '#'} target="_blank" rel="noreferrer"><FileText size={14} /><span>{source.documentTitle || source.source || '知识来源'}</span></a> }
+function SourceItem({ source }) { return <a className="source-item" href={source.documentUrl || '#'} target="_blank" rel="noreferrer"><FileText size={14} /><span><strong>{source.documentTitle || source.source || '知识来源'}</strong>{source.documentType === 'WEB' ? <small>{source.location || '网页来源'} · 点击查看原文</small> : null}</span></a> }
 function Muted({ children }) { return <p className="muted">{children}</p> }
 
 export default App

@@ -1,6 +1,8 @@
 package com.ljl.ai.agent.tools;
 
 import com.ljl.ai.agent.data.MarketDataClient;
+import com.ljl.ai.agent.model.dto.ToolResult;
+import com.ljl.ai.agent.model.entity.StockQuote;
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
 import lombok.extern.slf4j.Slf4j;
@@ -17,13 +19,8 @@ public class MarketDataTool {
     }
 
     @Tool(name = "getRealtimeQuote", value = "查询股票实时行情，包括价格、涨跌幅、成交量和换手率")
-    public String getRealtimeQuote(@P("股票代码，如 600519.SH 或 AAPL") String symbol) {
+    public ToolResult<StockQuote> getRealtimeQuote(@P("股票代码，如 600519.SH 或 AAPL") String symbol) {
         log.info("查询实时行情, symbol: {}", symbol);
-        try {
-            return String.valueOf(marketDataClient.getRealtimeQuote(symbol));
-        } catch (Exception e) {
-            log.error("实时行情查询失败, symbol: {}", symbol, e);
-            return "实时行情查询失败：" + e.getMessage();
-        }
+        return ToolResultExecutor.execute("MARKET_DATA_ERROR", () -> marketDataClient.getRealtimeQuote(symbol));
     }
 }

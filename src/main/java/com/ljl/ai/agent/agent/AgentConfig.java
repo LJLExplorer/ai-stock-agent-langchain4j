@@ -17,6 +17,12 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.beans.factory.annotation.Qualifier;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
 /**
  * Agent配置
  * 配置LangChain4j AiService
@@ -56,6 +62,38 @@ public class AgentConfig {
     @Resource
     private AgentToolConfig agentToolConfig;
 
+    private Map<String, Object> toolRegistry() {
+        Map<String, Object> registry = new LinkedHashMap<>();
+        register(registry, "getRealtimeQuote", marketDataTool);
+        register(registry, "analyzeTechnicalIndicators", technicalAnalysisTool);
+        register(registry, "analyzeFinancialReport", financialAnalysisTool);
+        register(registry, "searchStockNewsAndAnnouncements", newsRagTool);
+        register(registry, "predictStockTrend", timeSeriesPredictionTool);
+        register(registry, "compareStocks", stockComparisonTool);
+        register(registry, "analyzePortfolio", portfolioAnalysisTool);
+        return registry;
+    }
+
+    private void register(Map<String, Object> registry, String name, Object tool) {
+        if (tool != null) {
+            registry.put(name, tool);
+        }
+    }
+
+    List<Object> selectTools(Set<String> toolNames) {
+        if (toolNames == null || toolNames.isEmpty()) {
+            return List.of();
+        }
+        List<Object> selected = new ArrayList<>();
+        for (String toolName : toolNames) {
+            Object tool = toolRegistry().get(toolName);
+            if (tool != null) {
+                selected.add(tool);
+            }
+        }
+        return selected;
+    }
+
     /**
      * 配置股票分析智能体
      */
@@ -64,6 +102,17 @@ public class AgentConfig {
         log.info("初始化股票分析智能体...");
 
         return buildAssistant(true);
+    }
+
+    /**
+     * 无工具规划器：只负责生成候选计划，实际任务和工具权限由后端校验。
+     */
+    @Bean
+    public AgentPlannerAssistant agentPlannerAssistant() {
+        log.info("初始化股票分析任务规划器...");
+        return AiServices.builder(AgentPlannerAssistant.class)
+                .chatLanguageModel(chatLanguageModel)
+                .build();
     }
 
     /**
@@ -76,21 +125,22 @@ public class AgentConfig {
     }
 
     private StockAnalysisAssistant buildAssistant(boolean enableTools) {
+        return buildAssistant(enableTools ? toolRegistry().keySet() : Set.of());
+    }
+
+    public StockAnalysisAssistant buildAssistantForTools(Set<String> toolNames) {
+        return buildAssistant(toolNames);
+    }
+
+    private StockAnalysisAssistant buildAssistant(Set<String> toolNames) {
         var builder = AiServices.builder(StockAnalysisAssistant.class)
                 .chatLanguageModel(chatLanguageModel)
                 .chatMemoryProvider(chatMemoryProvider)
                 .maxSequentialToolsInvocations(agentToolConfig.getMaxSequentialInvocations());
 
-        if (enableTools) {
-            builder.tools(
-                    marketDataTool,
-                    technicalAnalysisTool,
-                    financialAnalysisTool,
-                    newsRagTool,
-                    timeSeriesPredictionTool,
-                    stockComparisonTool,
-                    portfolioAnalysisTool
-            );
+        List<Object> selectedTools = selectTools(toolNames);
+        if (!selectedTools.isEmpty()) {
+            builder.tools(selectedTools.toArray());
         }
 
         return builder.build();
