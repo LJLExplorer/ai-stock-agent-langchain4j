@@ -173,11 +173,15 @@
 
 ### Task 4: 完成共享导航和知识库视觉交互
 
-**状态：** pending
+**状态：** completed
 
 **Red Evidence：** 待填写
 
-**Green Evidence：** 待填写
+**Green Evidence：**
+
+- Command: `cd frontend && npm run build`
+- Actual: PASS，问答/知识库导航、知识库双栏布局、状态反馈、窄屏样式和可访问交互均成功编译。
+- 手工检查：知识库页提供“问答”和“返回问答”入口；问答页提供“知识库”入口；按钮有加载/禁用状态，禁用和删除有确认提示。
 
 **涉及文件：**
 - Modify: `frontend/src/App.jsx`
@@ -213,7 +217,7 @@
 
 ### Task 5: 完成后端回归与前端构建验收
 
-**状态：** pending
+**状态：** in_progress
 
 **Red Evidence：** 待填写
 

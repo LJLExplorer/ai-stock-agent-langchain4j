@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Route, Routes } from 'react-router-dom'
+import { NavLink, Route, Routes } from 'react-router-dom'
 import KnowledgePage from './pages/KnowledgePage.jsx'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -268,7 +268,7 @@ function ChatPage() {
   return <div className="app-shell">
     <header className="topbar">
       <div className="brand"><span className="brand-mark"><Activity size={17} /></span><div><strong>Stock Insight Agent</strong><small>股票研究与预测工作台</small></div></div>
-      <div className="top-actions"><label className="top-user"><UserRound size={15} /><span>用户 ID</span><input value={userId} onChange={(e) => setUserId(e.target.value)} aria-label="用户 ID" /></label><span className={`connection ${healthStatus}`} title={healthLatency ? `最近检测 ${healthLatency} ms` : '每 15 秒自动检测'}><i />{healthStatus === 'checking' ? '检测服务中' : healthStatus === 'error' ? '服务异常' : '服务可用'}{healthLatency && healthStatus === 'ready' ? <small>{healthLatency}ms</small> : null}</span><button className="button" onClick={createSession} disabled={sessionsBusy || busy}><Plus size={15} />新建会话</button></div>
+      <div className="top-actions"><nav className="route-nav" aria-label="主导航"><NavLink to="/" end><MessageSquare size={15} />问答</NavLink><NavLink to="/knowledge"><Database size={15} />知识库</NavLink></nav><label className="top-user"><UserRound size={15} /><span>用户 ID</span><input value={userId} onChange={(e) => setUserId(e.target.value)} aria-label="用户 ID" /></label><span className={`connection ${healthStatus}`} title={healthLatency ? `最近检测 ${healthLatency} ms` : '每 15 秒自动检测'}><i />{healthStatus === 'checking' ? '检测服务中' : healthStatus === 'error' ? '服务异常' : '服务可用'}{healthLatency && healthStatus === 'ready' ? <small>{healthLatency}ms</small> : null}</span><button className="button" onClick={createSession} disabled={sessionsBusy || busy}><Plus size={15} />新建会话</button></div>
     </header>
     <main className="workspace">
       <aside className="panel sidebar">
