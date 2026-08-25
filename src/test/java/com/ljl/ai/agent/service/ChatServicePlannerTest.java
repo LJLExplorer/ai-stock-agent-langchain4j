@@ -73,6 +73,23 @@ class ChatServicePlannerTest {
     }
 
     @Test
+    void shouldParseRealMarkdownPlannerResponseAndKeepAllSupportedTasks() {
+        ChatService chatService = new ChatService();
+        AgentPlannerAssistant planner = mock(AgentPlannerAssistant.class);
+        when(planner.plan("查询600511并给出购买建议")).thenReturn(
+                "为您查询到 **国药股份（600511.SH）** 的最新实时行情如下：\n"
+                        + "* **当前价格**：26.71元\n* **今日涨跌**：上涨 1.71%\n"
+                        + "**今日行情简析**：整体呈现震荡上涨态势。\n"
+                        + "关于您之前提到的“分析相关新闻及购买建议”，建议结合近期公司财报判断。");
+        ReflectionTestUtils.setField(chatService, "agentPlannerAssistant", planner);
+
+        PlanValidator.ValidatedPlan result = chatService.planForExecution("查询600511并给出购买建议").orElseThrow();
+
+        assertEquals("600511.SH", result.plan().getSymbol());
+        assertEquals(4, result.plan().getTasks().size());
+    }
+
+    @Test
     void shouldRejectPlannerOutputWithoutCompleteJsonObject() {
         assertThrows(IllegalArgumentException.class,
                 () -> ChatService.extractJsonObject("只有免责声明，没有计划"));

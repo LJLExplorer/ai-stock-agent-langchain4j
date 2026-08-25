@@ -9,6 +9,7 @@ import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.RequestBody;
 import okhttp3.Response;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -22,16 +23,22 @@ public class NewsSearchClient {
     private final OkHttpClient httpClient = new OkHttpClient.Builder()
             .connectTimeout(10, TimeUnit.SECONDS).readTimeout(20, TimeUnit.SECONDS).build();
 
+    @Value("${news-search.tavily-api-key:${news-search.tavily-api-keys:}}")
+    private String configuredTavilyKey;
+
+    @Value("${news-search.serpapi-api-key:${news-search.serpapi-api-keys:}}")
+    private String configuredSerpApiKey;
+
     public List<NewsItem> search(String stock, String query, int days, int maxResults) throws Exception {
-        String tavilyKey = firstKey("TAVILY_API_KEYS", "TAVILY_API_KEY");
+        String tavilyKey = firstConfiguredKey(configuredTavilyKey, "TAVILY_API_KEYS", "TAVILY_API_KEY");
         if (!tavilyKey.isBlank()) {
             return searchTavily(tavilyKey, stock, query, days, maxResults);
         }
-        String serpKey = firstKey("SERPAPI_API_KEYS", "SERPAPI_API_KEY");
+        String serpKey = firstConfiguredKey(configuredSerpApiKey, "SERPAPI_API_KEYS", "SERPAPI_API_KEY");
         if (!serpKey.isBlank()) {
             return searchSerpApi(serpKey, stock, query, maxResults);
         }
-        throw new IllegalStateException("未配置 TAVILY_API_KEYS 或 SERPAPI_API_KEYS");
+        throw new IllegalStateException("未配置 Tavily 或 SerpAPI 任一新闻搜索 API Key");
     }
 
     private List<NewsItem> searchTavily(String key, String stock, String query, int days, int maxResults) throws Exception {
@@ -82,7 +89,10 @@ public class NewsSearchClient {
         return value == null || value.isBlank() ? object.getString(fallback) : value;
     }
 
-    private static String firstKey(String... names) {
+    private static String firstConfiguredKey(String configuredValue, String... names) {
+        if (configuredValue != null && !configuredValue.isBlank()) {
+            return configuredValue.trim().split(",")[0].trim();
+        }
         for (String name : names) {
             String value = System.getenv(name);
             if (value != null && !value.isBlank()) return value.split(",")[0].trim();

@@ -1,0 +1,71 @@
+package com.ljl.ai.agent.workflow;
+
+import com.ljl.ai.agent.planner.StockAnalysisTask;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
+
+@Data
+@NoArgsConstructor
+public class ExecutionTask {
+
+    private String taskId;
+    private StockAnalysisTask taskType;
+    private List<String> dependencies = new ArrayList<>();
+    private TaskStatus status = TaskStatus.PLANNED;
+    private int attempts;
+    private String result;
+    private String errorMessage;
+    private LocalDateTime startedAt;
+    private LocalDateTime completedAt;
+
+    private ExecutionTask(String taskId, StockAnalysisTask taskType) {
+        this.taskId = taskId;
+        this.taskType = taskType;
+    }
+
+    public static ExecutionTask pending(String taskId, StockAnalysisTask taskType) {
+        if (taskType == null) {
+            throw new IllegalArgumentException("任务类型不能为空");
+        }
+        return new ExecutionTask(taskId, taskType);
+    }
+
+    public void start() {
+        if (status != TaskStatus.PLANNED && status != TaskStatus.RETRYING
+                && status != TaskStatus.FAILED) {
+            throw new IllegalStateException("任务无法开始: " + status);
+        }
+        status = TaskStatus.RUNNING;
+        attempts++;
+        startedAt = LocalDateTime.now();
+    }
+
+    public void retry(String reason) {
+        if (status != TaskStatus.RUNNING && status != TaskStatus.FAILED) {
+            throw new IllegalStateException("任务无法重试: " + status);
+        }
+        status = TaskStatus.RETRYING;
+        errorMessage = reason;
+    }
+
+    public void complete(String taskResult) {
+        if (status != TaskStatus.RUNNING) {
+            throw new IllegalStateException("任务未运行，不能完成: " + status);
+        }
+        status = TaskStatus.COMPLETED;
+        result = taskResult;
+        completedAt = LocalDateTime.now();
+    }
+
+    public void fail(String reason) {
+        if (status != TaskStatus.RUNNING && status != TaskStatus.RETRYING) {
+            throw new IllegalStateException("任务无法失败: " + status);
+        }
+        status = TaskStatus.FAILED;
+        errorMessage = reason;
+    }
+}

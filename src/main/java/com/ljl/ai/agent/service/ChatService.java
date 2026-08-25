@@ -17,6 +17,7 @@ import com.ljl.ai.agent.model.entity.KnowledgeSource;
 import com.ljl.ai.agent.model.entity.ToolInvocation;
 import com.ljl.ai.agent.planner.AgentPlan;
 import com.ljl.ai.agent.planner.PlanValidator;
+import com.ljl.ai.agent.planner.PlannerTextParser;
 import com.ljl.ai.agent.workflow.ExecutionState;
 import com.ljl.ai.agent.workflow.ExecutionTask;
 import com.ljl.ai.agent.workflow.WorkflowRunner;
@@ -316,6 +317,10 @@ public class ChatService {
     }
 
     private AgentPlan inferPlanFromText(String plannerText, String userMessage) {
+        AgentPlan parsed = PlannerTextParser.parse(plannerText, userMessage);
+        if (parsed != null) {
+            return parsed;
+        }
         String combined = (plannerText == null ? "" : plannerText) + "\n"
                 + (userMessage == null ? "" : userMessage);
         Matcher matcher = STOCK_SYMBOL_PATTERN.matcher(userMessage == null ? "" : userMessage);
