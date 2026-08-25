@@ -392,4 +392,24 @@ public class KnowledgeService {
         mongoTemplate.save(document);
         log.info("知识文档已禁用, id: {}", documentId);
     }
+
+    /** 重新向量化并启用知识文档。 */
+    public void enableDocument(String documentId) {
+        Query query = new Query(Criteria.where("documentId").is(documentId));
+        KnowledgeDocument document = mongoTemplate.findOne(query, KnowledgeDocument.class);
+        if (document == null) throw new IllegalArgumentException("知识文档不存在: " + documentId);
+        if (Boolean.TRUE.equals(document.getEnabled())) return;
+        if (document.getRawContent() == null || document.getRawContent().isBlank()) {
+            throw new IllegalStateException("知识文档没有可用于重建向量的原始内容: " + documentId);
+        }
+
+        List<String> vectorIds = processAndStoreDocument(document);
+        document.setVectorIds(vectorIds);
+        document.setChunkCount(vectorIds.size());
+        document.setEnabled(true);
+        document.setDeleteStatus(null);
+        document.setUpdateTime(LocalDateTime.now());
+        mongoTemplate.save(document);
+        log.info("知识文档已重新启用, id: {}, chunks: {}", documentId, vectorIds.size());
+    }
 }

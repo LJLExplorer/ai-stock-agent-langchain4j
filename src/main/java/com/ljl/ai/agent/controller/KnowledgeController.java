@@ -186,6 +186,22 @@ public class KnowledgeController {
             ));
         }
     }
+
+    @PostMapping("/documents/{documentId}/enable")
+    public ResponseEntity<Map<String, Object>> enableDocument(@PathVariable String documentId) {
+        log.info("重新启用知识文档, documentId: {}", documentId);
+        try {
+            knowledgeService.enableDocument(documentId);
+            return ResponseEntity.ok(Map.of("success", true, "message", "文档已重新启用"));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.status(404).body(Map.of("success", false, "errorMessage", e.getMessage()));
+        } catch (IllegalStateException e) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "errorMessage", e.getMessage()));
+        } catch (Exception e) {
+            log.error("重新启用知识文档失败, documentId: {}", documentId, e);
+            return ResponseEntity.status(500).body(Map.of("success", false, "errorMessage", "文档重新启用失败: " + e.getMessage()));
+        }
+    }
     
     /**
      * 删除知识文档
