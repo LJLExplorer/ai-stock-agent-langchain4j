@@ -131,7 +131,11 @@
 
 **状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：**
+
+- Command: `mvn -q test`
+- Actual: 测试编译被工作区原有未跟踪文件 `src/test/java/com/ljl/ai/agent/workflow/LangGraph4jDependencyTest.java` 阻塞，缺少 `org.bsc.langgraph4j` 依赖；该文件不属于本 Issue。
+- Match Expected: no（外部工作区阻塞）
 
 **Green Evidence：**
 
@@ -221,7 +225,15 @@
 
 **Red Evidence：** 待填写
 
-**Green Evidence：** 待填写
+**Green Evidence：**
+
+- Command: `cd frontend && npm run build`
+- Actual: PASS。
+- Command: `mvn -q -DskipTests compile`
+- Actual: PASS，后端生产代码编译通过。
+- Command: `mvn -q -Dtest=KnowledgeControllerTest,KnowledgeServiceTest test`
+- Actual: 当前无法绕过同一测试编译阻塞；Task 1 执行时该两项测试曾通过。
+- 状态保持 `in_progress`，等待工作区缺失依赖问题处理后再完成全量验收。
 
 **涉及文件：**
 - Modify: `.ai/ISSUE-2026-08-25-knowledge-base-page/tasks.md`
