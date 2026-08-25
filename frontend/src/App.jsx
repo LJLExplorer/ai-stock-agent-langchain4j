@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
+import { Route, Routes } from 'react-router-dom'
+import KnowledgePage from './pages/KnowledgePage.jsx'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
@@ -14,7 +16,39 @@ const quickPrompts = [
   ['新闻与风险', '请搜索当前股票最近的新闻、公告和风险信息。']
 ]
 
+function normalizeMarkdown(text = '') {
+  const lines = String(text).replace(/\r\n?/g, '\n').split('\n')
+  const output = []
+  let inCodeBlock = false
+  let blankLines = 0
+  lines.forEach((line) => {
+    const fence = line.trim().startsWith('```')
+    if (inCodeBlock || fence) {
+      output.push(inCodeBlock ? line : line.trimEnd())
+      if (fence) inCodeBlock = !inCodeBlock
+      blankLines = 0
+      return
+    }
+    const clean = line.trimEnd()
+    if (!clean.trim()) {
+      if (blankLines === 0) output.push('')
+      blankLines += 1
+    } else {
+      output.push(clean)
+      blankLines = 0
+    }
+  })
+  return output.join('\n').trim()
+}
+
 function App() {
+  return <Routes>
+    <Route path="/" element={<ChatPage />} />
+    <Route path="/knowledge" element={<KnowledgePage />} />
+  </Routes>
+}
+
+function ChatPage() {
   const [userId, setUserId] = useState('demo-user')
   const [sessionId, setSessionId] = useState('')
   const [sessionTitle, setSessionTitle] = useState('')
@@ -279,7 +313,7 @@ function Field({ label, children }) { return <label className="field"><span>{lab
 function Toggle({ label, checked, onChange }) { return <div className="toggle-row"><span>{label}</span><button className={`switch ${checked ? 'on' : ''}`} onClick={() => onChange(!checked)} aria-pressed={checked}><i /></button></div> }
 function Stat({ label, value }) { return <div className="stat"><span>{label}</span><strong>{value}</strong></div> }
 function EmptyState() { return <div className="empty"><div className="empty-icon"><Bot size={25} /></div><h2>开始一次股票研究</h2><p>选择股票代码后，输入问题或使用左侧快捷提问</p></div> }
-function Message({ role, content, pending, error }) { return <article className={`message ${role}`}><div className="message-label">{role === 'user' ? '你' : 'Agent'}<span>{role === 'assistant' ? <Bot size={13} /> : <MessageSquare size={13} />}</span></div><div className={`bubble ${error ? 'error' : ''}`}>{pending ? <span className="loading"><i /><i /><i /></span> : role === 'assistant' && !error ? <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown> : content}</div></article> }
+function Message({ role, content, pending, error }) { return <article className={`message ${role}`}><div className="message-label">{role === 'user' ? '你' : 'Agent'}<span>{role === 'assistant' ? <Bot size={13} /> : <MessageSquare size={13} />}</span></div><div className={`bubble ${error ? 'error' : ''}`}>{pending ? <span className="loading"><i /><i /><i /></span> : role === 'assistant' && !error ? <ReactMarkdown remarkPlugins={[remarkGfm]}>{normalizeMarkdown(content)}</ReactMarkdown> : content}</div></article> }
 function SessionItem({ session, active, pinned, deleting, onClick, onPin, onDelete }) {
   return <div className={`session-item ${active ? 'active' : ''}`}>
     <button className="session-main" onClick={onClick} disabled={deleting}>

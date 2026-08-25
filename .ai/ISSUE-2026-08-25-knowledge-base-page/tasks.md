@@ -83,11 +83,18 @@
 
 ### Task 2: 引入 React Router 并拆分页面入口
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：**
 
-**Green Evidence：** 待填写
+- Command: `rg -n "BrowserRouter|react-router-dom|/knowledge|KnowledgePage" frontend/src frontend/package.json`
+- Actual: 无匹配结果，当前项目尚未接入路由或知识库路径。
+- Match Expected: yes
+
+**Green Evidence：**
+
+- Command: `cd frontend && npm install && npm run build`
+- Actual: PASS，已安装 `react-router-dom@7.18.2` 与 `react-router@7.18.2`，`/` 与 `/knowledge` 路由编译成功。
 
 **涉及文件：**
 - Modify: `frontend/package.json`
@@ -122,11 +129,14 @@
 
 ### Task 3: 实现知识库页面的数据操作
 
-**状态：** pending
+**状态：** completed
 
 **Red Evidence：** 待填写
 
-**Green Evidence：** 待填写
+**Green Evidence：**
+
+- Command: `cd frontend && npm run build`
+- Actual: PASS，知识库页面、表单、列表及新增/加载/禁用/删除请求均成功编译。
 
 **涉及文件：**
 - Create: `frontend/src/pages/KnowledgePage.jsx`
