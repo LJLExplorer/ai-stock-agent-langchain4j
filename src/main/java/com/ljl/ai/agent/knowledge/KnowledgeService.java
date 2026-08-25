@@ -156,7 +156,6 @@ public class KnowledgeService {
                 .metadata(metadata)
                 .createTime(LocalDateTime.now())
                 .updateTime(LocalDateTime.now())
-                .version(0L)
                 .enabled(true)
                 .build();
 
