@@ -151,7 +151,7 @@ public class KnowledgeController {
     @GetMapping("/documents")
     public ResponseEntity<List<KnowledgeDocument>> getAllDocuments() {
         log.info("获取所有知识文档");
-        List<KnowledgeDocument> documents = knowledgeService.findAllEnabled();
+        List<KnowledgeDocument> documents = knowledgeService.findAll();
         return ResponseEntity.ok(documents != null ? documents : List.of());
     }
 
@@ -173,11 +173,18 @@ public class KnowledgeController {
     @PostMapping("/documents/{documentId}/disable")
     public ResponseEntity<Map<String, Object>> disableDocument(@PathVariable String documentId) {
         log.info("禁用知识文档, documentId: {}", documentId);
-        knowledgeService.disableDocument(documentId);
-        return ResponseEntity.ok(Map.of(
-                "success", true,
-                "message", "文档已禁用"
-        ));
+        try {
+            knowledgeService.disableDocument(documentId);
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "message", "文档已禁用"
+            ));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.status(404).body(Map.of(
+                    "success", false,
+                    "errorMessage", e.getMessage()
+            ));
+        }
     }
     
     /**

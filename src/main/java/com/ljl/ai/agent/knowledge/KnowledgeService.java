@@ -16,6 +16,7 @@ import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.core.query.Update;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -250,6 +251,15 @@ public class KnowledgeService {
         Query query = new Query(Criteria.where("enabled").is(true));
         return mongoTemplate.find(query, KnowledgeDocument.class);
     }
+
+    /**
+     * 查询知识库管理列表，包含启用和已禁用文档。
+     */
+    public List<KnowledgeDocument> findAll() {
+        Query query = new Query(Criteria.where("deleteStatus").ne("DELETED"))
+                .with(Sort.by(Sort.Direction.DESC, "updateTime"));
+        return mongoTemplate.find(query, KnowledgeDocument.class);
+    }
     
     /**
      * 根据类型查询文档
@@ -364,12 +374,22 @@ public class KnowledgeService {
     public void disableDocument(String documentId) {
         Query query = new Query(Criteria.where("documentId").is(documentId));
         KnowledgeDocument document = mongoTemplate.findOne(query, KnowledgeDocument.class);
-        
-        if (document != null) {
-            document.setEnabled(false);
-            document.setUpdateTime(LocalDateTime.now());
-            mongoTemplate.save(document);
-            log.info("知识文档已禁用, id: {}", documentId);
+
+        if (document == null) {
+            throw new IllegalArgumentException("知识文档不存在: " + documentId);
         }
+        if (Boolean.FALSE.equals(document.getEnabled())) {
+            return;
+        }
+
+        if (document.getVectorIds() != null && !document.getVectorIds().isEmpty()) {
+            deleteVectorsWithRetry(document.getVectorIds(), documentId);
+        }
+        document.setEnabled(false);
+        document.setVectorIds(List.of());
+        document.setChunkCount(0);
+        document.setUpdateTime(LocalDateTime.now());
+        mongoTemplate.save(document);
+        log.info("知识文档已禁用, id: {}", documentId);
     }
 }
