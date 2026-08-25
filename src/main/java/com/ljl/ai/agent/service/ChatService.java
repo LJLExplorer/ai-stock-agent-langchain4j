@@ -1,5 +1,10 @@
 package com.ljl.ai.agent.service;
 
+import com.alibaba.fastjson2.JSON;
+import com.alibaba.fastjson2.JSONArray;
+import com.alibaba.fastjson2.JSONObject;
+import com.ljl.ai.agent.agent.AgentPlannerAssistant;
+import com.ljl.ai.agent.agent.AgentConfig;
 import com.ljl.ai.agent.agent.StockAnalysisAssistant;
 import com.ljl.ai.agent.memoery.ChatMemoryService;
 import com.ljl.ai.agent.memoery.MongoChatMemoryProvider;
@@ -10,6 +15,11 @@ import com.ljl.ai.agent.model.entity.ChatMessage;
 import com.ljl.ai.agent.model.entity.ChatSession;
 import com.ljl.ai.agent.model.entity.KnowledgeSource;
 import com.ljl.ai.agent.model.entity.ToolInvocation;
+import com.ljl.ai.agent.planner.AgentPlan;
+import com.ljl.ai.agent.planner.PlanValidator;
+import com.ljl.ai.agent.workflow.ExecutionState;
+import com.ljl.ai.agent.workflow.ExecutionTask;
+import com.ljl.ai.agent.workflow.WorkflowRunner;
 import com.ljl.ai.agent.rag.RagPipelineService;
 import com.ljl.ai.agent.rag.RagResult;
 import jakarta.annotation.Resource;
@@ -24,11 +34,13 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.Set;
 import java.util.UUID;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 /**
@@ -46,8 +58,7 @@ public class ChatService {
             Map.entry("searchStockNewsAndAnnouncements", "搜索新闻与公告"),
             Map.entry("predictStockTrend", "预测股票趋势"),
             Map.entry("compareStocks", "比较多只股票"),
-            Map.entry("analyzePortfolio", "分析投资组合"),
-            Map.entry("screenStocks", "筛选股票")
+            Map.entry("analyzePortfolio", "分析投资组合")
     );
 
     private final ConcurrentMap<String, Object> sessionLocks = new ConcurrentHashMap<>();
@@ -58,6 +69,17 @@ public class ChatService {
     @Resource
     @Qualifier("stockAnalysisAssistantWithoutTools")
     private StockAnalysisAssistant stockAnalysisAssistantWithoutTools;
+
+    @Resource
+    private AgentPlannerAssistant agentPlannerAssistant;
+
+    @Resource
+    private AgentConfig agentConfig;
+
+    @Resource
+    private WorkflowRunner workflowRunner;
+
+    private final PlanValidator planValidator = new PlanValidator();
 
     @Resource
     private ChatMemoryService chatMemoryService;
@@ -155,8 +177,27 @@ public class ChatService {
             }
 
             String aiResponse;
-            StockAnalysisAssistant assistant = Boolean.TRUE.equals(request.getEnableTools())
-                    ? stockAnalysisAssistant : stockAnalysisAssistantWithoutTools;
+            StockAnalysisAssistant assistant = stockAnalysisAssistantWithoutTools;
+            if (Boolean.TRUE.equals(request.getEnableTools())) {
+                Optional<PlanValidator.ValidatedPlan> planned = planForExecution(userMessage);
+                if (planned.isPresent()) {
+                    PlanValidator.ValidatedPlan validatedPlan = planned.get();
+                    if (workflowRunner != null) {
+                        ExecutionState executionState = createExecutionState(
+                                request.getUserId(), sessionId, userMessage, validatedPlan);
+                        executionState = workflowRunner.run(executionState);
+                        assistant = stockAnalysisAssistantWithoutTools;
+                        userMessage = userMessage + "\n【工作流分析结果】\n" + executionResults(executionState);
+                    } else {
+                        assistant = agentConfig.buildAssistantForTools(
+                                new LinkedHashSet<>(validatedPlan.toolNames()));
+                        userMessage = userMessage + "\n【已确认分析计划】标的：" + validatedPlan.plan().getSymbol()
+                                + "；任务：" + validatedPlan.plan().getTasks();
+                    }
+                } else {
+                    assistant = stockAnalysisAssistant;
+                }
+            }
             if (ragContext != null) {
                 // 有RAG上下文
                 aiResponse = assistant.chatWithRag(memoryId, userMessage, ragContext);
@@ -169,8 +210,18 @@ public class ChatService {
                 log.warn("AI响应为空, memoryId: {}", memoryId);
                 aiResponse = "系统暂未生成回复，请稍后重试";
             }
+            aiResponse = AnswerTextFormatter.format(aiResponse);
 
             List<ToolInvocation> toolInvocations = collectToolInvocations(memoryId, previousToolInvocationIds);
+            List<KnowledgeSource> webSources = extractWebSources(toolInvocations);
+            if (!webSources.isEmpty()) {
+                List<KnowledgeSource> allSources = new ArrayList<>();
+                if (knowledgeSources != null) {
+                    allSources.addAll(knowledgeSources);
+                }
+                allSources.addAll(webSources);
+                knowledgeSources = allSources;
+            }
 
             // 4. 保存用户消息和AI回复到业务层（chat_messages 集合，用于前端展示）
             chatMemoryService.saveUserMessage(sessionId, originalUserMessage);
@@ -237,6 +288,142 @@ public class ChatService {
                     .errorMessage(e.getMessage())
                     .build();
         }
+    }
+
+    Optional<PlanValidator.ValidatedPlan> planForExecution(String userMessage) {
+        try {
+            if (agentPlannerAssistant == null) {
+                return Optional.empty();
+            }
+            String rawPlan = agentPlannerAssistant.plan(userMessage);
+            log.warn("Planner 原始返回: {}", abbreviatePlannerOutput(rawPlan));
+            AgentPlan candidate = JSON.parseObject(extractJsonObject(rawPlan), AgentPlan.class);
+            PlanValidator.ValidatedPlan validated = planValidator.validate(candidate);
+            if (!validated.valid()) {
+                log.warn("Planner 计划校验失败，降级到完整工具助手: {}", validated.errorMessage());
+                return Optional.empty();
+            }
+            return Optional.of(validated);
+        } catch (Exception e) {
+            log.warn("Planner 执行失败，降级到完整工具助手", e);
+            return Optional.empty();
+        }
+    }
+
+    static List<KnowledgeSource> extractWebSources(List<ToolInvocation> toolInvocations) {
+        List<KnowledgeSource> sources = new ArrayList<>();
+        if (toolInvocations == null) {
+            return sources;
+        }
+        for (ToolInvocation invocation : toolInvocations) {
+            if (!"searchStockNewsAndAnnouncements".equals(invocation.getFunctionName())
+                    || !Boolean.TRUE.equals(invocation.getSuccess())
+                    || StringUtils.isBlank(invocation.getResult())) {
+                continue;
+            }
+            try {
+                JSONObject result = JSON.parseObject(invocation.getResult());
+                JSONArray items = result.getJSONArray("data");
+                if (items == null) {
+                    continue;
+                }
+                for (int i = 0; i < items.size(); i++) {
+                    JSONObject item = items.getJSONObject(i);
+                    if (item == null || StringUtils.isBlank(item.getString("url"))) {
+                        continue;
+                    }
+                    String url = item.getString("url");
+                    String title = StringUtils.defaultIfBlank(item.getString("title"), url);
+                    String source = item.getString("source");
+                    String publishedAt = item.getString("publishedAt");
+                    String location = String.join(" · ",
+                            List.of(source == null ? "网页" : source,
+                                    publishedAt == null ? "" : publishedAt)).replaceAll("^( · )|( · )$", "");
+                    sources.add(KnowledgeSource.builder()
+                            .documentId(url)
+                            .documentTitle(title)
+                            .documentType("WEB")
+                            .contentSnippet(item.getString("summary"))
+                            .documentUrl(url)
+                            .location(location)
+                            .build());
+                }
+            } catch (Exception e) {
+                log.debug("网页来源解析失败，跳过展示: {}", e.getMessage());
+            }
+        }
+        return sources;
+    }
+
+    /**
+     * 规划模型有时会在 JSON 前后附带免责声明、Markdown 或解释文字。
+     * 这里只提取第一个完整 JSON 对象，避免非结构化文本影响计划解析。
+     */
+    static String extractJsonObject(String raw) {
+        if (StringUtils.isBlank(raw)) {
+            throw new IllegalArgumentException("Planner 返回为空");
+        }
+
+        int start = raw.indexOf('{');
+        if (start < 0) {
+            throw new IllegalArgumentException("Planner 返回中未找到 JSON 对象");
+        }
+
+        int depth = 0;
+        boolean inString = false;
+        boolean escaped = false;
+        for (int i = start; i < raw.length(); i++) {
+            char current = raw.charAt(i);
+            if (inString) {
+                if (escaped) {
+                    escaped = false;
+                } else if (current == '\\') {
+                    escaped = true;
+                } else if (current == '"') {
+                    inString = false;
+                }
+                continue;
+            }
+
+            if (current == '"') {
+                inString = true;
+            } else if (current == '{') {
+                depth++;
+            } else if (current == '}' && --depth == 0) {
+                return raw.substring(start, i + 1);
+            }
+        }
+        throw new IllegalArgumentException("Planner 返回中的 JSON 对象不完整");
+    }
+
+    private static String abbreviatePlannerOutput(String rawPlan) {
+        if (rawPlan == null) {
+            return "<null>";
+        }
+        String normalized = rawPlan.replaceAll("\\s+", " ").trim();
+        int maxLength = 1000;
+        return normalized.length() <= maxLength
+                ? normalized
+                : normalized.substring(0, maxLength) + "...<已截断>";
+    }
+
+    ExecutionState createExecutionState(String userId, String sessionId, String question,
+                                        PlanValidator.ValidatedPlan validatedPlan) {
+        List<ExecutionTask> tasks = validatedPlan.plan().getTasks().stream()
+                .map(task -> ExecutionTask.pending(task.name().toLowerCase(), task))
+                .toList();
+        ExecutionState state = ExecutionState.planned(
+                UUID.randomUUID().toString(), sessionId, question, tasks);
+        state.setUserId(userId);
+        state.setPlan(validatedPlan.plan());
+        return state;
+    }
+
+    private String executionResults(ExecutionState state) {
+        return state.getTasks().stream()
+                .map(task -> "- " + task.getTaskType() + "（" + task.getStatus() + "）："
+                        + (task.getResult() == null ? task.getErrorMessage() : task.getResult()))
+                .collect(Collectors.joining("\n"));
     }
 
     static String memoryId(String userId, String sessionId) {
@@ -338,12 +525,29 @@ public class ChatService {
                             .invokeTime(LocalDateTime.now())
                             .build();
                 }
-                invocation.setResult(resultMessage.text());
-                invocation.setSuccess(true);
+                applyToolResult(invocation, resultMessage.text());
                 invocations.put(resultMessage.id(), invocation);
             }
         }
         return new ArrayList<>(invocations.values());
+    }
+
+    private void applyToolResult(ToolInvocation invocation, String text) {
+        invocation.setResult(text);
+        try {
+            var result = JSON.parseObject(text);
+            if (result.containsKey("success")) {
+                invocation.setSuccess(result.getBooleanValue("success"));
+                invocation.setErrorMessage(result.getString("errorMessage"));
+                if (result.containsKey("costTime")) {
+                    invocation.setExecutionTime(result.getLongValue("costTime"));
+                }
+                return;
+            }
+        } catch (Exception ignored) {
+            log.debug("工具结果不是标准 ToolResult JSON，按兼容文本处理");
+        }
+        invocation.setSuccess(true);
     }
 
     private String toDisplayToolName(String functionName) {
