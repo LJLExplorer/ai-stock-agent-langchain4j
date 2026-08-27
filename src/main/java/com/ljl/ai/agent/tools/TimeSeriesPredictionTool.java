@@ -73,9 +73,9 @@ public class TimeSeriesPredictionTool {
             output.put("current_price", meta == null ? null : meta.getBigDecimal("current_price"));
             output.put("change_pct", meta == null ? null : meta.getBigDecimal("change_pct"));
             output.put("operation_advice", summary == null ? null : summary.getString("operation_advice"));
-            output.put("risk_warning", report == null ? null
-                    : report.getJSONObject("details") == null ? null
-                    : report.getJSONObject("details").getString("risk_warning"));
+            JSONObject details = report == null ? null : report.getJSONObject("details");
+            JSONObject rawResult = details == null ? null : details.getJSONObject("raw_result");
+            output.put("risk_warning", rawResult == null ? null : rawResult.getString("risk_warning"));
             output.put("source_query_id", result.getString("query_id"));
             return ToolResult.success(JSON.toJSONString(output));
         } catch (Exception e) {

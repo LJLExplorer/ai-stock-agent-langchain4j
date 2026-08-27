@@ -156,6 +156,22 @@ public class KnowledgeController {
     }
 
     /**
+     * 获取单篇知识文档详情。
+     * GET /api/knowledge/documents/{documentId}
+     */
+    @GetMapping("/documents/{documentId}")
+    public ResponseEntity<?> getDocument(@PathVariable String documentId) {
+        KnowledgeDocument document = knowledgeService.findById(documentId);
+        if (document == null) {
+            return ResponseEntity.status(404).body(Map.of(
+                    "success", false,
+                    "errorMessage", "知识文档不存在或已删除"
+            ));
+        }
+        return ResponseEntity.ok(document);
+    }
+
+    /**
      * 根据类型获取知识文档
      * GET /api/knowledge/documents/type/{type}
      */

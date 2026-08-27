@@ -13,10 +13,25 @@ import org.springframework.data.mongodb.core.MongoTemplate;
 
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.*;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class KnowledgeServiceTest {
+
+    @Test
+    void shouldFindActiveDocumentById() {
+        MongoTemplate mongoTemplate = mock(MongoTemplate.class);
+        KnowledgeService service = new KnowledgeService(mock(FeishuClient.class), mock(EmbeddingModel.class),
+                mock(EmbeddingStore.class), mongoTemplate, new KnowledgeConfig());
+        KnowledgeDocument document = KnowledgeDocument.builder().documentId("doc-1").rawContent("完整正文").build();
+        when(mongoTemplate.findOne(any(), eq(KnowledgeDocument.class))).thenReturn(document);
+
+        KnowledgeDocument result = service.findById("doc-1");
+
+        assertEquals(document, result);
+        verify(mongoTemplate).findOne(any(), eq(KnowledgeDocument.class));
+    }
 
     @Test
     void shouldLeaveVersionUnsetWhenAddingNewKnowledgeDocument() {
