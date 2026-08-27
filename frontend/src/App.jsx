@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { NavLink, Route, Routes } from 'react-router-dom'
 import KnowledgePage from './pages/KnowledgePage.jsx'
+import KnowledgeDocumentDetailPage from './pages/KnowledgeDocumentDetailPage.jsx'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
@@ -45,6 +46,7 @@ function App() {
   return <Routes>
     <Route path="/" element={<ChatPage />} />
     <Route path="/knowledge" element={<KnowledgePage />} />
+    <Route path="/knowledge/documents/:documentId" element={<KnowledgeDocumentDetailPage />} />
   </Routes>
 }
 

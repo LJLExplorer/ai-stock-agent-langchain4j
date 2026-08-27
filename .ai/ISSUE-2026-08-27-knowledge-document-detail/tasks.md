@@ -92,11 +92,19 @@ Run: `git add src/main/java/com/ljl/ai/agent/knowledge/KnowledgeService.java src
 
 ### Task 2: 新增知识文档详情路由和页面
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：**
 
-**Green Evidence：** 待填写
+- Command: `cd frontend && npm run build`
+- Actual: FAIL，Vite 无法解析 `./pages/KnowledgeDocumentDetailPage.jsx`。
+- Match Expected: yes
+
+**Green Evidence：**
+
+- Command: `cd frontend && npm run build`
+- Actual: PASS，详情页路由与页面成功打包。
+- 手工验证：受当前会话无可用浏览器及本地端口隔离限制，未执行；本地开发服务器输出的地址为 `http://127.0.0.1:5173/`。
 
 **涉及文件：**
 
