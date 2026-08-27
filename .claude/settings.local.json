@@ -62,7 +62,21 @@
       "Bash(mvn -q -o test -Dtest=ChatRequestDeserializationTest,ChatServiceToolLoopExceededTest,RagTraceServiceTest -DfailIfNoTests=false)",
       "Bash(mvn -q -o test)",
       "Bash(echo \"EXIT_CODE=$?\")",
-      "Bash(git -C /Users/ljl/code/Agent/ai-stock-agent-langchain4j status --short)"
+      "Bash(git -C /Users/ljl/code/Agent/ai-stock-agent-langchain4j status --short)",
+      "Bash(open *)",
+      "Bash(mvn -q compile)",
+      "Bash(cat)",
+      "Read(//tmp/**)",
+      "Bash(mvn -q test -Dtest=WorkflowCriticTest,WorkflowAnswerGeneratorTest)",
+      "Bash(mvn -q test -Dtest=StockAnalysisWorkflowTest)",
+      "mcp__idea__build_project",
+      "Bash(mvn -q -pl . test -Dtest=PlannerTextParserTest,PlanValidatorTest,ChatServicePlannerTest,ChatServiceWorkflowTest,WorkflowReflectorTest,ExecutionStateTest,MongoExecutionStateStoreTest -DfailIfNoTests=false)",
+      "Bash(mvn -q test -Dtest=PlannerTextParserTest,PlanValidatorTest,ChatServicePlannerTest,ChatServiceWorkflowTest,WorkflowReflectorTest,ExecutionStateTest,MongoExecutionStateStoreTest -DfailIfNoTests=false)",
+      "Bash(xargs -I{} sh -c 'echo ==={}===; cat {}')",
+      "Bash(mvn -q test -Dtest=PlannerTextParserTest,PlanValidatorTest,WorkflowReflectorTest,ExecutionTaskTest,ChatServicePlannerTest,ChatServiceWorkflowTest -DfailIfNoTests=false)",
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(npx eslint *)",
+      "Bash(npm run *)"
     ]
   }
 }
