@@ -31,11 +31,18 @@
 
 ### Task 1: 提供单篇活动知识文档查询接口
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：**
 
-**Green Evidence：** 待填写
+- Command: `mvn -q -Dtest=KnowledgeServiceTest,KnowledgeControllerTest test`
+- Actual: 测试编译失败，`KnowledgeService` 缺少 `findById(String)`，`KnowledgeController` 缺少 `getDocument(String)`。
+- Match Expected: yes
+
+**Green Evidence：**
+
+- Command: `mvn -q -Dtest=KnowledgeServiceTest,KnowledgeControllerTest test`
+- Actual: PASS。
 
 **涉及文件：**
 

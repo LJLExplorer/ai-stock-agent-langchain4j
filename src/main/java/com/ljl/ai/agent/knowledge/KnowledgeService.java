@@ -269,6 +269,13 @@ public class KnowledgeService {
                 .with(Sort.by(Sort.Direction.DESC, "updateTime"));
         return mongoTemplate.find(query, KnowledgeDocument.class);
     }
+
+    /** 查询单篇可查看的知识文档详情。 */
+    public KnowledgeDocument findById(String documentId) {
+        Query query = new Query(Criteria.where("documentId").is(documentId)
+                .and("deleteStatus").ne("DELETED"));
+        return mongoTemplate.findOne(query, KnowledgeDocument.class);
+    }
     
     /**
      * 根据类型查询文档
