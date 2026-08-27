@@ -183,6 +183,7 @@ public class ChatService {
             }
 
             String aiResponse;
+            String workflowAnswer = null;
             StockAnalysisAssistant assistant = stockAnalysisAssistantWithoutTools;
             List<ToolInvocation> workflowToolInvocations = Collections.emptyList();
             if (Boolean.TRUE.equals(request.getEnableTools())) {
@@ -194,6 +195,7 @@ public class ChatService {
                                 request.getUserId(), sessionId, userMessage, validatedPlan);
                         executionState = workflowRunner.run(executionState);
                         workflowToolInvocations = workflowToolInvocations(executionState);
+                        workflowAnswer = executionState.getFinalAnswer();
                         assistant = stockAnalysisAssistantWithoutTools;
                         userMessage = userMessage + "\n【工作流分析结果】\n" + executionResults(executionState);
                     } else {
@@ -206,7 +208,9 @@ public class ChatService {
                     assistant = stockAnalysisAssistant;
                 }
             }
-            if (ragContext != null) {
+            if (StringUtils.isNotBlank(workflowAnswer)) {
+                aiResponse = workflowAnswer;
+            } else if (ragContext != null) {
                 // 有RAG上下文
                 aiResponse = assistant.chatWithRag(memoryId, userMessage, ragContext);
             } else {

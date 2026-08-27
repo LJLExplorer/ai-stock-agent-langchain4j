@@ -29,12 +29,12 @@
 
 ## 技术亮点
 
-- `plan-execute-langgraph`：基于 LangGraph4j `StateGraph` 构建显式状态工作流，将一次复杂股票分析拆成 INIT、任务执行、Reflector 和 ANSWER 阶段，执行链路不再完全依赖模型自由发挥。
+- `plan-execute-langgraph`：基于 LangGraph4j `StateGraph` 构建显式状态工作流：INIT、任务执行、Reflector、Critic、重试/补新闻、ANSWER 和失败终态均为真实图节点，不再由图外循环编排。
 - Agent Planner + PlanValidator：无工具 Planner 先输出 `intent/symbol/tasks` 结构化计划；Validator 严格校验股票代码、任务枚举和工具白名单，非法任务无法进入执行器。
 - Fan-out/Fan-in：行情、技术、财务和新闻分析被建模为独立任务节点，工作流支持并行分支汇合；每个任务都有独立状态、结果、错误信息和执行次数。
 - MongoDB Checkpoint：`ExecutionState` 持久化到 `agent_execution_states`，记录 `executionId`、任务状态、当前节点、版本号、重试次数和结果；使用版本条件更新避免旧状态覆盖新状态。
 - 幂等恢复：任务节点执行前检查任务状态，已完成任务直接复用结果；`WorkflowRunner.resume(executionId)` 可从 MongoDB 恢复未完成执行。
-- Reflector 反思校验：以确定性规则检查空结果、工具错误和标的一致性；不可信结果进入有限重试，缺少新闻分析时动态追加白名单内的 `NEWS_ANALYSIS` 任务。
+- Reflector + Critic：Reflector 复盘空结果、工具错误和标的一致性；Critic 以确定性规则裁决重试、补新闻、回答或失败。缺少新闻分析时动态追加白名单内的 `NEWS_ANALYSIS` 任务。
 - 结构化安全边界：Planner 输出必须经过 JSON 解析、股票代码校验、任务枚举校验和 Tool 白名单校验后才能执行。
 - 基于 Spring Boot 3.3、Java 21、LangChain4j 和 LangGraph4j 构建，使用 `AiServices` 负责回答生成和传统 Tool Calling，使用 StateGraph 负责可控工作流编排。
 - 使用阿里云百炼 OpenAI-compatible 接口接入 `qwen3.7-plus`，embedding 使用 `qwen3.7-text-embedding`；配置中保留了可切回的 `qwen3.7-flash` 注释。
@@ -76,7 +76,9 @@ LangGraph4j StateGraph
        ↓
 Reflector → 重试 / 动态追加任务 / 可信结果
        ↓
-无工具 Answer Generator
+Critic → RETRY / ADD_NEWS / ANSWER / FAILED
+       ↓
+无工具 Answer Generator（仅消费 Critic 通过的结果）
 ```
 
 当前工作流只覆盖股票分析场景。订单、物流和客服工单需要新增对应的任务枚举、业务规则和工具节点，不能直接套用股票分析任务。
@@ -85,9 +87,11 @@ Reflector → 重试 / 动态追加任务 / 可信结果
 
 - `StockAnalysisWorkflow`：定义 LangGraph4j 节点和边。
 - `StockAnalysisTaskExecutor`：维护任务到业务 Tool 的唯一映射入口。
-- `WorkflowReflector`：执行结果可信度校验和补充任务决策。
+- `WorkflowReflector`：复盘任务结果、发现失败和新闻缺口。
+- `WorkflowCritic`：将复盘结果裁决为重试、补新闻、回答或失败的图路由。
+- `WorkflowAnswerGenerator`：使用无工具助手基于可信结果写入最终答案。
 - `MongoExecutionStateStore`：实现 MongoDB Checkpoint 和乐观锁版本控制。
-- `WorkflowRunner`：负责新建执行、重试循环和 `executionId` 恢复。
+- `WorkflowRunner`：负责新建执行、调用 StateGraph 和 `executionId` 恢复；不再承担图外反思循环。
 
 ## 启动
 
