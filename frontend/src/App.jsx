@@ -269,7 +269,7 @@ function ChatPage() {
 
   return <div className="app-shell">
     <header className="topbar">
-      <div className="brand"><span className="brand-mark"><Activity size={17} /></span><div><strong>Stock Insight Agent</strong><small>股票研究与预测工作台</small></div></div>
+      <div className="topbar-start"><div className="brand"><span className="brand-mark"><Activity size={17} /></span><div><strong>Stock Insight Agent</strong><small>股票研究与预测工作台</small></div></div><div className="stat-grid header-stat-grid"><Stat label="会话" value={sessionId ? '已建立' : '未发送'} /><Stat label="响应时间" value={details.duration ? `${details.duration} ms` : '-'} /></div></div>
       <div className="top-actions"><nav className="route-nav" aria-label="主导航"><NavLink to="/" end><MessageSquare size={15} />问答</NavLink><NavLink to="/knowledge"><Database size={15} />知识库</NavLink></nav><label className="top-user"><UserRound size={15} /><span>用户 ID</span><input value={userId} onChange={(e) => setUserId(e.target.value)} aria-label="用户 ID" /></label><span className={`connection ${healthStatus}`} title={healthLatency ? `最近检测 ${healthLatency} ms` : '每 15 秒自动检测'}><i />{healthStatus === 'checking' ? '检测服务中' : healthStatus === 'error' ? '服务异常' : '服务可用'}{healthLatency && healthStatus === 'ready' ? <small>{healthLatency}ms</small> : null}</span><button className="button" onClick={createSession} disabled={sessionsBusy || busy}><Plus size={15} />新建会话</button></div>
     </header>
     <main className="workspace">
@@ -310,9 +310,8 @@ function ChatPage() {
             </button>)}
           </div>
         </div>
-        <div className="stat-grid"><Stat label="会话" value={sessionId ? '已建立' : '未发送'} /><Stat label="响应时间" value={details.duration ? `${details.duration} ms` : '-'} /></div>
-        <div className="inspector-block"><div className="block-heading"><span><Wrench size={14} />工具调用</span><em>{details.tools.length}</em></div>{details.tools.length ? details.tools.map((tool, index) => <ToolItem key={index} tool={tool} />) : <Muted>发送请求后显示工具执行结果</Muted>}</div>
-        <div className="inspector-block"><div className="block-heading"><span><Database size={14} />知识来源</span><em>{details.sources.length}</em></div>{details.sources.length ? details.sources.map((source, index) => <SourceItem key={index} source={source} />) : <Muted>启用 RAG 或新闻检索后显示引用来源</Muted>}</div>
+        <div className="inspector-block inspector-tools"><div className="block-heading"><span><Wrench size={14} />工具调用</span><em>{details.tools.length}</em></div><div className="inspector-list">{details.tools.length ? details.tools.map((tool, index) => <ToolItem key={index} tool={tool} />) : <Muted>发送请求后显示工具执行结果</Muted>}</div></div>
+        <div className="inspector-block inspector-sources"><div className="block-heading"><span><Database size={14} />知识来源</span><em>{details.sources.length}</em></div><div className="inspector-list">{details.sources.length ? details.sources.map((source, index) => <SourceItem key={index} source={source} />) : <Muted>启用 RAG 或新闻检索后显示引用来源</Muted>}</div></div>
       </aside>
     </main>
   </div>

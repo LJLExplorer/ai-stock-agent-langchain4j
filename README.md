@@ -11,7 +11,7 @@
 
 ## 技术栈
 
-Java 21、Spring Boot 3.3、LangChain4j 1.0.0-beta3、LangGraph4j 1.6.1、MongoDB（Spring Data）、Redis、Milvus 2.5（Java SDK 2.5.7）、阿里云百炼 `qwen3.7-plus` / `qwen3.7-text-embedding`、前端 React + Vite。
+Java 21、Spring Boot 3.3、LangChain4j 1.0.0-beta3、LangGraph4j 1.6.1、MongoDB（Spring Data）、Redis、Milvus 2.5（Java SDK 2.5.7）、阿里云百炼、前端 React + Vite。
 
 ## Agent 划分
 
