@@ -6,6 +6,7 @@ import com.alibaba.fastjson2.JSONObject;
 import com.ljl.ai.agent.agent.AgentPlannerAssistant;
 import com.ljl.ai.agent.agent.AgentConfig;
 import com.ljl.ai.agent.agent.StockAnalysisAssistant;
+import com.ljl.ai.agent.agent.QueryRewriteAssistant;
 import com.ljl.ai.agent.memoery.ChatMemoryService;
 import com.ljl.ai.agent.memoery.MongoChatMemoryProvider;
 import com.ljl.ai.agent.memoery.ShortTermSummaryService;
@@ -55,8 +56,6 @@ import java.util.stream.Collectors;
 @Service
 public class ChatService {
 
-    private static final Pattern STOCK_SYMBOL_PATTERN = Pattern.compile("(?<!\\d)(\\d{6})(?:\\.(SH|SZ))?(?!\\d)", Pattern.CASE_INSENSITIVE);
-
     private static final Map<String, String> TOOL_DISPLAY_NAMES = Map.ofEntries(
             Map.entry("getRealtimeQuote", "查询实时行情"),
             Map.entry("analyzeTechnicalIndicators", "分析技术指标"),
@@ -67,7 +66,7 @@ public class ChatService {
             Map.entry("analyzePortfolio", "分析投资组合")
     );
 
-    private final ConcurrentMap<String, Object> sessionLocks = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, SessionLock> sessionLocks = new ConcurrentHashMap<>();
 
     @Resource
     private StockAnalysisAssistant stockAnalysisAssistant;
@@ -78,6 +77,9 @@ public class ChatService {
 
     @Resource
     private AgentPlannerAssistant agentPlannerAssistant;
+
+    @Resource
+    private QueryRewriteAssistant queryRewriteAssistant;
 
     @Resource
     private AgentConfig agentConfig;
@@ -110,14 +112,33 @@ public class ChatService {
             return chatInternal(request);
         }
         String lockKey = request.getSessionId();
-        Object lock = sessionLocks.computeIfAbsent(lockKey, ignored -> new Object());
+        SessionLock lock = acquireSessionLock(lockKey);
         try {
             synchronized (lock) {
                 return chatInternal(request);
             }
         } finally {
-            sessionLocks.remove(lockKey, lock);
+            releaseSessionLock(lockKey, lock);
         }
+    }
+
+    private SessionLock acquireSessionLock(String lockKey) {
+        return sessionLocks.compute(lockKey, (ignored, existing) -> {
+            SessionLock lock = existing != null ? existing : new SessionLock();
+            lock.refCount++;
+            return lock;
+        });
+    }
+
+    private void releaseSessionLock(String lockKey, SessionLock lock) {
+        sessionLocks.compute(lockKey, (ignored, existing) -> {
+            lock.refCount--;
+            return lock.refCount <= 0 ? null : existing;
+        });
+    }
+
+    private static final class SessionLock {
+        private int refCount;
     }
 
     /**
@@ -149,15 +170,20 @@ public class ChatService {
             String userMessage = originalUserMessage;
             Set<String> previousToolInvocationIds = collectToolInvocationIds(memoryId);
 
+            if (StringUtils.isNotBlank(request.getOrderId())) {
+                userMessage = userMessage + "\n当前用户正在咨询股票：" + request.getOrderId();
+            }
+            String retrievalQuery = rewriteRetrievalQuery(userMessage, shortTermSummaryService.get(memoryId));
+
             // 2. 执行RAG检索（如果启用）
             List<KnowledgeSource> knowledgeSources = null;
             String ragContext = null;
             com.ljl.ai.agent.model.entity.RagTrace ragTrace = null;
 
             if (Boolean.TRUE.equals(request.getEnableRag())) {
-                RagResult ragResult = ragPipelineService.executeRag(userMessage);
+                RagResult ragResult = ragPipelineService.executeRag(retrievalQuery);
                 knowledgeSources = ragResult.getKnowledgeSources();
-                ragTrace = ragPipelineService.buildTrace(request.getUserId(), sessionId, userMessage, ragResult);
+                ragTrace = ragPipelineService.buildTrace(request.getUserId(), sessionId, retrievalQuery, ragResult);
 
                 if (!ragResult.getRetrievalResults().isEmpty()) {
                     // 获取RAG上下文，作为系统消息的一部分
@@ -168,12 +194,7 @@ public class ChatService {
             // 3. 调用智能体生成回复
             // ChatMemory 使用 MongoDB 持久化（chat_memory_records 集合）
 
-            // 兼容模板请求字段：此处将 orderId 作为当前分析标的代码传递。
-            if (StringUtils.isNotBlank(request.getOrderId())) {
-                userMessage = userMessage + "\n当前用户正在咨询股票：" + request.getOrderId();
-            }
-
-            String memoryContext = buildMemoryContext(request.getUserId(), sessionId, userMessage);
+            String memoryContext = buildMemoryContext(request.getUserId(), sessionId, retrievalQuery);
             if (StringUtils.isNotBlank(memoryContext)) {
                 int maxContextLength = 5000;
                 String truncatedContext = memoryContext.length() > maxContextLength
@@ -183,6 +204,7 @@ public class ChatService {
             }
 
             String aiResponse;
+            String workflowAnswer = null;
             StockAnalysisAssistant assistant = stockAnalysisAssistantWithoutTools;
             List<ToolInvocation> workflowToolInvocations = Collections.emptyList();
             if (Boolean.TRUE.equals(request.getEnableTools())) {
@@ -194,6 +216,7 @@ public class ChatService {
                                 request.getUserId(), sessionId, userMessage, validatedPlan);
                         executionState = workflowRunner.run(executionState);
                         workflowToolInvocations = workflowToolInvocations(executionState);
+                        workflowAnswer = executionState.getFinalAnswer();
                         assistant = stockAnalysisAssistantWithoutTools;
                         userMessage = userMessage + "\n【工作流分析结果】\n" + executionResults(executionState);
                     } else {
@@ -206,7 +229,9 @@ public class ChatService {
                     assistant = stockAnalysisAssistant;
                 }
             }
-            if (ragContext != null) {
+            if (StringUtils.isNotBlank(workflowAnswer)) {
+                aiResponse = workflowAnswer;
+            } else if (ragContext != null) {
                 // 有RAG上下文
                 aiResponse = assistant.chatWithRag(memoryId, userMessage, ragContext);
             } else {
@@ -323,54 +348,7 @@ public class ChatService {
     }
 
     private AgentPlan inferPlanFromText(String plannerText, String userMessage) {
-        AgentPlan parsed = PlannerTextParser.parse(plannerText, userMessage);
-        if (parsed != null) {
-            return parsed;
-        }
-        String combined = (plannerText == null ? "" : plannerText) + "\n"
-                + (userMessage == null ? "" : userMessage);
-        Matcher matcher = STOCK_SYMBOL_PATTERN.matcher(userMessage == null ? "" : userMessage);
-        boolean found = matcher.find();
-        if (!found) {
-            matcher = STOCK_SYMBOL_PATTERN.matcher(plannerText == null ? "" : plannerText);
-            found = matcher.find();
-        }
-        if (!found) {
-            return null;
-        }
-
-        String rawSymbol = matcher.group(1);
-        String market = matcher.group(2);
-        String symbol = rawSymbol + (market == null
-                ? (rawSymbol.startsWith("6") ? ".SH" : ".SZ")
-                : "." + market.toUpperCase());
-        String normalized = combined.toLowerCase();
-        List<com.ljl.ai.agent.planner.StockAnalysisTask> tasks = new ArrayList<>();
-        if (containsAny(normalized, "实时", "行情", "涨跌", "价格", "报价")) {
-            tasks.add(com.ljl.ai.agent.planner.StockAnalysisTask.MARKET_DATA);
-        }
-        if (containsAny(normalized, "技术", "macd", "rsi", "kdj", "均线", "趋势")) {
-            tasks.add(com.ljl.ai.agent.planner.StockAnalysisTask.TECHNICAL_ANALYSIS);
-        }
-        if (containsAny(normalized, "财务", "财报", "营收", "利润", "基本面")) {
-            tasks.add(com.ljl.ai.agent.planner.StockAnalysisTask.FINANCIAL_ANALYSIS);
-        }
-        if (containsAny(normalized, "新闻", "公告", "舆情", "资讯", "消息", "购买", "买不买")) {
-            tasks.add(com.ljl.ai.agent.planner.StockAnalysisTask.NEWS_ANALYSIS);
-        }
-        if (tasks.isEmpty()) {
-            tasks.add(com.ljl.ai.agent.planner.StockAnalysisTask.MARKET_DATA);
-        }
-        return AgentPlan.builder().intent("STOCK_ANALYSIS").symbol(symbol).tasks(tasks).build();
-    }
-
-    private boolean containsAny(String text, String... keywords) {
-        for (String keyword : keywords) {
-            if (text.contains(keyword.toLowerCase())) {
-                return true;
-            }
-        }
-        return false;
+        return PlannerTextParser.parse(plannerText, userMessage);
     }
 
     static List<KnowledgeSource> extractWebSources(List<ToolInvocation> toolInvocations) {
@@ -533,6 +511,23 @@ public class ChatService {
 
     static String memoryId(String userId, String sessionId) {
         return userId + ":" + sessionId;
+    }
+
+    String rewriteRetrievalQuery(String query, String shortTermSummary) {
+        if (query == null || query.isBlank()) {
+            return query;
+        }
+        try {
+            String rewritten = queryRewriteAssistant.rewrite(query,
+                    StringUtils.defaultString(shortTermSummary));
+            if (StringUtils.isBlank(rewritten)) {
+                return query;
+            }
+            return rewritten.trim();
+        } catch (Exception exception) {
+            log.warn("查询重写失败，使用原始问题检索: {}", exception.getMessage());
+            return query;
+        }
     }
 
     String buildMemoryContext(String userId, String sessionId, String query) {

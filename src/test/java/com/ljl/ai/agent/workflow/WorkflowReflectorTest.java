@@ -54,4 +54,33 @@ class WorkflowReflectorTest {
 
         assertTrue(new WorkflowReflector(2).reflect(state).trusted());
     }
+
+    @Test
+    void shouldScheduleRetryForCompletedButUnreliableTaskWithinRetryBudget() {
+        ExecutionTask task = ExecutionTask.pending("market", StockAnalysisTask.MARKET_DATA);
+        task.start();
+        task.complete("查询异常，请稍后重试");
+        ExecutionState state = ExecutionState.planned("exec-1", "session-1", "分析", List.of(task));
+
+        WorkflowReflector.ReflectionDecision decision = new WorkflowReflector(2).reflect(state);
+
+        assertFalse(decision.trusted());
+        assertEquals(List.of("market"), decision.retryTaskIds());
+    }
+
+    @Test
+    void shouldTreatCompletedButUnreliableTaskAsTerminalFailureWhenRetriesExhausted() {
+        ExecutionTask task = ExecutionTask.pending("market", StockAnalysisTask.MARKET_DATA);
+        task.start();
+        task.retry("上一轮结果不可信");
+        task.start();
+        task.complete("查询异常，请稍后重试");
+        ExecutionState state = ExecutionState.planned("exec-1", "session-1", "分析", List.of(task));
+
+        WorkflowReflector.ReflectionDecision decision = new WorkflowReflector(2).reflect(state);
+
+        assertFalse(decision.trusted());
+        assertTrue(decision.retryTaskIds().isEmpty());
+        assertTrue(decision.reason().contains("超过最大重试次数"));
+    }
 }

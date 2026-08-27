@@ -20,6 +20,12 @@ public class RetrievalResult {
      */
     private Double similarity;
 
+    private Double semanticScore;
+
+    private Double bm25Score;
+
+    private Double rrfScore;
+
     /**
      * 来源文档ID
      */

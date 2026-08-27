@@ -2,6 +2,7 @@ package com.ljl.ai.agent.knowledge;
 
 import com.ljl.ai.agent.config.KnowledgeConfig;
 import com.ljl.ai.agent.model.entity.KnowledgeDocument;
+import com.ljl.ai.agent.rag.MilvusHybridCollectionManager;
 import dev.langchain4j.data.document.Document;
 import dev.langchain4j.data.document.DocumentSplitter;
 import dev.langchain4j.data.document.Metadata;
@@ -18,6 +19,7 @@ import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -38,6 +40,9 @@ public class KnowledgeService {
     private final EmbeddingStore<TextSegment> embeddingStore;
     private final MongoTemplate mongoTemplate;
     private final KnowledgeConfig knowledgeConfig;
+
+    @Autowired(required = false)
+    private MilvusHybridCollectionManager hybridCollectionManager;
     
     /**
      * 同步飞书文档到知识库 - 使用乐观锁处理并发
@@ -204,6 +209,11 @@ public class KnowledgeService {
             try {
                 Embedding embedding = embeddingModel.embed(segment).content();
                 String vectorId = embeddingStore.add(embedding, segment);
+                if (hybridCollectionManager != null) {
+                    hybridCollectionManager.insert(document.getDocumentId() + ":" + i, document.getDocumentId(),
+                            document.getTitle(), document.getDocumentType(), document.getSource(), segment.text(),
+                            embedding.vector());
+                }
                 successVectorIds.add(vectorId);
             } catch (Exception e) {
                 failedSegmentIndices.add(i);
@@ -392,6 +402,7 @@ public class KnowledgeService {
         if (document.getVectorIds() != null && !document.getVectorIds().isEmpty()) {
             deleteVectorsWithRetry(document.getVectorIds(), documentId);
         }
+        if (hybridCollectionManager != null) hybridCollectionManager.deleteDocument(documentId);
         document.setVectorIds(List.of());
         document.setChunkCount(0);
         document.setUpdateTime(LocalDateTime.now());

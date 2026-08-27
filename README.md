@@ -1,72 +1,83 @@
 # Stock Insight Agent
 
-基于 Java 21、Spring Boot 和 LangChain4j 的股票研究与预测 Agent。
+基于 Java 21 + Spring Boot 3 + LangChain4j 构建的股票研究 Agent。核心是用 LangGraph4j `StateGraph` 实现的可持久化、可恢复 Plan-and-Execute 工作流，并用 Milvus 2.5 Hybrid Search（稠密向量 + BM25 + RRF）驱动检索增强问答。
 
-## 能力
+## 核心能力
 
-- 实时行情：价格、涨跌幅、成交量、换手率
-- 技术分析：MA、MACD、RSI、KDJ、布林带
-- 基本面分析：营收、净利润、ROE、PE、PB、现金流
-- 新闻/公告/财报 RAG 检索
-- 支持 Planner 返回 JSON、Markdown 或带说明文字的非结构化结果
-- 通过 `daily_stock_analysis` 分析流水线生成股票趋势预测
-- 多股票比较、投资组合分析
-- Redis 短期会话记忆、字符窗口和滚动摘要
-- 用户主动录入、向量化和语义召回的长期记忆
-- MongoDB 业务会话历史与 Milvus 知识库
+- 实时行情、技术指标（MA/MACD/RSI/KDJ/布林带）、财务基本面（营收/净利润/ROE/PE/PB/现金流）分析
+- 新闻/公告/研报 RAG 检索，多股票对比与投资组合分析
+- 对接外部预测服务生成股票趋势预测
+- 短期记忆（Redis 滚动摘要）+ 长期记忆（用户主动录入 + 语义召回）+ 查询重写
 
-## Agent Tools
+## 技术栈
 
-股票分析工作流通过受控任务节点调用以下 Tool。括号中的英文名称是内部函数名，界面返回中文名称：
+Java 21、Spring Boot 3.3、LangChain4j 1.0.0-beta3、LangGraph4j 1.6.1、MongoDB（Spring Data）、Redis、Milvus 2.5（Java SDK 2.5.7）、阿里云百炼 `qwen3.7-plus` / `qwen3.7-text-embedding`、前端 React + Vite。
 
-- `查询实时行情`（`getRealtimeQuote`）：查询股票实时价格、涨跌幅、成交量和换手率
-- `分析技术指标`（`analyzeTechnicalIndicators`）：计算 MA、MACD、RSI、KDJ、布林带等技术指标
-- `分析财务报告`（`analyzeFinancialReport`）：分析营收、净利润、ROE、PE、PB 和现金流
-- `搜索新闻与公告`（`searchStockNewsAndAnnouncements`）：检索股票新闻、公告、财报和行业报告，并返回来源与摘要
-- `预测股票趋势`（`predictStockTrend`）：调用 `daily_stock_analysis` 分析流水线生成趋势预测
-- `比较多只股票`（`compareStocks`）：对比多只股票的行情、技术面、基本面和预测结果
-- `分析投资组合`（`analyzePortfolio`）：分析持仓收益、行业分布、集中度、风险和预测趋势
+## Agent 划分
 
-## 技术亮点
+系统不是一个模型顶所有事，而是按职责拆成四个独立的 `AiServices` 实例，各自绑定不同的 System Prompt 和工具权限，互不干扰：
 
-- `plan-execute-langgraph`：基于 LangGraph4j `StateGraph` 构建显式状态工作流，将一次复杂股票分析拆成 INIT、任务执行、Reflector 和 ANSWER 阶段，执行链路不再完全依赖模型自由发挥。
-- Agent Planner + PlanValidator：无工具 Planner 先输出 `intent/symbol/tasks` 结构化计划；Validator 严格校验股票代码、任务枚举和工具白名单，非法任务无法进入执行器。
-- Fan-out/Fan-in：行情、技术、财务和新闻分析被建模为独立任务节点，工作流支持并行分支汇合；每个任务都有独立状态、结果、错误信息和执行次数。
-- MongoDB Checkpoint：`ExecutionState` 持久化到 `agent_execution_states`，记录 `executionId`、任务状态、当前节点、版本号、重试次数和结果；使用版本条件更新避免旧状态覆盖新状态。
-- 幂等恢复：任务节点执行前检查任务状态，已完成任务直接复用结果；`WorkflowRunner.resume(executionId)` 可从 MongoDB 恢复未完成执行。
-- Reflector 反思校验：以确定性规则检查空结果、工具错误和标的一致性；不可信结果进入有限重试，缺少新闻分析时动态追加白名单内的 `NEWS_ANALYSIS` 任务。
-- 结构化安全边界：Planner 输出必须经过 JSON 解析、股票代码校验、任务枚举校验和 Tool 白名单校验后才能执行。
-- 基于 Spring Boot 3.3、Java 21、LangChain4j 和 LangGraph4j 构建，使用 `AiServices` 负责回答生成和传统 Tool Calling，使用 StateGraph 负责可控工作流编排。
-- 使用阿里云百炼 OpenAI-compatible 接口接入 `qwen3.7-plus`，embedding 使用 `qwen3.7-text-embedding`；配置中保留了可切回的 `qwen3.7-flash` 注释。
-- 采用 Plan-and-Execute 工作流控制 Tool 调用顺序和任务边界；模型负责理解问题、生成计划和基于已校验结果生成回答。
-- LangGraph4j `StateGraph` 负责节点编排，LangChain4j `AiServices` 负责 Planner、Answer Generator 和统一模型接入。
-- 使用 Redis List 持久化 LangChain4j 短期记忆，支持多用户、多会话隔离；Redis Key 使用 `userId:sessionId`，保留工具调用消息链。
-- 短期记忆按字符数控制，默认上限为 32,000 字符；超限后生成滚动摘要并保留最新窗口，摘要和消息窗口分开存储。
-- 采用会话级访问控制、状态管理和并发隔离机制，支持多用户安全使用。
-- 采用有界滚动摘要和最新上下文优先策略，提升长对话稳定性。
-- MongoDB 继续保存会话元数据和用户可见的业务消息，Redis 负责 Agent 即时上下文。
-- 支持通过前端长期记忆区域或 `/api/memories` 主动保存用户偏好；对话时按用户和语义相似度自动召回。
-- 使用 Milvus 保存向量知识库，结合 embedding、相似度检索和上下文增强实现 RAG。
-- 支持飞书文档同步，将外部知识文档接入统一知识库。
-- 通过独立数据客户端封装行情、财务和新闻来源，便于替换数据供应商和扩展适配器。
-- Planner 解析按 JSON → Markdown/自然语言的顺序降级，能从股票代码、标题和正文关键词中提取受限分析计划；解析失败时不会直接终止对话。
-- LangGraph4j 图状态只携带可序列化的字符串上下文，完整 `ExecutionState` 由工作流执行层和 MongoDB Checkpoint 管理，避免状态序列化异常。
-- 工具失败会记录到对应任务并进入有限重试；单个新闻接口失败不会直接升级为整个请求失败。
-- 预测 Tool 通过 `PREDICTION_BASE_URL` 调用 `daily_stock_analysis` 的 `POST /api/v1/analysis/analyze` 接口，预测服务与 Agent 解耦。
-- 使用 Spring Validation、全局异常处理和结构化 DTO，统一前后端接口响应。
-- 工作流任务设置有限重试次数，并通过 `WorkflowRetryPolicy` 防止失败任务无限重试。
-- 提供 RAG 轻量诊断记录，辅助区分“未召回、低质量召回、模型生成异常”和基础设施问题。
+| Agent | 接口 | 工具权限 | 职责 |
+|-------|------|----------|------|
+| 规划器 | `AgentPlannerAssistant` | 无 | 只把用户问题转成 `{intent, symbol, tasks}` JSON 候选计划，自身不能触发任何副作用 |
+| 全功能研究助手 | `StockAnalysisAssistant`（`stockAnalysisAssistant`） | 全部 7 个业务 Tool | Planner 判定不是股票分析问题、或计划被 `PlanValidator` 拒绝时的兜底路径，模型自主决定调用哪些工具 |
+| 工作流内回答生成器 | `StockAnalysisAssistant`（`stockAnalysisAssistantWithoutTools`） | 无 | 同一接口的无工具变体，只在图工作流的 ANSWER 节点被调用，只消费 Critic 已验证的任务结果 |
+| 查询重写器 | `QueryRewriteAssistant` | 无 | 结合短期摘要把追问改写成独立可检索的问句，只服务 RAG 和长期记忆召回 |
 
-### Plan-and-Execute 执行链路
+这四个 Agent 由 `AgentConfig` 统一构建，同一个 `chatLanguageModel` 后端，靠 System Prompt 和工具集合区分角色，而不是靠模型自己在一份 Prompt 里判断"这次该不该用工具"。
+
+## 架构亮点
+
+### 1. 图原生工作流：把 Plan-and-Execute 编成一张真实的图
+
+`StockAnalysisWorkflow` 用 LangGraph4j `StateGraph` 显式声明节点和边：`INIT → 四个任务节点（并行）→ REFLECTOR → CRITIC → RETRY/ADD_NEWS/ANSWER/FAILED`。CRITIC 节点返回 `Command`，携带下一跳路由名，图引擎据此跳转。图结构本身就是流程文档，任务节点、复盘节点、裁决节点、终态节点各自的职责边界在编译期就固定下来。
+
+### 2. 有环图：支持多轮自我纠正，不是一次性流水线
+
+图不是单向 DAG：`graph.addEdge("RETRY", "INIT")` 和 `graph.addEdge("ADD_NEWS", "INIT")` 把 CRITIC 的两条路由绕回起点，让任务节点重新展开执行。发现某个任务结果不可信，或者缺了新闻分析，工作流会自己再跑一轮，而不是把半成品结果直接扔给回答阶段。循环由 `WorkflowRetryPolicy`（默认 2 次）兜底，任务级 `attempts` 计数保证循环有限终止，不会无限绕圈。
+
+### 3. Fan-out/Fan-in 并行任务
+
+行情、技术、财务、新闻四类分析被建模为四个独立的图节点，从 `INIT` 同时展开，各自维护状态机（`PLANNED → RUNNING → COMPLETED/FAILED/RETRYING`）、尝试次数、结果和错误信息，在 `REFLECTOR` 节点汇合。单个任务失败不影响其他任务继续跑完，复盘阶段统一决策。
+
+### 4. MongoDB Checkpoint + 乐观锁 + 幂等恢复
+
+`ExecutionState` 整体持久化到 `agent_execution_states`，每次落盘都带版本号：`MongoExecutionStateStore` 用 `findAndReplace` 配合 `version` 条件更新，版本不匹配直接抛 `CheckpointConflictException`，避免旧状态覆盖新状态。`WorkflowRunner.resume(executionId)` 能从任意中断点恢复执行——因为节点执行前会检查任务当前状态，已经 `COMPLETED` 的任务直接跳过，不会重复调用 Tool 或重新计费。
+
+### 5. Reflector + Critic：把"结果可信吗"从模型手里拿回来
+
+`WorkflowReflector` 用确定性规则逐个检查任务结果：状态是否 `FAILED`、内容是否命中"失败/异常/ERROR"关键词、返回的标的代码是否和计划里的 `symbol` 一致。不可信且还有重试次数的任务标记重试；超过 `WorkflowRetryPolicy`（默认 2 次）上限的标记终态失败；如果所有任务都通过校验但缺了新闻分析，会动态追加一个 `NEWS_ANALYSIS` 任务。`WorkflowCritic` 再把这份复盘结论收敛成四选一的路由（`RETRY`/`ADD_NEWS`/`ANSWER`/`FAILED`）——判断结果是否可信这件事完全交给规则代码，不让 LLM 用自然语言"觉得还行"就把没验证过的数据放进最终回答。
+
+### 6. 无工具 Answer Generator：回答阶段不能再调用工具
+
+`WorkflowAnswerGenerator` 生成最终回答时用的是 `stockAnalysisAssistantWithoutTools`——同一个 `StockAnalysisAssistant` 接口，但构建时没有注册任何 `@Tool`。这是有意为之：ANSWER 节点只应该在 Critic 判定"结果可信"之后才会被路由到，此时四类任务已经拿到经过 Reflector 校验的结果，回答阶段的唯一任务是把这些已验证的数据组织成结论，而不是重新决定要不要再查一次行情或再搜一次新闻。如果这一步还带着 Tool，模型完全可能在生成回答时绕开 Critic 的裁决，自己动手调用工具拿一份未经校验的数据放进答案，等于让图编排的可信性保证形同虚设。传入的 prompt 也只包含 `state.getOriginalQuestion()` 和拼接好的任务结果文本，模型只能基于这份白名单内的上下文做总结，构不成额外的信息来源。
+
+### 7. Planner + PlanValidator：模型只提议，代码才有决定权
+
+`AgentPlannerAssistant` 是一个不注册 Tool 的纯规划助手，只输出 `{intent, symbol, tasks}` 结构，本身不能触发任何 Tool 调用或副作用。这份计划必须先经过 `PlanValidator` 校验才能进入执行层：意图必须精确等于 `STOCK_ANALYSIS`；股票代码要么已经是 `\d{6}.(SH|SZ|BJ)` 格式，要么是纯 6 位数字并能按开头数字规则推导出交易所后缀，推导不出来直接判非法；任务列表不能为空、不能包含非法枚举值，并做去重。任何一项没通过，计划就地拒绝，回退到不受计划约束的完整工具助手，而不是把模型的原始输出直接交给执行器。当模型输出 Markdown 或夹带解释文字而不是纯 JSON 时，`PlannerTextParser` 会尝试从文本里抽取股票代码和任务关键词，抽取出的候选依然要过同一套 `PlanValidator` 校验——多一层文本兜底，不代表放宽校验标准。
+
+### 8. Tool 调用不是简单的 LLM function calling 包装
+
+七个业务 Tool（`MarketDataTool`/`TechnicalAnalysisTool`/`FinancialAnalysisTool`/`NewsRagTool`/`TimeSeriesPredictionTool`/`StockComparisonTool`/`PortfolioAnalysisTool`）统一返回 `ToolResult<T>`（`success`/`data`/`errorCode`/`errorMessage`/`costTime`），异常在 Tool 内部被捕获转成结构化失败，不会作为未处理异常向上抛到框架的工具调用循环里。`predictStockTrend` 用 JDK `HttpClient` 同步调用外部 `daily_stock_analysis` 分析流水线（`POST /api/v1/analysis/analyze`），带独立超时配置，把嵌套的 `report.summary.trend_prediction` 结构拍平成 Tool 输出。`AgentConfig.selectTools` 按名称从统一的工具注册表里挑选子集，同一批 Tool 实现同时服务于两条路径：普通对话走 LangChain4j `AiServices` 的自动 function calling（模型自主决定调用哪个、调几次），股票分析工作流则走 `StockAnalysisTaskExecutor` 的确定性映射（图节点指定任务类型，直接调用对应方法，不经过模型二次判断）——同一套 Tool 既能被模型自由调度，也能被工作流强制编排。
+
+### 9. 工具调用循环上限与可控降级
+
+`AgentToolConfig.maxSequentialInvocations`（默认 10）把 LangChain4j 默认 100 次的连续工具调用上限收紧，模型陷入反复调错工具、结果不收敛时提前失败，而不是空转到框架默认值才报错。`ChatService` 捕获到工具调用超限或连接异常后，会清空该会话在 LangChain4j 里的记忆，避免下一轮请求在同一个发散的消息序列上继续叠加。
+
+### 10. Milvus 2.5 Hybrid Search + RRF 融合检索
+
+知识库 collection（`MilvusHybridCollectionManager`）在稠密向量字段之外，用 Milvus 2.5 的 BM25 Function 从 `content` 字段自动生成稀疏向量字段，两者共存于同一张表。检索时 `MilvusHybridSearchClient` 并发构建两个 `AnnSearchReq`（COSINE 稠密 ANN + BM25 稀疏 ANN），交给 `HybridSearchReq` 和 `RRFRanker(60)` 做倒数排名融合，一次调用拿到融合后的 Top-K，比单纯依赖 Embedding 相似度更抗关键词漂移和语义漂移的双重风险。`RetrievalService` 在 Hybrid 客户端不可用或调用异常时自动降级为纯语义检索，检索链路不会因为 Milvus Function 未启用而整体不可用。
+
+### 11. 查询重写：让多轮追问也能被检索命中
+
+每轮对话先把用户当前问题和 Redis 里的短期对话摘要一起交给 `QueryRewriteAssistant`（无记忆、无工具的独立 LLM 调用），改写成不依赖上下文就能独立检索的问句。改写结果只用于 RAG 检索和长期记忆召回，最终回答仍然基于用户的原始问题生成——避免"这个的估值怎么样"这类指代不明的追问在向量检索时召回不到内容，同时不让改写引入的措辞变化污染最终回答的语气。
+
+## 执行链路
 
 ```text
 用户问题
   ↓
-AgentPlannerAssistant
-  ↓
-PlanValidator
-  ↓
-ExecutionState（MongoDB Checkpoint）
+AgentPlannerAssistant → PlanValidator → ExecutionState（MongoDB Checkpoint）
        ↓
 LangGraph4j StateGraph
   ├─ MARKET_DATA
@@ -76,198 +87,37 @@ LangGraph4j StateGraph
        ↓
 Reflector → 重试 / 动态追加任务 / 可信结果
        ↓
-无工具 Answer Generator
+Critic → RETRY / ADD_NEWS / ANSWER / FAILED
+       ↓
+无工具 Answer Generator（仅消费 Critic 通过的结果）
 ```
-
-当前工作流只覆盖股票分析场景。订单、物流和客服工单需要新增对应的任务枚举、业务规则和工具节点，不能直接套用股票分析任务。
 
 工作流核心代码位于 `src/main/java/com/ljl/ai/agent/workflow/`：
 
-- `StockAnalysisWorkflow`：定义 LangGraph4j 节点和边。
-- `StockAnalysisTaskExecutor`：维护任务到业务 Tool 的唯一映射入口。
-- `WorkflowReflector`：执行结果可信度校验和补充任务决策。
-- `MongoExecutionStateStore`：实现 MongoDB Checkpoint 和乐观锁版本控制。
-- `WorkflowRunner`：负责新建执行、重试循环和 `executionId` 恢复。
+- `StockAnalysisWorkflow`：定义 LangGraph4j 节点和边
+- `StockAnalysisTaskExecutor`：任务到业务 Tool 的唯一映射入口
+- `WorkflowReflector` / `WorkflowCritic`：复盘任务结果并裁决下一步路由
+- `WorkflowAnswerGenerator`：基于可信结果生成最终答案
+- `MongoExecutionStateStore`：MongoDB Checkpoint 与乐观锁版本控制
+- `WorkflowRunner`：新建执行、调用 StateGraph、按 `executionId` 恢复
+
+## 记忆体系
+
+- **短期记忆**：LangChain4j `MessageWindowChatMemory` 落地到 Redis List（`ai:memory:messages:{userId}:{sessionId}`），默认保留最近 20 条消息，包含用户消息、AI 回复和完整的工具调用链，模型能在同一轮基于 Tool 结果继续推理。超过字符上限（默认 32,000）后 `ShortTermSummaryService` 把较早内容压缩为滚动摘要，摘要和消息窗口分开存储，互不覆盖。
+- **长期记忆**：用户通过前端或 `/api/memories` 主动录入的记忆原文和标签存 MongoDB `user_long_term_memories`，向量存 Milvus 并带 `userId`/`memoryId` 元数据。召回时先按相似度检索出候选池（Top-K 的 100 倍作为候选，因为向量库是多用户共享的），再按 `userId` 过滤和启用状态过滤，避免用户之间的记忆互相串用。
+- **RAG 知识库**：`KnowledgeService` 处理文档分块、Embedding、双写 Milvus 单路存储和 Hybrid collection，同时把文档元数据、来源、启用状态存进 MongoDB `knowledge_documents`。删除/禁用文档时先在 MongoDB 打删除中标记，再带重试地删除向量，最后才移除记录，防止向量删除失败导致 MongoDB 记录和向量库状态不一致。支持飞书文档同步，同步时用乐观锁处理并发写入冲突。
 
 ## 启动
 
-环境要求：JDK 21、Maven、MongoDB、Redis。Milvus 用于知识库检索，未启动时不影响基础对话服务启动。
-
-Redis 默认连接 `localhost:6379`，默认密码为 `test`，可通过 `REDIS_HOST`、`REDIS_PORT`、`REDIS_PASSWORD` 和 `REDIS_DATABASE` 覆盖。
+环境要求：JDK 21、Maven、MongoDB、Redis；Milvus 用于知识库检索，未启动不影响基础对话服务启动。
 
 ```bash
-# 当前 shell 已配置 jdk21 切换命令时使用
-jdk21
 mvn spring-boot:run
 ```
 
-默认服务地址为 `http://localhost:8080`，健康检查接口为 `GET /api/health`。
+默认服务地址 `http://localhost:8080`，健康检查 `GET /api/health`。
 
-### 新闻搜索配置
-
-新闻搜索只需要配置一个可用 provider，不要求 Tavily 和 SerpAPI 同时配置。系统按以下顺序选择：
-
-1. 配置 Tavily key 时优先使用 Tavily；
-2. 未配置 Tavily、但配置 SerpAPI 时使用 SerpAPI；
-3. 两者都未配置时，新闻任务返回结构化失败结果，其他分析任务仍可继续处理。
-
-推荐通过环境变量配置，不要把真实 key 提交到仓库：
-
-```bash
-export TAVILY_API_KEY="<your-tavily-key>"
-# 或仅配置 SerpAPI：
-# export SERPAPI_API_KEY="<your-serpapi-key>"
-```
-
-Spring 配置也支持以下属性名：`news-search.tavily-api-key`、
-`news-search.tavily-api-keys`、`news-search.serpapi-api-key` 和
-`news-search.serpapi-api-keys`。修改配置后必须重启 Spring Boot，运行中的进程不会动态读取 YAML。
-
-对话接口：`POST /api/chat/send`。示例请求：
-
-```json
-{
-  "userId": "demo-user",
-  "sessionId": "demo-session",
-  "message": "分析贵州茅台最近的走势",
-  "orderId": "600519.SH",
-  "enableRag": false
-}
-```
-
-请求中的 `orderId` 字段兼容原模板，当前作为股票代码使用；建议后续将其重命名为 `symbol`。
-
-## 对话记忆与注意力
-
-### 短期记忆
-
-- 使用 LangChain4j `MessageWindowChatMemory` 实现会话上下文窗口。
-- 使用 Redis List 保存短期消息，Key 格式为 `ai:memory:messages:{userId}:{sessionId}`。
-- 每个会话默认最多保留最近 20 条 LangChain4j 消息作为模型当前请求的上下文。
-- 消息包含用户消息、AI 回复、工具调用请求和工具执行结果，因此模型可以在同一轮中继续基于 Tool 结果推理。
-- 当短期消息累计超过默认 32,000 字符时，`ShortTermSummaryService` 将较早内容压缩为摘要，并将摘要保存到 `ai:memory:summary:{userId}:{sessionId}`。
-- Redis 短期记忆默认 TTL 为 86,400 秒，可通过 `SHORT_MEMORY_MAX_MESSAGES`、`SHORT_MEMORY_MAX_CHARS`、`SHORT_MEMORY_SUMMARY_TRIGGER` 和 `SHORT_MEMORY_TTL` 调整。
-
-### 长期记忆
-
-- 业务层会话保存到 `chat_sessions`，用户可见的对话消息保存到 `chat_messages`。
-- 用户主动录入的长期记忆原文和元数据保存到 MongoDB `user_long_term_memories`，向量保存到 Milvus。
-- 长期记忆向量包含 `userId` 和 `memoryId` 元数据，召回时先按相似度检索，再进行用户隔离和启用状态过滤。
-- 每轮对话会将召回的长期记忆和短期摘要注入当前问题；长期记忆服务异常时自动降级，不阻断普通聊天。
-
-长期记忆接口：
-
-```text
-POST   /api/memories
-GET    /api/memories?userId=demo-user
-GET    /api/memories/recall?userId=demo-user&query=我的投资偏好
-DELETE /api/memories/{memoryId}?userId=demo-user
-```
-
-### RAG 诊断
-
-启用 RAG 的每轮对话会在 MongoDB `rag_traces` 保存轻量诊断记录，用于判断问题来自召回还是模型生成。记录包含：
-
-- `retrievalCount`：召回片段数量
-- `topScore`：最高相似度
-- `sourceIds` / `sourceTitles`：召回来源
-- `contextLength` / `answerLength`：上下文和回答长度
-- `success` / `errorMessage`：链路结果
-
-不保存完整 Prompt、完整模型输出或完整增强上下文；诊断记录写入失败不会阻断对话。
-
-### 记忆存储位置
-
-| 数据 | 存储位置 | 用途 |
-|------|----------|------|
-| 当前窗口内的 LangChain4j 消息、Tool 请求和 Tool 结果 | Redis List `ai:memory:messages:{userId}:{sessionId}` | Agent 当前上下文与工具调用链 |
-| 短期记忆摘要 | Redis String `ai:memory:summary:{userId}:{sessionId}` | 压缩较早对话并保持上下文连贯 |
-| 用户长期记忆原文与元数据 | MongoDB `user_long_term_memories` | 记忆管理、用户隔离和向量关联 |
-| 用户长期记忆向量 | Milvus | 语义相似度召回 |
-| RAG 轻量诊断记录 | MongoDB `rag_traces` | 排查召回、模型和链路问题 |
-| 用户可见的对话消息 | MongoDB `chat_messages` | 前端历史消息展示 |
-| 会话元数据、标题、标签、摘要 | MongoDB `chat_sessions` | 会话管理 |
-| RAG 文档元数据 | MongoDB `knowledge_documents` | 文档管理与来源信息 |
-| RAG 向量和文本片段 | Milvus | 相似度检索和知识增强 |
-
-### MongoDB、Milvus、Redis 和模型的边界
-
-- **MongoDB**：保存可持久化的业务会话数据、用户可见消息和知识文档元数据。默认连接 `mongodb://localhost:27017/customer_memory`。
-- **Redis**：保存带 TTL 的短期消息窗口和滚动摘要，作为 Agent 的即时上下文缓存。
-- **长期记忆**：MongoDB 保存可管理的原文和元数据，Milvus 保存向量；长期记忆通过 `userId` 做数据隔离。
-- **Milvus**：只保存知识库文档的 embedding 和文本片段，用于 RAG 相似度检索；它不是对话记忆库，也不保存模型参数。
-- **模型本身**：模型服务不保存本项目的会话记忆。每次请求由 Java 从 Redis 读取短期消息窗口和摘要，组装为请求上下文后发送给模型；模型只在本次请求中使用这些上下文。
-- **模型参数**：模型参数属于外部模型服务，由模型服务提供方管理，不存储在 MongoDB、Milvus 或 Redis 中。
-
-### 关键配置
-
-| 配置 | 默认值 | 作用 |
-|------|--------|------|
-| `memory.short-term.max-messages` | `20` | LangChain4j 当前消息窗口大小 |
-| `memory.short-term.summary-trigger-messages` | `12` | 开始检查摘要的最小消息数 |
-| `memory.short-term.max-chars` | `32000` | 短期记忆字符数上限 |
-| `memory.short-term.summary-max-chars` | `8000` | 短期摘要最大字符数，超出时保留最新内容 |
-| `memory.short-term.ttl` | `86400` | Redis 短期消息窗口 TTL，单位秒 |
-| `memory.long-term.top-k` | `5` | 长期记忆最多召回数量 |
-| `memory.long-term.min-score` | `0.72` | 长期记忆最小相似度 |
-| `knowledge.retrieval.top-k` | `5` | RAG 默认召回片段数量 |
-| `knowledge.retrieval.min-score` | `0.7` | RAG 最小相似度 |
-| `agent.tool.max-sequential-invocations` | `10` | 单次对话连续 Tool 调用上限 |
-| `news-search.tavily-api-key` | 空 | Tavily 单个 API key，配置后优先使用 |
-| `news-search.serpapi-api-key` | 空 | SerpAPI 单个 API key，仅在 Tavily 未配置时使用 |
-
-短期记忆相关配置支持环境变量覆盖：
-
-```bash
-REDIS_HOST=localhost
-REDIS_PORT=6379
-REDIS_PASSWORD=test
-SHORT_MEMORY_MAX_MESSAGES=20
-SHORT_MEMORY_SUMMARY_TRIGGER=12
-SHORT_MEMORY_MAX_CHARS=32000
-SHORT_MEMORY_TTL=86400
-LONG_MEMORY_TOP_K=5
-LONG_MEMORY_MIN_SCORE=0.72
-```
-
-### RAG 诊断排查
-
-RAG 成功完成并生成回答后，会在 MongoDB `rag_traces` 保存轻量记录。建议按以下顺序判断问题：
-
-1. `retrievalCount = 0`：优先检查 Embedding、Milvus 连接、知识库内容和相似度阈值。
-2. `retrievalCount > 0` 但 `topScore` 偏低：优先检查文档分块、Embedding 模型和检索阈值。
-3. 来源和相似度正常但回答异常：优先检查系统提示词、模型生成和工具结果。
-4. `success = false` 或存在 `errorMessage`：检查 RAG/模型调用链路异常。
-
-诊断记录只保留查询、召回数量、最高分、来源 ID/标题、上下文长度、回答长度和错误信息，不保存完整 Prompt 或完整模型输出。
-
-### Planner 与工作流故障排查
-
-- 日志出现 `Planner 非 JSON`：表示模型返回了 Markdown 或解释文字，系统会尝试提取股票代码和分析任务；只要代码和任务可校验，仍会进入工作流。
-- 日志出现 `NotSerializableException: ExecutionState`：应确认应用已重新编译并重启；当前工作流不会把完整执行状态放入 LangGraph 图状态。
-- 日志出现 `任务无法开始: FAILED`：应确认运行的是最新构建版本。失败任务现在会进入有限重试，工具异常会转成任务失败结果，不会直接抛出为请求异常。
-- 新闻任务提示未配置 key：检查启动进程实际加载的配置，并确认配置后已重启；只配置 Tavily 或只配置 SerpAPI 均可。
-
-## Agent 请求开关
-
-`POST /api/chat/send` 支持按请求控制能力：
-
-```json
-{
-  "userId": "demo-user",
-  "message": "分析 600519 的技术面和近期风险",
-  "orderId": "600519.SH",
-  "enableTools": true,
-  "enableRag": true
-}
-```
-
-- `enableTools=true`：进入 LangGraph4j Plan-and-Execute 股票分析工作流，由 Planner 生成计划并按任务执行 Tool。
-- `enableTools=false`：使用不注册 Tool 的普通对话 Agent。
-- `enableRag=true`：先从 Milvus 检索知识，再将检索上下文注入 Agent。
-- `enableRag=false`：跳过知识库检索。
-
-前端位于 `frontend/`，启动方式：
+前端（`frontend/`，React + Vite）：
 
 ```bash
 cd frontend
@@ -275,83 +125,34 @@ npm install
 npm run dev
 ```
 
-前端默认访问 `http://localhost:5173`，后端接口代理到 `http://localhost:8080`。当前前端支持：
+默认访问 `http://localhost:5173`，接口代理到后端 8080。前端支持用户/会话/股票代码设置、历史会话加载、RAG 和 Tool 调用开关、长期记忆主动录入，以及工具调用结果、知识来源和响应耗时展示。
 
-- 用户 ID、会话 ID 和股票代码设置
-- 新建会话、加载历史会话、复制会话 ID
-- 开关控制 RAG 和 Tool 调用
-- 行情、技术分析、财务数据、新闻风险快捷提问
-- 长期记忆主动录入，支持内容和逗号分隔标签
-- 展示工具调用结果、知识来源、响应耗时和对话错误
+对话接口示例：
+
+```bash
+curl -X POST http://localhost:8080/api/chat/send \
+  -H "Content-Type: application/json" \
+  -d '{"userId":"demo-user","message":"分析贵州茅台最近的走势","orderId":"600519.SH","enableRag":true,"enableTools":true}'
+```
+
+- `enableTools=true`：进入 LangGraph4j Plan-and-Execute 工作流；`false` 时使用不注册 Tool 的普通对话 Agent。
+- `enableRag=true`：先从 Milvus 检索知识再注入上下文；`false` 时跳过检索。
 
 ## REST API
-
-### 对话与会话
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | `POST` | `/api/chat/send` | 发送对话消息，可控制 `enableRag`、`enableTools` |
-| `GET` | `/api/chat/sessions/{sessionId}/messages?userId=...` | 获取会话历史消息并校验归属 |
+| `GET` | `/api/chat/sessions/{sessionId}/messages` | 获取会话历史 |
 | `GET` | `/api/chat/users/{userId}/sessions` | 获取用户会话列表 |
-| `POST` | `/api/chat/sessions/{sessionId}/close?userId=...` | 关闭会话并校验归属 |
-| `POST` | `/api/chat/messages/{messageId}/feedback` | 提交 `-1/0/1` 消息反馈 |
-
-### 长期记忆
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| `POST` | `/api/memories` | 主动新增用户长期记忆 |
-| `GET` | `/api/memories?userId=...` | 查询用户已启用的长期记忆 |
-| `GET` | `/api/memories/recall?userId=...&query=...` | 按语义相似度召回长期记忆 |
-| `DELETE` | `/api/memories/{memoryId}?userId=...` | 删除用户自己的长期记忆及其向量 |
-
-新增长期记忆示例：
-
-```json
-{
-  "userId": "demo-user",
-  "content": "我偏好关注新能源和半导体行业",
-  "tags": ["投资偏好", "行业"]
-}
-```
-
-### 知识库与 RAG
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| `POST` | `/api/rag/search` | 执行指定 `topK` 的语义检索，范围 1-50 |
-| `POST` | `/api/rag/query` | 执行 RAG 增强查询，失败时降级为普通查询 |
+| `POST` | `/api/chat/messages/{messageId}/feedback` | 提交消息反馈 |
+| `POST` | `/api/memories` | 新增用户长期记忆 |
+| `GET` | `/api/memories/recall` | 按语义相似度召回长期记忆 |
+| `DELETE` | `/api/memories/{memoryId}` | 删除用户自己的长期记忆 |
+| `POST` | `/api/rag/search` | 指定 `topK` 的语义/混合检索 |
+| `POST` | `/api/rag/query` | RAG 增强查询，失败时降级为普通查询 |
+| `POST` | `/api/knowledge/documents` | 添加知识文档 |
 | `POST` | `/api/knowledge/feishu/sync` | 同步飞书文档 |
-| `POST` | `/api/knowledge/documents` | 添加自定义知识文档，内容上限 10MB |
-| `GET` | `/api/knowledge/documents` | 获取所有启用的知识文档 |
-| `GET` | `/api/knowledge/documents/type/{type}` | 按文档类型查询 |
-| `POST` | `/api/knowledge/documents/{documentId}/disable` | 禁用知识文档 |
-| `DELETE` | `/api/knowledge/documents/{documentId}` | 删除知识文档及其向量 |
+| `GET` | `/api/health` / `/api/info` | 健康检查与服务信息 |
 
-### 服务状态
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| `GET` | `/api/health` | 健康检查 |
-| `GET` | `/api/info` | 服务名称、版本和能力信息 |
-
-## 日志
-
-日志写入当前项目目录下的 `Logwork/`：
-
-- 当前日志：`Logwork/application.log`
-- 按天归档：`Logwork/application.yyyy-MM-dd.i.log`
-- 单文件最大 50 MB，最多保留 30 天
-
-预测服务配置：
-
-```bash
-PREDICTION_BASE_URL=http://localhost:8000
-PREDICTION_TIMEOUT_SECONDS=180
-```
-
-Java Agent 会调用 `POST {PREDICTION_BASE_URL}/api/v1/analysis/analyze`，请求 `stock_code`、`report_type`、`async_mode` 和 `notify`，并读取 `report.summary.trend_prediction`。
-
-行情、新闻数据源通过 `MARKET_DATA_BASE_URL` 和 `NEWS_SEARCH_BASE_URL` 预留，接入 AkShare、Tushare、TickFlow、YFinance 或搜索服务时应在对应 Tool 内增加适配器，并保留来源和时间字段。
-
-所有预测仅用于研究分析，不构成投资建议。
+所有预测结果仅用于研究分析，不构成投资建议。

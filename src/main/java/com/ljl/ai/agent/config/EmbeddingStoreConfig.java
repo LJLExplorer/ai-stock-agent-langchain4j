@@ -2,6 +2,10 @@ package com.ljl.ai.agent.config;
 
 import dev.langchain4j.store.embedding.EmbeddingStore;
 import dev.langchain4j.store.embedding.milvus.MilvusEmbeddingStore;
+import com.ljl.ai.agent.rag.MilvusHybridCollectionManager;
+import com.ljl.ai.agent.rag.MilvusHybridSearchClient;
+import io.milvus.v2.client.ConnectConfig;
+import io.milvus.v2.client.MilvusClientV2;
 import dev.langchain4j.data.segment.TextSegment;
 import jakarta.annotation.Resource;
 import lombok.RequiredArgsConstructor;
@@ -33,6 +37,24 @@ public class EmbeddingStoreConfig {
                 .collectionName(milvusConfig.getCollectionName())
                 .dimension(milvusConfig.getDimension())
                 .build();
+    }
+
+    @Bean(destroyMethod = "close")
+    public MilvusClientV2 milvusClientV2() {
+        return new MilvusClientV2(ConnectConfig.builder()
+                .uri("http://" + milvusConfig.getHost() + ":" + milvusConfig.getPort())
+                .build());
+    }
+
+    @Bean
+    public MilvusHybridCollectionManager milvusHybridCollectionManager(MilvusClientV2 milvusClientV2) {
+        return new MilvusHybridCollectionManager(milvusClientV2, milvusConfig.getHybridCollectionName(),
+                milvusConfig.getDimension());
+    }
+
+    @Bean
+    public MilvusHybridSearchClient milvusHybridSearchClient(MilvusClientV2 milvusClientV2) {
+        return new MilvusHybridSearchClient(milvusClientV2, milvusConfig.getHybridCollectionName(), 60);
     }
 
 

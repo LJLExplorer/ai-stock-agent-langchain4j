@@ -10,7 +10,7 @@ import java.util.regex.Pattern;
 /** 从 Planner 的 Markdown 或自然语言兜底响应中提取受限股票分析计划。 */
 public final class PlannerTextParser {
 
-    private static final Pattern SYMBOL = Pattern.compile("(?<!\\d)(\\d{6})(?:\\.(SH|SZ))?(?!\\d)",
+    private static final Pattern SYMBOL = Pattern.compile("(?<!\\d)(\\d{6})(?:\\.(SH|SZ|BJ))?(?!\\d)",
             Pattern.CASE_INSENSITIVE);
 
     private PlannerTextParser() {
@@ -25,9 +25,7 @@ public final class PlannerTextParser {
         }
         String rawSymbol = matcher.group(1);
         String market = matcher.group(2);
-        String symbol = rawSymbol + (market == null
-                ? (rawSymbol.startsWith("6") ? ".SH" : ".SZ")
-                : "." + market.toUpperCase(Locale.ROOT));
+        String symbol = rawSymbol + (market == null ? "." + inferMarketSuffix(rawSymbol) : "." + market.toUpperCase(Locale.ROOT));
 
         String normalized = combined.toLowerCase(Locale.ROOT);
         LinkedHashSet<StockAnalysisTask> tasks = new LinkedHashSet<>();
@@ -51,6 +49,16 @@ public final class PlannerTextParser {
             tasks.add(StockAnalysisTask.MARKET_DATA);
         }
         return AgentPlan.builder().intent("STOCK_ANALYSIS").symbol(symbol).tasks(new ArrayList<>(tasks)).build();
+    }
+
+    private static String inferMarketSuffix(String rawSymbol) {
+        if (rawSymbol.startsWith("6") || rawSymbol.startsWith("5") || rawSymbol.startsWith("9")) {
+            return "SH";
+        }
+        if (rawSymbol.startsWith("4") || rawSymbol.startsWith("8")) {
+            return "BJ";
+        }
+        return "SZ";
     }
 
     private static boolean containsAny(String text, String... keywords) {

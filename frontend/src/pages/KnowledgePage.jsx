@@ -1,6 +1,6 @@
 import { ArrowRight, BookOpen, CheckCircle2, RefreshCw, TriangleAlert } from 'lucide-react'
 import { NavLink, Link } from 'react-router-dom'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import KnowledgeForm from '../components/knowledge/KnowledgeForm.jsx'
 import KnowledgeList from '../components/knowledge/KnowledgeList.jsx'
 
@@ -16,17 +16,19 @@ export default function KnowledgePage() {
   const [formBusy, setFormBusy] = useState(false)
   const [busyId, setBusyId] = useState('')
   const [notice, setNotice] = useState(null)
+  const documentsRequestRef = useRef(0)
 
   const loadDocuments = useCallback(async () => {
+    const requestId = ++documentsRequestRef.current
     setLoading(true)
     try {
       const response = await fetch('/api/knowledge/documents')
       const data = await readResponse(response, '知识文档加载失败')
-      setDocuments(Array.isArray(data) ? data : [])
+      if (requestId === documentsRequestRef.current) setDocuments(Array.isArray(data) ? data : [])
     } catch (error) {
-      setNotice({ type: 'error', message: error.message })
+      if (requestId === documentsRequestRef.current) setNotice({ type: 'error', message: error.message })
     } finally {
-      setLoading(false)
+      if (requestId === documentsRequestRef.current) setLoading(false)
     }
   }, [])
 
