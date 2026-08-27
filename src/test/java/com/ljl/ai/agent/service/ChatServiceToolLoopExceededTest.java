@@ -42,7 +42,7 @@ class ChatServiceToolLoopExceededTest {
         when(chatMemoryProvider.get(any())).thenReturn(chatMemory);
         when(chatMemory.messages()).thenReturn(Collections.emptyList());
         when(longTermMemoryService.recall(any(), any())).thenReturn(Collections.emptyList());
-        when(assistant.chat(any(), any())).thenThrow(
+        when(assistant.chatWithMemory(any(), any(), any())).thenThrow(
                 new RuntimeException("Something is wrong, exceeded 10 sequential tool executions"));
 
         ReflectionTestUtils.setField(chatService, "chatMemoryService", chatMemoryService);

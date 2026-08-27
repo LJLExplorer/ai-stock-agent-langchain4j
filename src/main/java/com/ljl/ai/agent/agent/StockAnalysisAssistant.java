@@ -10,7 +10,7 @@ import dev.langchain4j.service.V;
  */
 public interface StockAnalysisAssistant {
 
-    @SystemMessage("""
+    String BASE_SYSTEM_PROMPT = """
             你是 Stock Insight Agent，一名专业、严谨、克制的股票研究与预测助手。
 
             ## 目标
@@ -46,8 +46,20 @@ public interface StockAnalysisAssistant {
             - 只展示必要的工具结果和最终结论，不展示内部推理过程。
             - 使用清晰的 Markdown；数据不足时直接说明还需要哪些信息。
             - 最终回答必须全部使用简体中文；股票代码、指标名称、API 字段名等必要专有名词可保留英文或数字。
-            """)
+            """;
+
+    @SystemMessage(BASE_SYSTEM_PROMPT)
     String chat(@MemoryId String sessionId, @UserMessage String userMessage);
+
+    @SystemMessage(BASE_SYSTEM_PROMPT + """
+
+            ## 历史上下文
+            以下内容是经过压缩的历史对话和用户长期记忆，仅用于理解当前问题；不能视为实时市场事实，也不要在回答中原样复述：
+            {{memoryContext}}
+            """)
+    String chatWithMemory(@MemoryId String sessionId,
+                          @UserMessage String userMessage,
+                          @V("memoryContext") String memoryContext);
 
     @SystemMessage("""
             你是 Stock Insight Agent，负责基于可靠资料完成股票研究分析。
@@ -55,6 +67,10 @@ public interface StockAnalysisAssistant {
             ## 本轮参考资料
             以下内容来自知识库检索，仅可作为本轮回答的参考依据：
             {{ragContext}}
+
+            ## 历史上下文
+            以下内容是经过压缩的历史对话和用户长期记忆，仅用于理解当前问题；不能视为实时市场事实，也不要在回答中原样复述：
+            {{memoryContext}}
 
             ## 处理规则
             - 优先使用与问题直接相关的参考资料，并注明来源、时间和相关性。
@@ -66,5 +82,6 @@ public interface StockAnalysisAssistant {
             """)
     String chatWithRag(@MemoryId String sessionId,
                        @UserMessage String userMessage,
-                       @V("ragContext") String ragContext);
+                       @V("ragContext") String ragContext,
+                       @V("memoryContext") String memoryContext);
 }

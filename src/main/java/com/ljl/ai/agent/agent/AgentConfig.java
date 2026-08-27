@@ -122,6 +122,13 @@ public class AgentConfig {
                 .build();
     }
 
+    @Bean
+    public ConversationSummaryAssistant conversationSummaryAssistant() {
+        return AiServices.builder(ConversationSummaryAssistant.class)
+                .chatLanguageModel(chatLanguageModel)
+                .build();
+    }
+
     /**
      * 创建不注册工具的助手，用于请求级别关闭工具调用。
      */

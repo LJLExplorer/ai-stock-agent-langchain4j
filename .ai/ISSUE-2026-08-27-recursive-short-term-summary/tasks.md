@@ -14,11 +14,11 @@
 
 ### Task 1: 覆盖递归摘要的失败测试
 
-**状态：** in_progress
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `mvn -q test -Dtest=ShortTermSummaryServiceTest` 在测试使用双参数摘要器时编译失败，证明旧实现无法接收旧摘要。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `mvn -q test -Dtest=ShortTermSummaryServiceTest` 通过。
 
 **涉及文件：**
 - Modify: `src/test/java/com/ljl/ai/agent/memoery/ShortTermSummaryServiceTest.java`
@@ -31,11 +31,11 @@
 
 ### Task 2: 覆盖系统上下文注入的失败测试
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `mvn -q test -Dtest=ChatServiceMemoryContextTest` 因 `StockAnalysisAssistant` 缺少带记忆上下文的方法而编译失败。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `mvn -q test -Dtest=ShortTermSummaryServiceTest,ChatServiceMemoryContextTest,ChatServiceToolLoopExceededTest` 通过。
 
 **涉及文件：**
 - Modify: `src/test/java/com/ljl/ai/agent/service/ChatServiceMemoryKeyTest.java`
@@ -49,11 +49,11 @@
 
 ### Task 3: 注册摘要模型并清理摘要 Key
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `mvn -q test -Dtest=ChatServiceMemoryKeyTest` 失败，显示未调用 `ShortTermSummaryService.delete`。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `mvn -q test -Dtest=ChatServiceMemoryKeyTest` 通过。
 
 **涉及文件：**
 - Create: `src/main/java/com/ljl/ai/agent/agent/ConversationSummaryAssistant.java`
@@ -67,11 +67,11 @@
 
 ### Task 4: 回归验证
 
-**状态：** pending
+**状态：** completed
 
 **Red Evidence：** 不适用
 
-**Green Evidence：** 待填写
+**Green Evidence：** `mvn -q test`、`mvn -q -DskipTests compile` 与 `git diff --check` 均通过。
 
 1. 运行 `mvn -q test`。
 2. 运行 `mvn -q -DskipTests compile`。
