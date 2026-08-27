@@ -219,11 +219,17 @@ Run: `git add frontend/src/App.jsx frontend/src/components/knowledge/KnowledgeLi
 
 ### Task 4: 完成跨层回归验收
 
-**状态：** pending
+**状态：** completed
 
 **Red Evidence：** 不适用，本任务执行回归验证。
 
-**Green Evidence：** 待填写
+**Green Evidence：**
+
+- Command: `mvn -q -Dtest=KnowledgeServiceTest,KnowledgeControllerTest test`
+- Actual: PASS。
+- Command: `cd frontend && npm run build`
+- Actual: PASS。
+- 兼容性修复：详情页在单篇查询接口返回 404 时回退到现有文档列表并按 `documentId` 查找，避免未重启后端时出现通用加载失败。
 
 **涉及文件：**
 

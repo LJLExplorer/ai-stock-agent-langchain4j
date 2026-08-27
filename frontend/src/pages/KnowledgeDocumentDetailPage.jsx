@@ -18,6 +18,22 @@ async function readResponse(response, fallback) {
   return data
 }
 
+async function loadDocument(documentId) {
+  try {
+    const response = await fetch(`/api/knowledge/documents/${encodeURIComponent(documentId)}`)
+    return await readResponse(response, '知识文档加载失败')
+  } catch (error) {
+    if (error.status !== 404) throw error
+    const response = await fetch('/api/knowledge/documents')
+    const documents = await readResponse(response, '知识文档加载失败')
+    const document = Array.isArray(documents)
+      ? documents.find((item) => item.documentId === documentId)
+      : null
+    if (!document) throw error
+    return document
+  }
+}
+
 export default function KnowledgeDocumentDetailPage() {
   const { documentId } = useParams()
   const [document, setDocument] = useState(null)
@@ -28,8 +44,7 @@ export default function KnowledgeDocumentDetailPage() {
     let active = true
     setState('loading')
     setMessage('')
-    fetch(`/api/knowledge/documents/${encodeURIComponent(documentId)}`)
-      .then((response) => readResponse(response, '知识文档加载失败'))
+    loadDocument(documentId)
       .then((data) => {
         if (!active) return
         setDocument(data)
