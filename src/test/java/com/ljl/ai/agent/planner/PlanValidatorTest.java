@@ -56,4 +56,15 @@ class PlanValidatorTest {
                 .tasks(List.of(StockAnalysisTask.MARKET_DATA))
                 .build()).valid());
     }
+
+    @Test
+    void shouldNormalizeBeijingExchangeSymbols() {
+        AgentPlan rawPlan = AgentPlan.builder().intent("STOCK_ANALYSIS").symbol("830799")
+                .tasks(List.of(StockAnalysisTask.MARKET_DATA)).build();
+        AgentPlan fullPlan = AgentPlan.builder().intent("STOCK_ANALYSIS").symbol("430047.BJ")
+                .tasks(List.of(StockAnalysisTask.MARKET_DATA)).build();
+
+        assertEquals("830799.BJ", validator.validate(rawPlan).plan().getSymbol());
+        assertEquals("430047.BJ", validator.validate(fullPlan).plan().getSymbol());
+    }
 }

@@ -1,5 +1,6 @@
 package com.ljl.ai.agent.workflow;
 
+import com.alibaba.fastjson2.JSON;
 import com.ljl.ai.agent.model.dto.ToolResult;
 import org.springframework.stereotype.Component;
 
@@ -25,7 +26,7 @@ public class StockAnalysisTaskNode {
             ToolResult<?> result = executor.execute(task.getTaskType(), symbol,
                     state.getOriginalQuestion(), "latest");
             if (result.isSuccess()) {
-                task.complete(String.valueOf(result.getData()));
+                task.complete(JSON.toJSONString(result.getData()));
             } else {
                 task.fail(result.getErrorMessage());
             }

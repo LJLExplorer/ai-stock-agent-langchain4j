@@ -15,7 +15,7 @@ import java.util.regex.Pattern;
 public class PlanValidator {
 
     private static final String STOCK_ANALYSIS = "STOCK_ANALYSIS";
-    private static final Pattern FULL_SYMBOL = Pattern.compile("\\d{6}\\.(SH|SZ)");
+    private static final Pattern FULL_SYMBOL = Pattern.compile("\\d{6}\\.(SH|SZ|BJ)");
     private static final Pattern RAW_SYMBOL = Pattern.compile("\\d{6}");
 
     public ValidatedPlan validate(AgentPlan candidate) {
@@ -56,11 +56,14 @@ public class PlanValidator {
         if (!RAW_SYMBOL.matcher(symbol).matches()) {
             return null;
         }
-        if (symbol.startsWith("6")) {
+        if (symbol.startsWith("6") || symbol.startsWith("5") || symbol.startsWith("9")) {
             return symbol + ".SH";
         }
         if (symbol.startsWith("0") || symbol.startsWith("3")) {
             return symbol + ".SZ";
+        }
+        if (symbol.startsWith("4") || symbol.startsWith("8")) {
+            return symbol + ".BJ";
         }
         return null;
     }

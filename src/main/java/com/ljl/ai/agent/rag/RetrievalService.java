@@ -12,10 +12,16 @@ import dev.langchain4j.store.embedding.EmbeddingStore;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.query.Criteria;
+import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * RAG检索服务 - 负责语义检索和内容增强
@@ -32,6 +38,9 @@ public class RetrievalService {
     
     @Autowired
     private KnowledgeConfig knowledgeConfig;
+
+    @Autowired
+    private MongoTemplate mongoTemplate;
 
     /**
      * 语义检索相关知识
@@ -60,12 +69,24 @@ public class RetrievalService {
 
         // 转换结果
         List<RetrievalResult> results = new ArrayList<>();
-        for (EmbeddingMatch<TextSegment> match : searchResult.matches()) {
+        List<EmbeddingMatch<TextSegment>> matches = searchResult.matches();
+        Set<String> enabledDocumentIds = enabledDocumentIds(matches.stream()
+                .map(EmbeddingMatch::embedded)
+                .filter(segment -> segment != null && segment.metadata() != null)
+                .map(segment -> segment.metadata().getString("documentId"))
+                .filter(value -> !isBlank(value))
+                .toList());
+        for (EmbeddingMatch<TextSegment> match : matches) {
             TextSegment segment = match.embedded();
             if (segment == null || segment.metadata() == null
                     || isBlank(segment.metadata().getString("documentId"))
                     || isBlank(segment.metadata().getString("title"))) {
                 log.warn("跳过缺少知识文档元数据的向量命中, score: {}", match.score());
+                continue;
+            }
+            if (!enabledDocumentIds.contains(segment.metadata().getString("documentId"))) {
+                log.debug("跳过已禁用或删除中的知识文档向量命中, documentId: {}",
+                        segment.metadata().getString("documentId"));
                 continue;
             }
 
@@ -130,6 +151,22 @@ public class RetrievalService {
 
     private boolean isBlank(String value) {
         return value == null || value.isBlank();
+    }
+
+    private Set<String> enabledDocumentIds(Collection<String> documentIds) {
+        if (documentIds.isEmpty()) {
+            return Set.of();
+        }
+        Criteria visible = new Criteria().orOperator(
+                Criteria.where("deleteStatus").exists(false),
+                Criteria.where("deleteStatus").is(null),
+                Criteria.where("deleteStatus").is("ACTIVE"));
+        Query query = new Query(new Criteria().andOperator(
+                Criteria.where("documentId").in(documentIds),
+                Criteria.where("enabled").is(true),
+                visible));
+        return new HashSet<>(mongoTemplate.find(query, com.ljl.ai.agent.model.entity.KnowledgeDocument.class)
+                .stream().map(com.ljl.ai.agent.model.entity.KnowledgeDocument::getDocumentId).toList());
     }
 
     /**

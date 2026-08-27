@@ -377,14 +377,21 @@ public class KnowledgeService {
         if (document == null) {
             throw new IllegalArgumentException("知识文档不存在: " + documentId);
         }
-        if (Boolean.FALSE.equals(document.getEnabled())) {
+        if (Boolean.FALSE.equals(document.getEnabled())
+                && (document.getVectorIds() == null || document.getVectorIds().isEmpty())) {
             return;
         }
 
+        // Persist the retrieval barrier before touching Milvus. RetrievalService
+        // checks this flag, so a failed vector deletion cannot expose the document.
+        if (!Boolean.FALSE.equals(document.getEnabled())) {
+            document.setEnabled(false);
+            document.setUpdateTime(LocalDateTime.now());
+            mongoTemplate.save(document);
+        }
         if (document.getVectorIds() != null && !document.getVectorIds().isEmpty()) {
             deleteVectorsWithRetry(document.getVectorIds(), documentId);
         }
-        document.setEnabled(false);
         document.setVectorIds(List.of());
         document.setChunkCount(0);
         document.setUpdateTime(LocalDateTime.now());
@@ -402,13 +409,24 @@ public class KnowledgeService {
             throw new IllegalStateException("知识文档没有可用于重建向量的原始内容: " + documentId);
         }
 
+        if (document.getVectorIds() != null && !document.getVectorIds().isEmpty()) {
+            deleteVectorsWithRetry(document.getVectorIds(), documentId);
+            document.setVectorIds(List.of());
+            document.setChunkCount(0);
+        }
+
         List<String> vectorIds = processAndStoreDocument(document);
-        document.setVectorIds(vectorIds);
-        document.setChunkCount(vectorIds.size());
-        document.setEnabled(true);
-        document.setDeleteStatus(null);
-        document.setUpdateTime(LocalDateTime.now());
-        mongoTemplate.save(document);
-        log.info("知识文档已重新启用, id: {}, chunks: {}", documentId, vectorIds.size());
+        try {
+            document.setVectorIds(vectorIds);
+            document.setChunkCount(vectorIds.size());
+            document.setEnabled(true);
+            document.setDeleteStatus(null);
+            document.setUpdateTime(LocalDateTime.now());
+            mongoTemplate.save(document);
+            log.info("知识文档已重新启用, id: {}, chunks: {}", documentId, vectorIds.size());
+        } catch (RuntimeException exception) {
+            removeVectorsBestEffort(vectorIds, documentId);
+            throw exception;
+        }
     }
 }

@@ -30,6 +30,7 @@ import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.time.Duration;
 import java.util.List;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -183,6 +184,7 @@ public class ChatService {
 
             String aiResponse;
             StockAnalysisAssistant assistant = stockAnalysisAssistantWithoutTools;
+            List<ToolInvocation> workflowToolInvocations = Collections.emptyList();
             if (Boolean.TRUE.equals(request.getEnableTools())) {
                 Optional<PlanValidator.ValidatedPlan> planned = planForExecution(userMessage);
                 if (planned.isPresent()) {
@@ -191,6 +193,7 @@ public class ChatService {
                         ExecutionState executionState = createExecutionState(
                                 request.getUserId(), sessionId, userMessage, validatedPlan);
                         executionState = workflowRunner.run(executionState);
+                        workflowToolInvocations = workflowToolInvocations(executionState);
                         assistant = stockAnalysisAssistantWithoutTools;
                         userMessage = userMessage + "\n【工作流分析结果】\n" + executionResults(executionState);
                     } else {
@@ -217,7 +220,10 @@ public class ChatService {
             }
             aiResponse = AnswerTextFormatter.format(aiResponse);
 
-            List<ToolInvocation> toolInvocations = collectToolInvocations(memoryId, previousToolInvocationIds);
+            List<ToolInvocation> toolInvocations = new ArrayList<>(
+                    collectToolInvocations(memoryId, previousToolInvocationIds));
+            toolInvocations.addAll(workflowToolInvocations);
+            knowledgeSources = mergeKnowledgeSources(knowledgeSources, extractWebSources(workflowToolInvocations));
 
             // 4. 保存用户消息和AI回复到业务层（chat_messages 集合，用于前端展示）
             chatMemoryService.saveUserMessage(sessionId, originalUserMessage);
@@ -379,8 +385,9 @@ public class ChatService {
                 continue;
             }
             try {
-                JSONObject result = JSON.parseObject(invocation.getResult());
-                JSONArray items = result.getJSONArray("data");
+                Object parsed = JSON.parse(invocation.getResult());
+                JSONArray items = parsed instanceof JSONArray array ? array
+                        : parsed instanceof JSONObject result ? result.getJSONArray("data") : null;
                 if (items == null) {
                     continue;
                 }
@@ -410,6 +417,47 @@ public class ChatService {
             }
         }
         return sources;
+    }
+
+    static List<ToolInvocation> workflowToolInvocations(ExecutionState state) {
+        if (state == null || state.getTasks() == null) {
+            return Collections.emptyList();
+        }
+        String symbol = state.getPlan() == null ? null : state.getPlan().getSymbol();
+        return state.getTasks().stream().map(task -> {
+            boolean success = task.getStatus() == com.ljl.ai.agent.workflow.TaskStatus.COMPLETED;
+            Long executionTime = task.getStartedAt() == null || task.getCompletedAt() == null ? null
+                    : Duration.between(task.getStartedAt(), task.getCompletedAt()).toMillis();
+            return ToolInvocation.builder()
+                    .toolName(TOOL_DISPLAY_NAMES.getOrDefault(task.getTaskType().toolName(), task.getTaskType().toolName()))
+                    .functionName(task.getTaskType().toolName())
+                    .parameters("symbol=" + StringUtils.defaultString(symbol))
+                    .result(task.getResult())
+                    .success(success)
+                    .errorMessage(success ? null : task.getErrorMessage())
+                    .executionTime(executionTime)
+                    .invokeTime(task.getStartedAt())
+                    .build();
+        }).toList();
+    }
+
+    private List<KnowledgeSource> mergeKnowledgeSources(List<KnowledgeSource> current,
+                                                        List<KnowledgeSource> additional) {
+        if ((current == null || current.isEmpty()) && (additional == null || additional.isEmpty())) {
+            return current;
+        }
+        Map<String, KnowledgeSource> merged = new java.util.LinkedHashMap<>();
+        if (current != null) {
+            current.forEach(source -> merged.put(sourceKey(source), source));
+        }
+        if (additional != null) {
+            additional.forEach(source -> merged.putIfAbsent(sourceKey(source), source));
+        }
+        return new ArrayList<>(merged.values());
+    }
+
+    private String sourceKey(KnowledgeSource source) {
+        return StringUtils.defaultIfBlank(source.getDocumentUrl(), source.getDocumentId());
     }
 
     /**
