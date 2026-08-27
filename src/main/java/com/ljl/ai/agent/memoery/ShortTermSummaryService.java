@@ -1,6 +1,7 @@
 package com.ljl.ai.agent.memoery;
 
 import com.ljl.ai.agent.config.MemoryConfig;
+import com.ljl.ai.agent.agent.ConversationSummaryAssistant;
 import dev.langchain4j.data.message.ChatMessage;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -8,7 +9,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
-import java.util.function.Function;
+import java.util.function.BiFunction;
 import java.util.stream.Collectors;
 
 /** 按字符数压缩 Redis 短期记忆，摘要文本独立于 LangChain4j 消息窗口。 */
@@ -21,19 +22,22 @@ public class ShortTermSummaryService {
     private final StringRedisTemplate redis;
     private final RedisChatMemoryStore memoryStore;
     private final MemoryConfig config;
-    private final Function<String, String> summaryGenerator;
+    private final BiFunction<String, String, String> summaryGenerator;
 
     @Autowired
     public ShortTermSummaryService(StringRedisTemplate redis,
                                    RedisChatMemoryStore memoryStore,
-                                   MemoryConfig config) {
-        this(redis, memoryStore, config, Function.identity());
+                                   MemoryConfig config,
+                                   ConversationSummaryAssistant summaryAssistant) {
+        this(redis, memoryStore, config,
+                (previousSummary, evictedMessages) -> summaryAssistant.summarize(
+                        evictedMessages, previousSummary, config.getShortTerm().getSummaryMaxChars()));
     }
 
     public ShortTermSummaryService(StringRedisTemplate redis,
                                    RedisChatMemoryStore memoryStore,
                                    MemoryConfig config,
-                                   Function<String, String> summaryGenerator) {
+                                   BiFunction<String, String, String> summaryGenerator) {
         this.redis = redis;
         this.memoryStore = memoryStore;
         this.config = config;
@@ -63,13 +67,14 @@ public class ShortTermSummaryService {
                 .map(ChatMessage::toString)
                 .collect(Collectors.joining("\n"));
         String oldSummary = get(memoryId);
-        String generated = summaryGenerator.apply(source);
-        String combinedSummary = oldSummary == null || oldSummary.isBlank()
-                ? generated : oldSummary + "\n" + generated;
+        String summary = summaryGenerator.apply(oldSummary == null ? "" : oldSummary, source);
         int maxSummaryChars = config.getShortTerm().getSummaryMaxChars();
-        String summary = combinedSummary.length() > maxSummaryChars
-                ? combinedSummary.substring(combinedSummary.length() - maxSummaryChars)
-                : combinedSummary;
+        if (summary == null || summary.isBlank()) {
+            throw new IllegalStateException("短期记忆摘要为空");
+        }
+        if (summary.length() > maxSummaryChars) {
+            throw new IllegalStateException("短期记忆摘要超过字符上限");
+        }
 
         try {
             memoryStore.updateMessages(memoryId, messages.subList(split, messages.size()));

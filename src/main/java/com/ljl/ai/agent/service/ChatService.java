@@ -195,13 +195,6 @@ public class ChatService {
             // ChatMemory 使用 MongoDB 持久化（chat_memory_records 集合）
 
             String memoryContext = buildMemoryContext(request.getUserId(), sessionId, retrievalQuery);
-            if (StringUtils.isNotBlank(memoryContext)) {
-                int maxContextLength = 5000;
-                String truncatedContext = memoryContext.length() > maxContextLength
-                    ? "..." + memoryContext.substring(memoryContext.length() - maxContextLength)
-                    : memoryContext;
-                userMessage = truncatedContext + "\n\n当前问题：" + userMessage;
-            }
 
             String aiResponse;
             String workflowAnswer = null;
@@ -233,10 +226,10 @@ public class ChatService {
                 aiResponse = workflowAnswer;
             } else if (ragContext != null) {
                 // 有RAG上下文
-                aiResponse = assistant.chatWithRag(memoryId, userMessage, ragContext);
+                aiResponse = assistant.chatWithRag(memoryId, userMessage, ragContext, memoryContext);
             } else {
                 // 普通对话
-                aiResponse = assistant.chat(memoryId, userMessage);
+                aiResponse = assistant.chatWithMemory(memoryId, userMessage, memoryContext);
             }
 
             if (StringUtils.isBlank(aiResponse)) {
@@ -697,7 +690,9 @@ public class ChatService {
         if (session == null || !userId.equals(session.getUserId())) {
             throw new SecurityException("无权访问该会话");
         }
-        chatMemoryProvider.clearMemory(memoryId(userId, sessionId));
+        String memoryId = memoryId(userId, sessionId);
+        chatMemoryProvider.clearMemory(memoryId);
+        shortTermSummaryService.delete(memoryId);
         chatMemoryService.deleteSession(sessionId);
     }
 
