@@ -76,7 +76,16 @@
       "Bash(mvn -q test -Dtest=PlannerTextParserTest,PlanValidatorTest,WorkflowReflectorTest,ExecutionTaskTest,ChatServicePlannerTest,ChatServiceWorkflowTest -DfailIfNoTests=false)",
       "Bash(echo \"EXIT: $?\")",
       "Bash(npx eslint *)",
-      "Bash(npm run *)"
+      "Bash(npm run *)",
+      "WebFetch(domain:github.com)",
+      "Bash(gh auth *)",
+      "Bash(curl -s \"https://api.github.com/repos/ZhuLinsen/daily_stock_analysis\")",
+      "Bash(curl -s \"https://api.github.com/repos/ZhuLinsen/daily_stock_analysis/contents\")",
+      "Bash(python3 -c \"import json,sys; data=json.load\\(sys.stdin\\); print\\('\\\\n'.join\\(i['name'] for i in data\\)\\) if isinstance\\(data,list\\) else print\\(data\\)\")",
+      "Bash(curl -sv \"https://api.github.com\")",
+      "Bash(curl *)",
+      "Bash(mvn -q test -Dtest=ChatServicePlannerTest,AgentPlannerAssistantTest -DfailIfNoTests=false)",
+      "Bash(echo \"EXIT=$?\")"
     ]
   }
 }
