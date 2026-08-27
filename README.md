@@ -7,7 +7,7 @@
 - 实时行情、技术指标（MA/MACD/RSI/KDJ/布林带）、财务基本面（营收/净利润/ROE/PE/PB/现金流）分析
 - 新闻/公告/研报 RAG 检索，多股票对比与投资组合分析
 - 对接外部预测服务生成股票趋势预测
-- 短期记忆（Redis 滚动摘要）+ 长期记忆（用户主动录入 + 语义召回）+ 查询重写
+- 递归短期记忆（Redis 原始窗口 + LLM 滚动摘要）+ 长期记忆（用户主动录入 + 语义召回）+ 查询重写
 
 ## 技术栈
 
@@ -15,7 +15,7 @@ Java 21、Spring Boot 3.3、LangChain4j 1.0.0-beta3、LangGraph4j 1.6.1、MongoD
 
 ## Agent 划分
 
-系统不是一个模型顶所有事，而是按职责拆成四个独立的 `AiServices` 实例，各自绑定不同的 System Prompt 和工具权限，互不干扰：
+系统不是一个模型顶所有事，而是按职责拆成五个独立的 `AiServices` 实例，各自绑定不同的 System Prompt 和工具权限，互不干扰：
 
 | Agent | 接口 | 工具权限 | 职责 |
 |-------|------|----------|------|
@@ -23,8 +23,9 @@ Java 21、Spring Boot 3.3、LangChain4j 1.0.0-beta3、LangGraph4j 1.6.1、MongoD
 | 全功能研究助手 | `StockAnalysisAssistant`（`stockAnalysisAssistant`） | 全部 7 个业务 Tool | Planner 判定不是股票分析问题、或计划被 `PlanValidator` 拒绝时的兜底路径，模型自主决定调用哪些工具 |
 | 工作流内回答生成器 | `StockAnalysisAssistant`（`stockAnalysisAssistantWithoutTools`） | 无 | 同一接口的无工具变体，只在图工作流的 ANSWER 节点被调用，只消费 Critic 已验证的任务结果 |
 | 查询重写器 | `QueryRewriteAssistant` | 无 | 结合短期摘要把追问改写成独立可检索的问句，只服务 RAG 和长期记忆召回 |
+| 对话摘要器 | `ConversationSummaryAssistant` | 无 | 将已有摘要与即将淘汰的早期消息递归压缩，保留关键事实、约束、结论与待办 |
 
-这四个 Agent 由 `AgentConfig` 统一构建，同一个 `chatLanguageModel` 后端，靠 System Prompt 和工具集合区分角色，而不是靠模型自己在一份 Prompt 里判断"这次该不该用工具"。
+这五个 Agent 由 `AgentConfig` 统一构建，同一个 `chatLanguageModel` 后端，靠 System Prompt 和工具集合区分角色，而不是靠模型自己在一份 Prompt 里判断"这次该不该用工具"。
 
 ## 架构亮点
 
@@ -80,17 +81,26 @@ Java 21、Spring Boot 3.3、LangChain4j 1.0.0-beta3、LangGraph4j 1.6.1、MongoD
 AgentPlannerAssistant → PlanValidator → ExecutionState（MongoDB Checkpoint）
        ↓
 LangGraph4j StateGraph
+  ↓
+INIT
+  ↓
   ├─ MARKET_DATA
   ├─ TECHNICAL_ANALYSIS
   ├─ FINANCIAL_ANALYSIS
   └─ NEWS_ANALYSIS
        ↓
-Reflector → 重试 / 动态追加任务 / 可信结果
+REFLECTOR（汇总任务结果，给出重试任务或补充任务建议）
        ↓
-Critic → RETRY / ADD_NEWS / ANSWER / FAILED
-       ↓
-无工具 Answer Generator（仅消费 Critic 通过的结果）
+CRITIC（裁决下一跳）
+  ├─ RETRY：将失败/需复核任务标记为 RETRYING
+  │    └────────────────────→ INIT（回到上方任务节点）
+  ├─ ADD_NEWS：按需追加 NEWS_ANALYSIS 任务
+  │    └────────────────────→ INIT（回到上方任务节点）
+  ├─ ANSWER → 无工具 Answer Generator → END
+  └─ FAILED → END
 ```
+
+`RETRY` 与 `ADD_NEWS` 都不是终点：前者只重置 Critic 指定的任务，后者在缺少新闻分析时补充该任务；两者随后均沿 `RETRY/ADD_NEWS → INIT` 回到图的任务阶段，再次经 `REFLECTOR → CRITIC` 裁决。只有 `ANSWER` 和 `FAILED` 连接到图的 `END`。
 
 工作流核心代码位于 `src/main/java/com/ljl/ai/agent/workflow/`：
 
@@ -103,9 +113,10 @@ Critic → RETRY / ADD_NEWS / ANSWER / FAILED
 
 ## 记忆体系
 
-- **短期记忆**：LangChain4j `MessageWindowChatMemory` 落地到 Redis List（`ai:memory:messages:{userId}:{sessionId}`），默认保留最近 20 条消息，包含用户消息、AI 回复和完整的工具调用链，模型能在同一轮基于 Tool 结果继续推理。超过字符上限（默认 32,000）后 `ShortTermSummaryService` 把较早内容压缩为滚动摘要，摘要和消息窗口分开存储，互不覆盖。
-- **长期记忆**：用户通过前端或 `/api/memories` 主动录入的记忆原文和标签存 MongoDB `user_long_term_memories`，向量存 Milvus 并带 `userId`/`memoryId` 元数据。召回时先按相似度检索出候选池（Top-K 的 100 倍作为候选，因为向量库是多用户共享的），再按 `userId` 过滤和启用状态过滤，避免用户之间的记忆互相串用。
-- **RAG 知识库**：`KnowledgeService` 处理文档分块、Embedding、双写 Milvus 单路存储和 Hybrid collection，同时把文档元数据、来源、启用状态存进 MongoDB `knowledge_documents`。删除/禁用文档时先在 MongoDB 打删除中标记，再带重试地删除向量，最后才移除记录，防止向量删除失败导致 MongoDB 记录和向量库状态不一致。支持飞书文档同步，同步时用乐观锁处理并发写入冲突。
+- **短期记忆：保持一次会话的连续性**。LangChain4j `MessageWindowChatMemory` 落地到 Redis List（`ai:memory:messages:{userId}:{sessionId}`），默认保留最近 20 条原始消息，包含用户消息、AI 回复和完整工具调用链。超过字符上限（默认 32,000）后，`ShortTermSummaryService` 将“已有摘要 + 即将淘汰的前半窗口消息”交给 `ConversationSummaryAssistant` 生成新的递归摘要，并只保留后半窗口的最新原文。摘要保存于独立的 `ai:memory:summary:{userId}:{sessionId}`，不会被窗口覆盖；生成失败、为空或超过摘要预算时，原始窗口不会被淘汰。
+- **上下文注入：让模型同时看懂远近历史**。每轮主对话都收到 Redis 中的近轮原文、系统消息中的短期摘要和当前用户原始问题；摘要不会拼进用户消息，因此不会随着下一轮再次写入 Redis。RAG 对话同样携带这份历史上下文。查询重写器利用短期摘要把“它最近怎么样”这类追问改写成可独立检索的问题。
+- **长期记忆：跨会话保留用户明确授权的信息**。用户通过前端或 `/api/memories` 主动录入的偏好、约束或长期背景，其原文和标签存 MongoDB `user_long_term_memories`，向量存 Milvus 并带 `userId`/`memoryId` 元数据。召回时先按相似度检索出候选池（Top-K 的 100 倍作为候选，因为向量库是多用户共享的），再按 `userId` 和启用状态过滤，避免用户之间的记忆互相串用；它与短期摘要共同作为系统上下文提供给模型。
+- **RAG 知识库**：`KnowledgeService` 处理文档分块、Embedding、双写 Milvus 单路存储和 Hybrid collection（支持BM25与语义搜索的collection)，同时把文档元数据、来源、启用状态存进 MongoDB `knowledge_documents`。删除/禁用文档时先在 MongoDB 打删除中标记，再带重试地删除向量，最后才移除记录，防止向量删除失败导致 MongoDB 记录和向量库状态不一致。支持飞书文档同步，同步时用乐观锁处理并发写入冲突。
 
 ## 启动
 
