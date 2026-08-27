@@ -15,18 +15,25 @@
 
 ### Task 1: 建立 Milvus Hybrid Search 客户端边界与结果模型
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：**
 
-**Green Evidence：** 待填写
+- Command: `mvn -q -Dtest=MilvusHybridSearchResultTest test`
+- Actual: test compilation failed because `MilvusHybridSearchResult` and `MilvusHybridSearchClient` did not exist.
+- Match Expected: yes
+
+**Green Evidence：**
+
+- Command: `mvn -q -Dtest=MilvusHybridSearchResultTest test`
+- Actual: PASS.
 
 **涉及文件：**
 
 - Create: `src/main/java/com/ljl/ai/agent/rag/MilvusHybridSearchClient.java`
 - Create: `src/main/java/com/ljl/ai/agent/rag/MilvusHybridSearchResult.java`
 - Modify: `src/main/java/com/ljl/ai/agent/rag/RetrievalResult.java`
-- Test: `src/test/java/com/ljl/ai/agent/rag/MilvusHybridSearchClientTest.java`
+- Test: `src/test/java/com/ljl/ai/agent/rag/MilvusHybridSearchResultTest.java`
 
 1. 将本 Task 状态更新为 `in_progress`。
 2. 编写失败测试：客户端为一个查询构建稠密 ANN 与 BM25 稀疏 ANN 请求，并使用 `RRFRanker(60)`；结果映射同时保留两个通道的分数和 RRF 分数。
@@ -36,7 +43,7 @@
 
 ### Task 2: 创建并维护 BM25 混合检索 collection
 
-**状态：** pending
+**状态：** in_progress
 
 **Red Evidence：** 待填写
 

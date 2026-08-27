@@ -108,7 +108,7 @@ public class StockAnalysisWorkflow {
 
     private AsyncNodeAction<AgentState> taskNode(String name, ExecutionState executionState) {
         return stateNode(name, executionState, ignored -> {
-            if (taskNode != null) {
+            if (taskNode != null && executionState != null) {
                 executionState.getTasks().stream().filter(task -> name.equals(task.getTaskType().name()))
                         .findFirst().ifPresent(task -> taskNode.execute(executionState, task));
             }

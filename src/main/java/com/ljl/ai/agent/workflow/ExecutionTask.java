@@ -45,7 +45,7 @@ public class ExecutionTask {
     }
 
     public void retry(String reason) {
-        if (status != TaskStatus.RUNNING && status != TaskStatus.FAILED) {
+        if (status != TaskStatus.RUNNING && status != TaskStatus.FAILED && status != TaskStatus.COMPLETED) {
             throw new IllegalStateException("任务无法重试: " + status);
         }
         status = TaskStatus.RETRYING;

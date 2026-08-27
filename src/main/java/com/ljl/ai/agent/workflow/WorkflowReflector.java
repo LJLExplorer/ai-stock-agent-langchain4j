@@ -26,10 +26,15 @@ public class WorkflowReflector {
     }
 
     public ReflectionDecision reflect(ExecutionState state) {
+        if (state == null || state.getTasks() == null || state.getTasks().isEmpty()) {
+            return new ReflectionDecision(false, List.of(), List.of(), "执行状态为空");
+        }
+
         List<String> retryTaskIds = new ArrayList<>();
         List<StockAnalysisTask> additionalTasks = new ArrayList<>();
         List<String> reasons = new ArrayList<>();
         String expectedSymbol = state.getPlan() == null ? null : state.getPlan().getSymbol();
+        boolean terminalFailure = false;
 
         for (ExecutionTask task : state.getTasks()) {
             if (task.getStatus() == TaskStatus.FAILED
@@ -38,6 +43,7 @@ public class WorkflowReflector {
                     retryTaskIds.add(task.getTaskId());
                     reasons.add(task.getTaskId() + "结果为空或不可信");
                 } else {
+                    terminalFailure = true;
                     reasons.add(task.getTaskId() + "超过最大重试次数");
                 }
             }
@@ -45,12 +51,10 @@ public class WorkflowReflector {
 
         boolean hasNews = state.getTasks().stream()
                 .anyMatch(task -> task.getTaskType() == StockAnalysisTask.NEWS_ANALYSIS);
-        if (retryTaskIds.isEmpty() && !hasNews) {
+        if (retryTaskIds.isEmpty() && !terminalFailure && !hasNews) {
             additionalTasks.add(StockAnalysisTask.NEWS_ANALYSIS);
             reasons.add("缺少新闻分析，追加资讯任务");
         }
-        boolean terminalFailure = state.getTasks().stream().anyMatch(task ->
-                task.getStatus() == TaskStatus.FAILED && !retryPolicy.canRetry(task));
         boolean trusted = retryTaskIds.isEmpty() && additionalTasks.isEmpty() && !terminalFailure;
         return new ReflectionDecision(trusted, retryTaskIds, additionalTasks,
                 reasons.isEmpty() ? "全部任务结果通过校验" : String.join("；", reasons));
@@ -58,7 +62,8 @@ public class WorkflowReflector {
 
     private boolean reliable(ExecutionTask task, String expectedSymbol) {
         String result = task.getResult();
-        if (!StringUtils.hasText(result) || result.contains("ERROR") || result.contains("失败")) {
+        if (!StringUtils.hasText(result) || result.toUpperCase().contains("ERROR")
+                || result.contains("失败") || result.contains("异常") || result.contains("exception")) {
             return false;
         }
         if (expectedSymbol != null && result.contains("股票：") && !result.contains(expectedSymbol)) {

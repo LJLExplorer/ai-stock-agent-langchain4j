@@ -26,9 +26,18 @@ public class MilvusConfig {
      * 集合名称
      */
     private String collectionName = "kefu_knowledge_base";
-    
+
+    /** Milvus BM25 + 稠密向量混合检索 collection。 */
+    private String hybridCollectionName = "stock_analysis_knowledge_hybrid";
+
     /**
      * 向量维度
      */
     private int dimension = 1024;
+
+    /**
+     * Hybrid Search 失败时是否降级为单路语义检索。
+     * 生产环境如需第一时间发现 Milvus 故障，可关闭降级使异常直接抛出。
+     */
+    private boolean hybridSearchFallbackEnabled = true;
 }

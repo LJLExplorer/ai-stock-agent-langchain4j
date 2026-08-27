@@ -74,12 +74,20 @@ public class LongTermMemoryService {
         for (EmbeddingMatch<TextSegment> match : result.matches()) {
             TextSegment segment = match.embedded();
             Metadata metadata = segment.metadata();
-            if (metadata == null) continue;
-            if (!userId.equals(metadata.getString("userId"))) continue;
+            if (metadata == null) {
+                continue;
+            }
+            if (!userId.equals(metadata.getString("userId"))) {
+                continue;
+            }
             UserLongTermMemory memory = mongoTemplate.findById(
                     metadata.getString("memoryId"), UserLongTermMemory.class);
-            if (memory != null && Boolean.TRUE.equals(memory.getEnabled())) memories.add(memory);
-            if (memories.size() >= config.getLongTerm().getTopK()) break;
+            if (memory != null && Boolean.TRUE.equals(memory.getEnabled())) {
+                memories.add(memory);
+            }
+            if (memories.size() >= config.getLongTerm().getTopK()) {
+                break;
+            }
         }
         return memories;
     }

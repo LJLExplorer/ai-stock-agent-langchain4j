@@ -27,7 +27,14 @@ public class WorkflowRunner {
     private ExecutionState execute(ExecutionState state) {
         long previousVersion = state.getVersion();
         workflow.run(state);
-        stateStore.save(state, previousVersion);
+        try {
+            stateStore.save(state, previousVersion);
+        } catch (CheckpointConflictException conflict) {
+            long latestVersion = stateStore.load(state.getExecutionId())
+                    .map(ExecutionState::getVersion)
+                    .orElseThrow(() -> conflict);
+            stateStore.save(state, latestVersion);
+        }
         return state;
     }
 }

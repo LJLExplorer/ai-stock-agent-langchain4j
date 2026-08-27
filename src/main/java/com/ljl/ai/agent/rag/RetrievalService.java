@@ -42,6 +42,12 @@ public class RetrievalService {
     @Autowired
     private MongoTemplate mongoTemplate;
 
+    @Autowired
+    private com.ljl.ai.agent.config.MilvusConfig milvusConfig;
+
+    @Autowired(required = false)
+    private MilvusHybridSearchClient milvusHybridSearchClient;
+
     /**
      * 语义检索相关知识
      */
@@ -57,6 +63,30 @@ public class RetrievalService {
 
         // 生成查询向量
         Embedding queryEmbedding = embeddingModel.embed(query).content();
+
+        if (milvusHybridSearchClient != null) {
+            try {
+                List<MilvusHybridSearchResult> hybridMatches = milvusHybridSearchClient.search(query,
+                        queryEmbedding.vector(), topK);
+                Set<String> enabledDocumentIds = enabledDocumentIds(hybridMatches.stream()
+                        .map(MilvusHybridSearchResult::getDocumentId).filter(value -> !isBlank(value)).toList());
+                List<RetrievalResult> hybridResults = hybridMatches.stream()
+                        .filter(match -> enabledDocumentIds.contains(match.getDocumentId()))
+                        .map(match -> RetrievalResult.builder()
+                                .content(match.getContent()).documentId(match.getDocumentId()).title(match.getTitle())
+                                .documentType(match.getDocumentType()).source(match.getSource())
+                                .similarity(match.getRrfScore()).semanticScore(match.getSemanticScore())
+                                .bm25Score(match.getBm25Score()).rrfScore(match.getRrfScore()).build())
+                        .toList();
+                log.info("Milvus Hybrid Search完成, 找到 {} 个RRF融合片段", hybridResults.size());
+                return hybridResults;
+            } catch (RuntimeException exception) {
+                if (!milvusConfig.isHybridSearchFallbackEnabled()) {
+                    throw exception;
+                }
+                log.warn("Milvus Hybrid Search失败，降级为单路语义检索: {}", exception.getMessage());
+            }
+        }
 
         // 执行向量检索
         EmbeddingSearchRequest searchRequest = EmbeddingSearchRequest.builder()
