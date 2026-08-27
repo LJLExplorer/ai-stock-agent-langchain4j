@@ -156,11 +156,19 @@ Run: `git add frontend/src/App.jsx frontend/src/pages/KnowledgeDocumentDetailPag
 
 ### Task 3: 将列表标题与问答来源接入详情页
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：**
 
-**Green Evidence：** 待填写
+- Command: `rg -n '<h3>\\{document.title|href=\\{source.documentUrl|target="_blank"' frontend/src/components/knowledge/KnowledgeList.jsx frontend/src/App.jsx`
+- Actual: 匹配到列表静态标题及统一外链来源实现。
+- Match Expected: yes
+
+**Green Evidence：**
+
+- Command: `cd frontend && npm run build`
+- Actual: PASS，列表详情链接及来源分流逻辑成功打包。
+- 手工验证：受当前会话无可用浏览器及本地端口隔离限制，未执行。
 
 **涉及文件：**
 

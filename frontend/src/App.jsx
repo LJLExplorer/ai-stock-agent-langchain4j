@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { NavLink, Route, Routes } from 'react-router-dom'
+import { Link, NavLink, Route, Routes } from 'react-router-dom'
 import KnowledgePage from './pages/KnowledgePage.jsx'
 import KnowledgeDocumentDetailPage from './pages/KnowledgeDocumentDetailPage.jsx'
 import ReactMarkdown from 'react-markdown'
@@ -339,7 +339,12 @@ function SessionItem({ session, active, pinned, deleting, onClick, onPin, onDele
 }
 function formatSessionTime(value) { if (!value) return ''; const date = new Date(value); return Number.isNaN(date.getTime()) ? '' : date.toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) }
 function ToolItem({ tool }) { return <div className="tool-item"><div><span className={`tool-dot ${tool.success ? 'done' : 'fail'}`} />{tool.toolName || '工具调用'}{tool.success ? <CheckCircle2 className="tool-icon done" size={13} /> : <XCircle className="tool-icon fail" size={13} />}</div><small>{tool.errorMessage || `${tool.executionTime || 0} ms`}</small></div> }
-function SourceItem({ source }) { return <a className="source-item" href={source.documentUrl || '#'} target="_blank" rel="noreferrer"><FileText size={14} /><span><strong>{source.documentTitle || source.source || '知识来源'}</strong>{source.documentType === 'WEB' ? <small>{source.location || '网页来源'} · 点击查看原文</small> : null}</span></a> }
+function SourceItem({ source }) {
+  const content = <><FileText size={14} /><span><strong>{source.documentTitle || source.source || '知识来源'}</strong>{source.documentType === 'WEB' ? <small>{source.location || '网页来源'} · 点击查看原文</small> : null}</span></>
+  if (source.documentType === 'WEB' && source.documentUrl) return <a className="source-item" href={source.documentUrl} target="_blank" rel="noreferrer">{content}</a>
+  if (source.documentType !== 'WEB' && source.documentId) return <Link className="source-item" to={`/knowledge/documents/${encodeURIComponent(source.documentId)}`}>{content}</Link>
+  return <div className="source-item source-item-static">{content}</div>
+}
 function Muted({ children }) { return <p className="muted">{children}</p> }
 
 export default App
