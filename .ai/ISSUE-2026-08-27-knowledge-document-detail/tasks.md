@@ -46,10 +46,10 @@
 
 **涉及文件：**
 
-- Modify: `src/main/java/com/ljl/ai/agent/knowledge/KnowledgeService.java:267`
-- Modify: `src/main/java/com/ljl/ai/agent/controller/KnowledgeController.java:147`
-- Modify: `src/test/java/com/ljl/ai/agent/knowledge/KnowledgeServiceTest.java`
-- Modify: `src/test/java/com/ljl/ai/agent/controller/KnowledgeControllerTest.java`
+- Modify: `../../src/main/java/com/ljl/ai/knowledge/KnowledgeService.java:267`
+- Modify: `../../src/main/java/com/ljl/ai/controller/KnowledgeController.java:147`
+- Modify: `../../src/test/java/com/ljl/ai/knowledge/KnowledgeServiceTest.java`
+- Modify: `../../src/test/java/com/ljl/ai/controller/KnowledgeControllerTest.java`
 
 **相关组件：** MongoTemplate
 

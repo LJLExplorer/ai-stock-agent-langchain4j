@@ -85,7 +85,26 @@
       "Bash(curl -sv \"https://api.github.com\")",
       "Bash(curl *)",
       "Bash(mvn -q test -Dtest=ChatServicePlannerTest,AgentPlannerAssistantTest -DfailIfNoTests=false)",
-      "Bash(echo \"EXIT=$?\")"
+      "Bash(echo \"EXIT=$?\")",
+      "mcp__idea__list_directory_tree",
+      "mcp__idea__search_text",
+      "Bash(git mv *)",
+      "Bash(mvn -q -DskipTests compile)",
+      "Bash(mvn -q -DskipTests test-compile)",
+      "Bash(mvn -q -Dtest='com.ljl.ai.knowledge.**,com.ljl.ai.rag.**,com.ljl.ai.config.**' test)",
+      "Bash(mvn -q -DskipTests clean compile test-compile)",
+      "Bash(git rm *)",
+      "Bash(python3 -m json.tool)",
+      "Bash(mvn -q -Dtest='com.ljl.ai.rag.RetrievalServiceTest,com.ljl.ai.config.**' test)",
+      "mcp__idea__list_database_connections",
+      "Bash(mvn -q -Dtest='com.ljl.ai.rag.RetrievalServiceTest' test)",
+      "Bash(mvn -q -Dtest='com.ljl.ai.rag.**,com.ljl.ai.knowledge.**,com.ljl.ai.config.**' test)",
+      "Bash(git check-ignore *)",
+      "Bash(awk '/2026-08-29T20:4[2-7]/' /Users/ljl/code/Agent/ai-stock-agent-langchain4j/Logwork/application.log)",
+      "Bash(mvn -q -Dtest='com.ljl.ai.planner.PlannerTextParserTest' test)",
+      "Bash(git show *)",
+      "Bash(echo \"exit: $?\")",
+      "Bash(git ls-tree *)"
     ]
   }
 }

@@ -73,36 +73,68 @@ Java 21、Spring Boot 3.3、LangChain4j 1.0.0-beta3、LangGraph4j 1.6.1、MongoD
 
 每轮对话先把用户当前问题和 Redis 里的短期对话摘要一起交给 `QueryRewriteAssistant`（无记忆、无工具的独立 LLM 调用），改写成不依赖上下文就能独立检索的问句。改写结果只用于 RAG 检索和长期记忆召回，最终回答仍然基于用户的原始问题生成——避免"这个的估值怎么样"这类指代不明的追问在向量检索时召回不到内容，同时不让改写引入的措辞变化污染最终回答的语气。
 
+### 12. 全链路诊断日志：一次请求可追到模型、工具和工作流
+
+`ChatService` 为每个对话请求生成 `traceId`，并通过 MDC 关联会话准备、查询重写、RAG、规划、执行和回答日志；进入工作流后，`ExecutionState` 持久化该标识，`WorkflowRunner.resume(executionId)` 恢复执行时仍可沿用同一条链路。`TracingChatLanguageModel` 包装所有 `ChatLanguageModel` 调用，记录模型请求、响应、耗时与异常；工作流节点和 Tool 执行同时记录路由、重试、输入、结构化结果和耗时。因此可结合 `traceId`、`sessionId`、`executionId` 定位一次 Plan-and-Execute 的完整过程，而不改变原有执行分支。
+
 ## 执行链路
 
-```text
-用户问题
-  ↓
-AgentPlannerAssistant → PlanValidator → ExecutionState（MongoDB Checkpoint）
-       ↓
-LangGraph4j StateGraph
-  ↓
-INIT
-  ↓
-  ├─ MARKET_DATA
-  ├─ TECHNICAL_ANALYSIS
-  ├─ FINANCIAL_ANALYSIS
-  └─ NEWS_ANALYSIS
-       ↓
-REFLECTOR（汇总任务结果，给出重试任务或补充任务建议）
-       ↓
-CRITIC（裁决下一跳）
-  ├─ RETRY：将失败/需复核任务标记为 RETRYING
-  │    └────────────────────→ INIT（回到上方任务节点）
-  ├─ ADD_NEWS：按需追加 NEWS_ANALYSIS 任务
-  │    └────────────────────→ INIT（回到上方任务节点）
-  ├─ ANSWER → 无工具 Answer Generator → END
-  └─ FAILED → END
+```mermaid
+flowchart TD
+    request["用户请求 POST /api/chat/send"] --> controller["ChatController"]
+    controller --> chat["ChatService.chat\n创建 traceId；按 sessionId 加锁"]
+    chat --> session["获取或创建 ChatSession\n校验会话归属；生成 memoryId"]
+    session --> summary["读取 Redis 短期对话摘要"]
+    summary --> rewrite["QueryRewriteAssistant\n当前问题 + 短期摘要"]
+    rewrite --> query["retrievalQuery"]
+    query --> rag["RAG 检索\n向量化；Dense ANN + BM25 + RRF\n过滤不可用文档；失败时降级纯向量检索"]
+    rag --> memory["构建 memoryContext\n短期摘要 + 当前用户的长期记忆向量召回"]
+    memory --> toolSwitch{"enableTools？"}
+    toolSwitch -->|是| planner["AgentPlannerAssistant + PlanValidator\n仅使用原始用户问题生成和校验计划"]
+    toolSwitch -->|否| noTools["无工具 StockAnalysisAssistant"]
+    planner -->|合法股票计划| workflow["WorkflowRunner\n执行独立 Plan-and-Execute 工作流"]
+    planner -->|计划无效、规划失败| agent["StockAnalysisAssistant\nLLM 按需多轮 Tool Calling"]
+    workflow --> finalAnswer["工作流 finalAnswer"]
+    agent --> responseModel["LLM 生成回答\n自动加载近轮原始会话消息"]
+    noTools --> responseModel
+    rag --> responseModel
+    memory --> responseModel
+    finalAnswer --> format["AnswerTextFormatter"]
+    responseModel --> format
+    format --> response["ChatResponse\ncontent、knowledgeSources、toolInvocations"]
+    response --> persistence["持久化\nMongoDB 消息；会话记忆；Redis 摘要；RagTrace"]
+    persistence --> feedback["用户反馈\n写入 ChatMessage.feedback"]
 ```
 
-`RETRY` 与 `ADD_NEWS` 都不是终点：前者只重置 Critic 指定的任务，后者在缺少新闻分析时补充该任务；两者随后均沿 `RETRY/ADD_NEWS → INIT` 回到图的任务阶段，再次经 `REFLECTOR → CRITIC` 裁决。只有 `ANSWER` 和 `FAILED` 连接到图的 `END`。
+主链路中的 RAG 与长期记忆是串行执行：短期摘要先用于查询重写，再依次完成 RAG 和长期记忆召回。Planner 不消费这些上下文，只根据原始用户问题提出候选计划；普通 Agent 回答路径才同时注入 RAG、短期/长期记忆和近轮原始会话消息。
 
-工作流核心代码位于 `src/main/java/com/ljl/ai/agent/workflow/`：
+### Plan-and-Execute 工作流
+
+```mermaid
+flowchart TD
+    start([START]) --> init["INIT\n启动或恢复 ExecutionState"]
+    init --> market["MARKET_DATA\n确定性调用行情 Tool"]
+    init --> technical["TECHNICAL_ANALYSIS\n确定性调用技术指标 Tool"]
+    init --> financial["FINANCIAL_ANALYSIS\n确定性调用财报 Tool"]
+    init --> news["NEWS_ANALYSIS\n确定性调用新闻 Tool"]
+    market --> reflector["REFLECTOR\n检查任务状态、结果可靠性与标的匹配"]
+    technical --> reflector
+    financial --> reflector
+    news --> reflector
+    reflector --> critic["CRITIC\n将反思结果收敛为受限路由"]
+    critic -->|"任务可信"| answer["ANSWER\n无工具 LLM 仅汇总可信任务结果"]
+    critic -->|"任务失败或结果不可信，且仍可重试"| retry["RETRY\n只重置指定任务"]
+    critic -->|"缺少新闻分析"| addNews["ADD_NEWS\n追加 NEWS_ANALYSIS 任务"]
+    critic -->|"超过重试上限或不可恢复"| failed["FAILED"]
+    retry --> init
+    addNews --> init
+    answer --> endNode([END])
+    failed --> endNode
+```
+
+工作流会根据本轮任务结果决定是否再次调用工具，但该决定不是 Answer 阶段的 LLM 自主发起：`WorkflowReflector` 以确定性规则检查失败、空结果、错误关键词和标的匹配，`WorkflowCritic` 只允许路由到 `RETRY`、`ADD_NEWS`、`ANSWER` 或 `FAILED`。`RETRY` 与 `ADD_NEWS` 回到 `INIT` 后重新执行需要的任务，经过再次校验后才允许生成最终回答。
+
+工作流核心代码位于 `src/main/java/com/ljl/ai/workflow/`：
 
 - `StockAnalysisWorkflow`：定义 LangGraph4j 节点和边
 - `StockAnalysisTaskExecutor`：任务到业务 Tool 的唯一映射入口
@@ -138,6 +170,8 @@ npm run dev
 
 默认访问 `http://localhost:5173`，接口代理到后端 8080。前端支持用户/会话/股票代码设置、历史会话加载、RAG 和 Tool 调用开关、长期记忆主动录入，以及工具调用结果、知识来源和响应耗时展示。
 
+诊断日志默认记录完整模型与工具内容；生产环境可通过 `TRACE_LOGGING_MAX_CONTENT_LENGTH`（对应 `trace.logging.max-content-length`）限制单条记录长度，`0` 表示不截断。日志可能包含用户问题、检索上下文和工具结果，应按受控诊断环境与日志保留策略处理。
+
 对话接口示例：
 
 ```bash
@@ -146,7 +180,7 @@ curl -X POST http://localhost:8080/api/chat/send \
   -d '{"userId":"demo-user","message":"分析贵州茅台最近的走势","orderId":"600519.SH","enableRag":true,"enableTools":true}'
 ```
 
-- `enableTools=true`：进入 LangGraph4j Plan-and-Execute 工作流；`false` 时使用不注册 Tool 的普通对话 Agent。
+- `enableTools=true`：先生成并校验计划；合法股票计划进入 LangGraph4j Plan-and-Execute 工作流，计划无效或规划失败时降级为支持自主 Tool Calling 的 Agent；`false` 时使用不注册 Tool 的普通对话 Agent。
 - `enableRag=true`：先从 Milvus 检索知识再注入上下文；`false` 时跳过检索。
 
 ## REST API

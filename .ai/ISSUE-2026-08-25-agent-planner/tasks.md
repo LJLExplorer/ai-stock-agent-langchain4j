@@ -34,9 +34,9 @@
 - Actual: `Tests run: 1, Failures: 0, Errors: 0`，BUILD SUCCESS。
 
 **涉及文件：**
-- Create: `src/main/java/com/ljl/ai/agent/planner/StockAnalysisTask.java`
-- Create: `src/main/java/com/ljl/ai/agent/planner/AgentPlan.java`
-- Create: `src/test/java/com/ljl/ai/agent/planner/AgentPlanTest.java`
+- Create: `../../src/main/java/com/ljl/ai/planner/StockAnalysisTask.java`
+- Create: `../../src/main/java/com/ljl/ai/planner/AgentPlan.java`
+- Create: `../../src/test/java/com/ljl/ai/planner/AgentPlanTest.java`
 
 **步骤 0：开始任务前更新状态**
 
@@ -92,8 +92,8 @@ Expected: PASS。
 - Actual: `Tests run: 3, Failures: 0, Errors: 0`，BUILD SUCCESS。
 
 **涉及文件：**
-- Create: `src/main/java/com/ljl/ai/agent/planner/PlanValidator.java`
-- Create: `src/test/java/com/ljl/ai/agent/planner/PlanValidatorTest.java`
+- Create: `../../src/main/java/com/ljl/ai/planner/PlanValidator.java`
+- Create: `../../src/test/java/com/ljl/ai/planner/PlanValidatorTest.java`
 
 **步骤 0：开始任务前更新状态**
 
@@ -151,9 +151,9 @@ Expected: PASS。
 - Actual: `Tests run: 1, Failures: 0, Errors: 0`，BUILD SUCCESS。
 
 **涉及文件：**
-- Create: `src/main/java/com/ljl/ai/agent/agent/AgentPlannerAssistant.java`
-- Modify: `src/main/java/com/ljl/ai/agent/agent/AgentConfig.java`
-- Create: `src/test/java/com/ljl/ai/agent/agent/AgentPlannerAssistantTest.java`
+- Create: `../../src/main/java/com/ljl/ai/agent/AgentPlannerAssistant.java`
+- Modify: `../../src/main/java/com/ljl/ai/agent/AgentConfig.java`
+- Create: `../../src/test/java/com/ljl/ai/agent/AgentPlannerAssistantTest.java`
 
 **步骤 0：开始任务前更新状态**
 
@@ -210,8 +210,8 @@ Expected: PASS。
 - Actual: `Tests run: 2, Failures: 0, Errors: 0`，BUILD SUCCESS。
 
 **涉及文件：**
-- Modify: `src/main/java/com/ljl/ai/agent/agent/AgentConfig.java`
-- Create: `src/test/java/com/ljl/ai/agent/agent/AgentConfigToolSelectionTest.java`
+- Modify: `../../src/main/java/com/ljl/ai/agent/AgentConfig.java`
+- Create: `../../src/test/java/com/ljl/ai/agent/AgentConfigToolSelectionTest.java`
 
 **步骤 0：开始任务前更新状态**
 
@@ -268,8 +268,8 @@ Expected: PASS。
 - Actual: `Tests run: 2, Failures: 0, Errors: 0`，BUILD SUCCESS；非法 JSON 和非法任务均安全降级。
 
 **涉及文件：**
-- Modify: `src/main/java/com/ljl/ai/agent/service/ChatService.java`
-- Create: `src/test/java/com/ljl/ai/agent/service/ChatServicePlannerTest.java`
+- Modify: `../../src/main/java/com/ljl/ai/service/ChatService.java`
+- Create: `../../src/test/java/com/ljl/ai/service/ChatServicePlannerTest.java`
 
 **步骤 0：开始任务前更新状态**
 

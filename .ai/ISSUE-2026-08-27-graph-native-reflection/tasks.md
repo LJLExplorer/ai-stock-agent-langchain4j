@@ -28,10 +28,10 @@
 - Actual: PASS.
 
 **涉及文件：**
-- Modify: `src/main/java/com/ljl/ai/agent/workflow/WorkflowReflector.java`
-- Create: `src/main/java/com/ljl/ai/agent/workflow/WorkflowCritic.java`
-- Modify: `src/test/java/com/ljl/ai/agent/workflow/WorkflowReflectorTest.java`
-- Create: `src/test/java/com/ljl/ai/agent/workflow/WorkflowCriticTest.java`
+- Modify: `../../src/main/java/com/ljl/ai/workflow/WorkflowReflector.java`
+- Create: `../../src/main/java/com/ljl/ai/workflow/WorkflowCritic.java`
+- Modify: `../../src/test/java/com/ljl/ai/workflow/WorkflowReflectorTest.java`
+- Create: `../../src/test/java/com/ljl/ai/workflow/WorkflowCriticTest.java`
 
 1. 先更新本 Task 状态为 `in_progress`。
 2. 编写失败测试：可信结果为 ANSWER；失败任务为 RETRY；缺新闻为 ADD_NEWS；超过上限为 FAILED。
@@ -55,9 +55,9 @@
 - Actual: PASS.
 
 **涉及文件：**
-- Modify: `src/main/java/com/ljl/ai/agent/workflow/StockAnalysisWorkflow.java`
-- Modify: `src/main/java/com/ljl/ai/agent/workflow/WorkflowRunner.java`
-- Modify: `src/test/java/com/ljl/ai/agent/workflow/StockAnalysisWorkflowTest.java`
+- Modify: `../../src/main/java/com/ljl/ai/workflow/StockAnalysisWorkflow.java`
+- Modify: `../../src/main/java/com/ljl/ai/workflow/WorkflowRunner.java`
+- Modify: `../../src/test/java/com/ljl/ai/workflow/StockAnalysisWorkflowTest.java`
 
 1. 更新状态为 `in_progress`。
 2. 编写失败测试，验证图内依次执行 REFLECTOR、CRITIC，并按路由进入重试、补新闻、ANSWER 或 FAILED。
@@ -81,10 +81,10 @@
 - Actual: PASS.
 
 **涉及文件：**
-- Create: `src/main/java/com/ljl/ai/agent/workflow/WorkflowAnswerGenerator.java`
-- Modify: `src/main/java/com/ljl/ai/agent/service/ChatService.java`
-- Modify: `src/test/java/com/ljl/ai/agent/service/ChatServiceWorkflowTest.java`
-- Create: `src/test/java/com/ljl/ai/agent/workflow/WorkflowAnswerGeneratorTest.java`
+- Create: `../../src/main/java/com/ljl/ai/workflow/WorkflowAnswerGenerator.java`
+- Modify: `../../src/main/java/com/ljl/ai/service/ChatService.java`
+- Modify: `../../src/test/java/com/ljl/ai/service/ChatServiceWorkflowTest.java`
+- Create: `../../src/test/java/com/ljl/ai/workflow/WorkflowAnswerGeneratorTest.java`
 
 1. 更新状态为 `in_progress`。
 2. 编写失败测试：Generator 只接收已验收结果、写入 finalAnswer；ChatService 不重复调用助手生成工作流答案。

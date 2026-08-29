@@ -3,28 +3,32 @@
 ## 数据流
 
 ```text
-Planner -> PlanValidator -> ChatService 计划确认日志
-                              |
-                              v
-                        WorkflowRunner 开始/恢复日志
-                              |
-                              v
-                        WorkflowRunner 结束日志
-                              |
-                              v
-                  ChatService 执行汇总日志与最终回答
+HTTP 请求 -> ChatService 阶段日志 -> 追踪模型装饰器 -> Planner / 直接 Tool Use / 最终回答
+                    |                         |
+                    v                         v
+             RAG 与计划日志             模型请求、响应、tool call
+                    |
+                    v
+            WorkflowRunner -> StateGraph 节点、路由与循环日志
+                    |
+                    v
+             工具执行器 -> 工具参数、输出、耗时与异常
 ```
 
 ## 组件职责
 
-`ChatService` 在创建 `ExecutionState` 后记录计划确认事件，字段为 `sessionId`、`executionId`、`symbol` 和任务名称；在工作流返回后记录执行摘要，字段为状态、总耗时、成功/失败数量和失败任务错误摘要。
+`ChatService` 在请求入口创建 `traceId`，并在该请求范围内放入 MDC。它记录请求阶段、RAG、Planner、计划确认、工作流摘要和最终回答。`traceId` 通过 `ExecutionState` 传入图执行路径，确保跨组件关联。
 
-`WorkflowRunner` 记录执行开始、恢复、完成和失败事件，因此直接调用 `resume` 的场景也有可追踪日志。它只读取 `ExecutionState` 中的状态字段与时间戳，不序列化任务结果。
+`WorkflowRunner` 和 `StockAnalysisWorkflow` 记录开始、恢复、节点进入、Reflector 决策、Critic 路由、重试与结束事件。因此能明确看到 `RETRY`/`ADD_NEWS` 回到 `INIT` 的循环和任务尝试次数。
+
+`StockAnalysisTaskNode` 作为工作流工具调用的唯一入口，记录工具名称、参数、完整 `ToolResult` 和耗时。直接 LangChain4j Tool Use 仍由其工具方法执行，模型选择工具的原始请求由模型装饰器记录。
+
+模型装饰器包装项目的 `ChatLanguageModel`。每次调用均记录模型输入消息、模型响应、返回的 tool execution requests 和执行结果消息，以覆盖 Planner、最终答案生成以及 LangChain4j 内部的连续工具调用。
 
 ## 日志与隐私
 
-所有事件采用参数化 SLF4J 日志。用户原文、RAG 内容、工具参数、工具结果正文不进入新增日志。任务错误信息限制为短摘要，避免异常中携带大段外部响应时造成日志膨胀。
+所有事件采用参数化 SLF4J 日志，并写入 `traceId`、`sessionId`、`executionId` 和阶段名。用户原文、RAG 内容、模型提示词、工具参数和工具结果默认完整记录，符合本次诊断要求。新增配置限制每条记录的最大字符数；日志中标记截断状态。此能力应仅在受控诊断环境启用或通过日志保留策略保护。
 
 ## 测试
 
-为日志摘要提取逻辑提供单元测试，覆盖完成和失败任务的统计、耗时计算及错误摘要截断；保留既有 ChatService 与工作流测试作为回归覆盖。
+为模型装饰器、工具节点和工作流路由日志提供单元测试，覆盖模型 tool call、完整工具输出、`RETRY` 路由和日志截断。保留既有 ChatService 与工作流测试作为回归覆盖。

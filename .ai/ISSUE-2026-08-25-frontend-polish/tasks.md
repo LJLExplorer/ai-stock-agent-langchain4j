@@ -19,8 +19,8 @@
 **校验：** `mvn -q -DskipTests compile` 已通过
 
 **涉及文件：**
-- Modify: `src/main/java/com/ljl/ai/agent/service/ChatService.java`
-- Modify: `src/main/java/com/ljl/ai/agent/controller/ChatController.java`
+- Modify: `../../src/main/java/com/ljl/ai/service/ChatService.java`
+- Modify: `../../src/main/java/com/ljl/ai/controller/ChatController.java`
 
 ### Task 2: 接入历史会话删除交互
 

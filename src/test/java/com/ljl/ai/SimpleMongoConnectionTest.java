@@ -1,6 +1,5 @@
 package com.ljl.ai;
 
-import com.ljl.ai.agent.StockAnalysisAgentApplication;
 import com.mongodb.client.MongoClient;
 import jakarta.annotation.Resource;
 import org.junit.jupiter.api.Test;
