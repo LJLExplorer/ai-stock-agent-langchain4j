@@ -50,9 +50,9 @@
 
 **涉及文件：**
 - Modify: `pom.xml`
-- Create: `src/main/java/com/ljl/ai/agent/config/MemoryConfig.java`
+- Create: `../../src/main/java/com/ljl/ai/config/MemoryConfig.java`
 - Modify: `src/main/resources/application.yml`
-- Test: `src/test/java/com/ljl/ai/agent/config/MemoryConfigTest.java`
+- Test: `../../src/test/java/com/ljl/ai/config/MemoryConfigTest.java`
 
 **步骤 0：** 更新状态为 `in_progress`，保存任务文档。
 
@@ -98,8 +98,8 @@ Expected: PASS。
 - Actual: PASS（仅有 Byte Buddy 动态加载警告）
 
 **涉及文件：**
-- Create: `src/main/java/com/ljl/ai/agent/memoery/RedisChatMemoryStore.java`
-- Test: `src/test/java/com/ljl/ai/agent/memoery/RedisChatMemoryStoreTest.java`
+- Create: `../../src/main/java/com/ljl/ai/memoery/RedisChatMemoryStore.java`
+- Test: `../../src/test/java/com/ljl/ai/memoery/RedisChatMemoryStoreTest.java`
 
 **步骤 0：** 更新状态为 `in_progress`。
 
@@ -143,8 +143,8 @@ Expected: PASS。
 - Actual: PASS（仅有 Byte Buddy 动态加载警告）
 
 **涉及文件：**
-- Create: `src/main/java/com/ljl/ai/agent/memoery/ShortTermSummaryService.java`
-- Test: `src/test/java/com/ljl/ai/agent/memoery/ShortTermSummaryServiceTest.java`
+- Create: `../../src/main/java/com/ljl/ai/memoery/ShortTermSummaryService.java`
+- Test: `../../src/test/java/com/ljl/ai/memoery/ShortTermSummaryServiceTest.java`
 
 **步骤 0：** 更新状态为 `in_progress`。
 
@@ -188,10 +188,10 @@ Expected: PASS。
 - Actual: PASS（仅有 Byte Buddy 动态加载警告）
 
 **涉及文件：**
-- Modify: `src/main/java/com/ljl/ai/agent/memoery/MongoChatMemoryProvider.java`
-- Modify: `src/main/java/com/ljl/ai/agent/service/ChatService.java`
-- Test: `src/test/java/com/ljl/ai/agent/memoery/MongoChatMemoryProviderTest.java`
-- Test: `src/test/java/com/ljl/ai/agent/service/ChatServiceMemoryKeyTest.java`
+- Modify: `../../src/main/java/com/ljl/ai/memoery/MongoChatMemoryProvider.java`
+- Modify: `../../src/main/java/com/ljl/ai/service/ChatService.java`
+- Test: `../../src/test/java/com/ljl/ai/memoery/MongoChatMemoryProviderTest.java`
+- Test: `../../src/test/java/com/ljl/ai/service/ChatServiceMemoryKeyTest.java`
 
 **步骤 0：** 更新状态为 `in_progress`。
 
@@ -235,10 +235,10 @@ Expected: PASS。
 - Actual: PASS（仅有 Byte Buddy 动态加载警告）
 
 **涉及文件：**
-- Create: `src/main/java/com/ljl/ai/agent/model/entity/UserLongTermMemory.java`
-- Create: `src/main/java/com/ljl/ai/agent/service/LongTermMemoryService.java`
-- Create: `src/main/java/com/ljl/ai/agent/model/dto/LongTermMemoryRequest.java`
-- Test: `src/test/java/com/ljl/ai/agent/service/LongTermMemoryServiceTest.java`
+- Create: `../../src/main/java/com/ljl/ai/model/entity/UserLongTermMemory.java`
+- Create: `../../src/main/java/com/ljl/ai/service/LongTermMemoryService.java`
+- Create: `../../src/main/java/com/ljl/ai/model/dto/LongTermMemoryRequest.java`
+- Test: `../../src/test/java/com/ljl/ai/service/LongTermMemoryServiceTest.java`
 
 **步骤 0：** 更新状态为 `in_progress`。
 
@@ -282,8 +282,8 @@ Expected: PASS。
 - Actual: PASS（仅有 Byte Buddy 动态加载警告）
 
 **涉及文件：**
-- Create: `src/main/java/com/ljl/ai/agent/controller/LongTermMemoryController.java`
-- Test: `src/test/java/com/ljl/ai/agent/controller/LongTermMemoryControllerTest.java`
+- Create: `../../src/main/java/com/ljl/ai/controller/LongTermMemoryController.java`
+- Test: `../../src/test/java/com/ljl/ai/controller/LongTermMemoryControllerTest.java`
 - Modify: `frontend/src/App.jsx`
 - Modify: `frontend/src/styles.css`
 
@@ -329,10 +329,10 @@ Expected: PASS。
 - Actual: PASS（仅有 Byte Buddy 动态加载警告）
 
 **涉及文件：**
-- Create: `src/main/java/com/ljl/ai/agent/model/entity/RagTrace.java`
-- Create: `src/main/java/com/ljl/ai/agent/service/RagTraceService.java`
-- Modify: `src/main/java/com/ljl/ai/agent/rag/RagPipelineService.java`
-- Test: `src/test/java/com/ljl/ai/agent/service/RagTraceServiceTest.java`
+- Create: `../../src/main/java/com/ljl/ai/model/entity/RagTrace.java`
+- Create: `../../src/main/java/com/ljl/ai/service/RagTraceService.java`
+- Modify: `../../src/main/java/com/ljl/ai/rag/RagPipelineService.java`
+- Test: `../../src/test/java/com/ljl/ai/service/RagTraceServiceTest.java`
 
 **步骤 0：** 更新状态为 `in_progress`。
 
@@ -376,8 +376,8 @@ Expected: PASS。
 - Actual: PASS（仅有 Byte Buddy 动态加载警告）
 
 **涉及文件：**
-- Modify: `src/main/java/com/ljl/ai/agent/service/ChatService.java`
-- Test: `src/test/java/com/ljl/ai/agent/service/ChatServiceIntegrationTest.java`
+- Modify: `../../src/main/java/com/ljl/ai/service/ChatService.java`
+- Test: `../../src/test/java/com/ljl/ai/service/ChatServiceIntegrationTest.java`
 
 **步骤 0：** 更新状态为 `in_progress`。
 

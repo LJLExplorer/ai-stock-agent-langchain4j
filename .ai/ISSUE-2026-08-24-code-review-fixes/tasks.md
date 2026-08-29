@@ -64,9 +64,9 @@
 **Green Evidence：** `ChatMemoryServiceTest` 覆盖跨用户和已关闭会话，`mvn -q test` 通过。
 
 **涉及文件：**
-- Modify: `src/main/java/com/ljl/ai/agent/memoery/ChatMemoryService.java`
-- Modify: `src/main/java/com/ljl/ai/agent/service/ChatService.java`
-- Test: `src/test/java/com/ljl/ai/agent/memoery/ChatMemoryServiceTest.java`
+- Modify: `../../src/main/java/com/ljl/ai/memoery/ChatMemoryService.java`
+- Modify: `../../src/main/java/com/ljl/ai/service/ChatService.java`
+- Test: `../../src/test/java/com/ljl/ai/memoery/ChatMemoryServiceTest.java`
 
 ### Task 6: 修复 Redis 会话并发覆盖
 
@@ -77,8 +77,8 @@
 **Green Evidence：** Redis 消息快照改为 MULTI/EXEC 事务，并在 `ChatService` 对同一会话串行化请求；`mvn -q test` 通过。
 
 **涉及文件：**
-- Modify: `src/main/java/com/ljl/ai/agent/memoery/RedisChatMemoryStore.java`
-- Test: `src/test/java/com/ljl/ai/agent/memoery/RedisChatMemoryStoreTest.java`
+- Modify: `../../src/main/java/com/ljl/ai/memoery/RedisChatMemoryStore.java`
+- Test: `../../src/test/java/com/ljl/ai/memoery/RedisChatMemoryStoreTest.java`
 
 ### Task 7: 修复摘要增长和上下文截断策略
 
@@ -89,9 +89,9 @@
 **Green Evidence：** 增加 `summary-max-chars` 上限，摘要和对话上下文均保留最新部分；摘要回归测试通过。
 
 **涉及文件：**
-- Modify: `src/main/java/com/ljl/ai/agent/memoery/ShortTermSummaryService.java`
-- Modify: `src/main/java/com/ljl/ai/agent/service/ChatService.java`
-- Test: `src/test/java/com/ljl/ai/agent/memoery/ShortTermSummaryServiceTest.java`
+- Modify: `../../src/main/java/com/ljl/ai/memoery/ShortTermSummaryService.java`
+- Modify: `../../src/main/java/com/ljl/ai/service/ChatService.java`
+- Test: `../../src/test/java/com/ljl/ai/memoery/ShortTermSummaryServiceTest.java`
 
 ### Task 8: 修正股票市场代码映射
 
@@ -102,8 +102,8 @@
 **Green Evidence：** 新增沪/深/北交所归类测试，`MarketDataClientTest` 通过。
 
 **涉及文件：**
-- Modify: `src/main/java/com/ljl/ai/agent/data/MarketDataClient.java`
-- Test: `src/test/java/com/ljl/ai/agent/data/MarketDataClientTest.java`
+- Modify: `../../src/main/java/com/ljl/ai/client/MarketDataClient.java`
+- Test: `../../src/test/java/com/ljl/ai/client/MarketDataClientTest.java`
 
 ### Task 9: 全量验证并回写执行记录
 

@@ -32,9 +32,9 @@
 - Actual: PASS；JSON、免责声明、既有 Markdown 和真实行情 Markdown 用例均通过。
 
 **涉及文件：**
-- Create: `src/main/java/com/ljl/ai/agent/planner/PlannerTextParser.java`
-- Modify: `src/main/java/com/ljl/ai/agent/service/ChatService.java`
-- Test: `src/test/java/com/ljl/ai/agent/service/ChatServicePlannerTest.java`
+- Create: `../../src/main/java/com/ljl/ai/planner/PlannerTextParser.java`
+- Modify: `../../src/main/java/com/ljl/ai/service/ChatService.java`
+- Test: `../../src/test/java/com/ljl/ai/service/ChatServicePlannerTest.java`
 
 **步骤 0：开始任务前更新状态**
 
@@ -89,8 +89,8 @@ Expected: PASS，包含既有 JSON、免责声明和非法计划测试。
 - Actual: PASS；工作流执行状态回归测试通过，未出现 `NotSerializableException`。
 
 **涉及文件：**
-- Modify: `src/main/java/com/ljl/ai/agent/workflow/StockAnalysisWorkflow.java`
-- Test: `src/test/java/com/ljl/ai/agent/workflow/StockAnalysisWorkflowTest.java`
+- Modify: `../../src/main/java/com/ljl/ai/workflow/StockAnalysisWorkflow.java`
+- Test: `../../src/test/java/com/ljl/ai/workflow/StockAnalysisWorkflowTest.java`
 
 **步骤 0：开始任务前更新状态**
 
@@ -149,7 +149,7 @@ Expected: PASS，且无 `NotSerializableException`。
 
 **涉及文件：**
 - Modify: `.ai/ISSUE-2026-08-25-markdown-planner-workflow/tasks.md`
-- Test: `src/test/java/com/ljl/ai/agent/service/ChatServiceWorkflowTest.java`
+- Test: `../../src/test/java/com/ljl/ai/service/ChatServiceWorkflowTest.java`
 
 **步骤 0：开始任务前更新状态**
 

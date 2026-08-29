@@ -43,9 +43,9 @@
 - Actual: PASS，知识库列表可包含已禁用文档，禁用流程先清理向量再保存禁用状态。
 
 **涉及文件：**
-- Modify: `src/main/java/com/ljl/ai/agent/knowledge/KnowledgeService.java`
-- Modify: `src/main/java/com/ljl/ai/agent/controller/KnowledgeController.java`
-- Test: `src/test/java/com/ljl/ai/agent/controller/KnowledgeControllerTest.java`（如现有测试结构适合则复用或创建）
+- Modify: `../../src/main/java/com/ljl/ai/knowledge/KnowledgeService.java`
+- Modify: `../../src/main/java/com/ljl/ai/controller/KnowledgeController.java`
+- Test: `../../src/test/java/com/ljl/ai/controller/KnowledgeControllerTest.java`（如现有测试结构适合则复用或创建）
 
 **步骤 1：更新状态**
 
@@ -134,7 +134,7 @@
 **Red Evidence：**
 
 - Command: `mvn -q test`
-- Actual: 测试编译被工作区原有未跟踪文件 `src/test/java/com/ljl/ai/agent/workflow/LangGraph4jDependencyTest.java` 阻塞，缺少 `org.bsc.langgraph4j` 依赖；该文件不属于本 Issue。
+- Actual: 测试编译被工作区原有未跟踪文件 `../../src/test/java/com/ljl/ai/workflow/LangGraph4jDependencyTest.java` 阻塞，缺少 `org.bsc.langgraph4j` 依赖；该文件不属于本 Issue。
 - Match Expected: no（外部工作区阻塞）
 
 **Green Evidence：**

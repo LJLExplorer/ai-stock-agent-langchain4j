@@ -27,9 +27,9 @@
 **Green Evidence：** `mvn -q -DskipTests compile` 通过；`mvn -q -Dtest=ChatServiceCreateSessionTest test` 通过。
 
 **涉及文件：**
-- Modify: `src/main/java/com/ljl/ai/agent/controller/ChatController.java`
-- Modify: `src/main/java/com/ljl/ai/agent/service/ChatService.java`
-- Test: `src/test/java/com/ljl/ai/agent/controller/ChatControllerTest.java`
+- Modify: `../../src/main/java/com/ljl/ai/controller/ChatController.java`
+- Modify: `../../src/main/java/com/ljl/ai/service/ChatService.java`
+- Test: `../../src/test/java/com/ljl/ai/controller/ChatControllerTest.java`
 
 **步骤：** 增加 `POST /api/chat/sessions`，接收 userId/orderId，委托已有创建逻辑并返回会话；使用纯 Java 替身验证 userId 清理、空值校验和真实会话 ID 返回。
 

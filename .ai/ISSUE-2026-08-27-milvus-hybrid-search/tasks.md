@@ -30,10 +30,10 @@
 
 **涉及文件：**
 
-- Create: `src/main/java/com/ljl/ai/agent/rag/MilvusHybridSearchClient.java`
-- Create: `src/main/java/com/ljl/ai/agent/rag/MilvusHybridSearchResult.java`
-- Modify: `src/main/java/com/ljl/ai/agent/rag/RetrievalResult.java`
-- Test: `src/test/java/com/ljl/ai/agent/rag/MilvusHybridSearchResultTest.java`
+- Create: `../../src/main/java/com/ljl/ai/rag/MilvusHybridSearchClient.java`
+- Create: `../../src/main/java/com/ljl/ai/rag/MilvusHybridSearchResult.java`
+- Modify: `../../src/main/java/com/ljl/ai/rag/RetrievalResult.java`
+- Test: `../../src/test/java/com/ljl/ai/rag/MilvusHybridSearchResultTest.java`
 
 1. 将本 Task 状态更新为 `in_progress`。
 2. 编写失败测试：客户端为一个查询构建稠密 ANN 与 BM25 稀疏 ANN 请求，并使用 `RRFRanker(60)`；结果映射同时保留两个通道的分数和 RRF 分数。
@@ -51,11 +51,11 @@
 
 **涉及文件：**
 
-- Create: `src/main/java/com/ljl/ai/agent/rag/MilvusHybridCollectionManager.java`
-- Modify: `src/main/java/com/ljl/ai/agent/config/MilvusConfig.java`
-- Modify: `src/main/java/com/ljl/ai/agent/knowledge/KnowledgeService.java`
-- Test: `src/test/java/com/ljl/ai/agent/rag/MilvusHybridCollectionManagerTest.java`
-- Test: `src/test/java/com/ljl/ai/agent/knowledge/KnowledgeServiceTest.java`
+- Create: `../../src/main/java/com/ljl/ai/rag/MilvusHybridCollectionManager.java`
+- Modify: `../../src/main/java/com/ljl/ai/config/MilvusConfig.java`
+- Modify: `../../src/main/java/com/ljl/ai/knowledge/KnowledgeService.java`
+- Test: `../../src/test/java/com/ljl/ai/rag/MilvusHybridCollectionManagerTest.java`
+- Test: `../../src/test/java/com/ljl/ai/knowledge/KnowledgeServiceTest.java`
 
 1. 更新状态为 `in_progress`。
 2. 编写失败测试：schema 包含主键、文本、稠密向量、稀疏向量与 BM25 Function；新建、同步、启用时为每个分块写入混合 collection，删除/禁用时删除对应主键。
@@ -73,10 +73,10 @@
 
 **涉及文件：**
 
-- Modify: `src/main/java/com/ljl/ai/agent/rag/RetrievalService.java`
-- Modify: `src/main/java/com/ljl/ai/agent/rag/RetrievalResult.java`
-- Modify: `src/main/java/com/ljl/ai/agent/config/KnowledgeConfig.java`
-- Test: `src/test/java/com/ljl/ai/agent/rag/RetrievalServiceTest.java`
+- Modify: `../../src/main/java/com/ljl/ai/rag/RetrievalService.java`
+- Modify: `../../src/main/java/com/ljl/ai/rag/RetrievalResult.java`
+- Modify: `../../src/main/java/com/ljl/ai/config/KnowledgeConfig.java`
+- Test: `../../src/test/java/com/ljl/ai/rag/RetrievalServiceTest.java`
 
 1. 更新状态为 `in_progress`。
 2. 编写失败测试：RRF 总分排序正确；禁用文档被过滤；BM25 失败时返回语义检索降级结果；`similarity` 保持为最终 RRF 分数。
@@ -96,7 +96,7 @@
 
 - Modify: `src/main/resources/application.yml`
 - Modify: `README.md`
-- Test: `src/test/java/com/ljl/ai/agent/controller/RagControllerTest.java`
+- Test: `../../src/test/java/com/ljl/ai/controller/RagControllerTest.java`
 
 1. 更新状态为 `in_progress`。
 2. 编写失败测试：`/api/rag/search` 返回 RRF 融合字段，非法请求校验行为不变。

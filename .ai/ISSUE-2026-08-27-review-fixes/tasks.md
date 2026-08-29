@@ -21,8 +21,8 @@
 **Green Evidence：** `mvn -q -DskipTests compile` 通过；工作流映射单元测试已添加并在定向测试中通过。
 
 **涉及文件：**
-- Modify: `src/main/java/com/ljl/ai/agent/service/ChatService.java`
-- Test: `src/test/java/com/ljl/ai/agent/service/ChatServiceWorkflowTest.java`
+- Modify: `../../src/main/java/com/ljl/ai/service/ChatService.java`
+- Test: `../../src/test/java/com/ljl/ai/service/ChatServiceWorkflowTest.java`
 
 ### Task 2: 隔离不可检索的知识文档
 
@@ -33,9 +33,9 @@
 **Green Evidence：** 非沙箱定向 Maven 测试通过，覆盖启用保存失败时的向量补偿和禁用保存失败时的不删向量。
 
 **涉及文件：**
-- Modify: `src/main/java/com/ljl/ai/agent/knowledge/KnowledgeService.java`
-- Modify: `src/main/java/com/ljl/ai/agent/rag/RetrievalService.java`
-- Test: `src/test/java/com/ljl/ai/agent/knowledge/KnowledgeServiceTest.java`
+- Modify: `../../src/main/java/com/ljl/ai/knowledge/KnowledgeService.java`
+- Modify: `../../src/main/java/com/ljl/ai/rag/RetrievalService.java`
+- Test: `../../src/test/java/com/ljl/ai/knowledge/KnowledgeServiceTest.java`
 
 ### Task 3: 统一 Planner 股票市场规则
 
@@ -46,8 +46,8 @@
 **Green Evidence：** 非沙箱定向 Maven 测试通过，`830799` 与 `430047.BJ` 均标准化为 `.BJ`。
 
 **涉及文件：**
-- Modify: `src/main/java/com/ljl/ai/agent/planner/PlanValidator.java`
-- Test: `src/test/java/com/ljl/ai/agent/planner/PlanValidatorTest.java`
+- Modify: `../../src/main/java/com/ljl/ai/planner/PlanValidator.java`
+- Test: `../../src/test/java/com/ljl/ai/planner/PlanValidatorTest.java`
 
 ### Task 4: 集成验证与最终提交
 

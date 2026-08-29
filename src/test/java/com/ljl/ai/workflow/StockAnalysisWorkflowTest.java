@@ -1,0 +1,92 @@
+package com.ljl.ai.workflow;
+
+import com.ljl.ai.planner.AgentPlan;
+import com.ljl.ai.planner.StockAnalysisTask;
+import org.bsc.langgraph4j.CompiledGraph;
+import org.bsc.langgraph4j.state.AgentState;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
+import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
+
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.assertj.core.api.Assertions.assertThat;
+
+class StockAnalysisWorkflowTest {
+
+    @Test
+    void shouldBuildAndRunFanOutFanInGraph() {
+        StockAnalysisWorkflow workflow = new StockAnalysisWorkflow();
+        CompiledGraph<AgentState> graph = workflow.compile();
+
+        assertNotNull(graph);
+    }
+
+    @Test
+    void shouldRunExecutionStateWithoutPuttingItIntoGraphState() {
+        StockAnalysisWorkflow workflow = new StockAnalysisWorkflow();
+        ExecutionTask market = ExecutionTask.pending("market", StockAnalysisTask.MARKET_DATA);
+        ExecutionTask news = ExecutionTask.pending("news", StockAnalysisTask.NEWS_ANALYSIS);
+        market.start();
+        market.complete("股票：600519.SH；时间：2026-08-25；价格：1500");
+        news.start();
+        news.complete("股票：600519.SH；时间：2026-08-25；新闻：经营稳定");
+        ExecutionState executionState = ExecutionState.planned(
+                "execution-1", "session-1", "分析600519.SH", List.of(market, news));
+        executionState.setPlan(AgentPlan.builder().intent("STOCK_ANALYSIS")
+                .symbol("600519.SH").tasks(List.of(market.getTaskType(), news.getTaskType())).build());
+
+        ExecutionState result = workflow.run(executionState);
+
+        assertEquals("execution-1", result.getExecutionId());
+    }
+
+    @Test
+    void shouldRunReflectorAndCriticInsideTheGraph() {
+        ExecutionTask market = ExecutionTask.pending("market", StockAnalysisTask.MARKET_DATA);
+        ExecutionTask news = ExecutionTask.pending("news", StockAnalysisTask.NEWS_ANALYSIS);
+        market.start();
+        market.complete("股票：600519.SH；时间：2026-08-25；价格：1500");
+        news.start();
+        news.complete("股票：600519.SH；时间：2026-08-25；新闻：经营稳定");
+        ExecutionState state = ExecutionState.planned("execution-2", "session-1", "分析600519.SH", List.of(market, news));
+        state.setPlan(AgentPlan.builder().intent("STOCK_ANALYSIS")
+                .symbol("600519.SH").tasks(List.of(market.getTaskType(), news.getTaskType())).build());
+
+        new StockAnalysisWorkflow().run(state);
+
+        assertEquals("ANSWER", state.getCurrentNode());
+    }
+
+    @Test
+    void shouldLogWorkflowNodesAndDecisionRoute() {
+        ExecutionTask market = ExecutionTask.pending("market", StockAnalysisTask.MARKET_DATA);
+        ExecutionTask news = ExecutionTask.pending("news", StockAnalysisTask.NEWS_ANALYSIS);
+        market.start();
+        market.complete("股票：600519.SH；价格：1500");
+        news.start();
+        news.complete("股票：600519.SH；新闻：经营稳定");
+        ExecutionState state = ExecutionState.planned("execution-trace", "session-1", "分析600519.SH", List.of(market, news));
+        state.setPlan(AgentPlan.builder().intent("STOCK_ANALYSIS")
+                .symbol("600519.SH").tasks(List.of(market.getTaskType(), news.getTaskType())).build());
+        Logger logger = (Logger) LoggerFactory.getLogger(StockAnalysisWorkflow.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+
+        try {
+            new StockAnalysisWorkflow().run(state);
+        } finally {
+            logger.detachAppender(appender);
+        }
+
+        assertThat(appender.list)
+                .extracting(ILoggingEvent::getFormattedMessage)
+                .anySatisfy(message -> assertThat(message).contains("workflow_node_started").contains("INIT"))
+                .anySatisfy(message -> assertThat(message).contains("workflow_route_selected").contains("ANSWER"));
+    }
+}

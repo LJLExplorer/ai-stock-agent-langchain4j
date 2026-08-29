@@ -37,7 +37,7 @@
 
 **涉及文件：**
 - Modify: `pom.xml`
-- Create: `src/test/java/com/ljl/ai/agent/workflow/LangGraph4jDependencyTest.java`
+- Create: `../../src/test/java/com/ljl/ai/workflow/LangGraph4jDependencyTest.java`
 
 **步骤 0：开始任务前更新状态**
 
@@ -92,11 +92,11 @@ Expected: PASS。
 - Actual: `Tests run: 2, Failures: 0, Errors: 0`，BUILD SUCCESS。
 
 **涉及文件：**
-- Create: `src/main/java/com/ljl/ai/agent/workflow/WorkflowStatus.java`
-- Create: `src/main/java/com/ljl/ai/agent/workflow/TaskStatus.java`
-- Create: `src/main/java/com/ljl/ai/agent/workflow/ExecutionTask.java`
-- Create: `src/main/java/com/ljl/ai/agent/workflow/ExecutionState.java`
-- Test: `src/test/java/com/ljl/ai/agent/workflow/ExecutionStateTest.java`
+- Create: `../../src/main/java/com/ljl/ai/workflow/WorkflowStatus.java`
+- Create: `../../src/main/java/com/ljl/ai/workflow/TaskStatus.java`
+- Create: `../../src/main/java/com/ljl/ai/workflow/ExecutionTask.java`
+- Create: `../../src/main/java/com/ljl/ai/workflow/ExecutionState.java`
+- Test: `../../src/test/java/com/ljl/ai/workflow/ExecutionStateTest.java`
 
 **步骤 0：开始任务前更新状态**
 
@@ -149,9 +149,9 @@ Expected: PASS。
 - Actual: `Tests run: 2, Failures: 0, Errors: 0`，BUILD SUCCESS；已覆盖按 executionId 读取、版本条件替换和冲突异常。
 
 **涉及文件：**
-- Create: `src/main/java/com/ljl/ai/agent/workflow/ExecutionStateStore.java`
-- Create: `src/main/java/com/ljl/ai/agent/workflow/MongoExecutionStateStore.java`
-- Create: `src/test/java/com/ljl/ai/agent/workflow/MongoExecutionStateStoreTest.java`
+- Create: `../../src/main/java/com/ljl/ai/workflow/ExecutionStateStore.java`
+- Create: `../../src/main/java/com/ljl/ai/workflow/MongoExecutionStateStore.java`
+- Create: `../../src/test/java/com/ljl/ai/workflow/MongoExecutionStateStoreTest.java`
 
 **步骤 0：开始任务前更新状态**
 
@@ -205,9 +205,9 @@ Expected: PASS。
 - Actual: `Tests run: 2, Failures: 0, Errors: 0`，BUILD SUCCESS。
 
 **涉及文件：**
-- Create: `src/main/java/com/ljl/ai/agent/workflow/StockAnalysisTaskExecutor.java`
-- Create: `src/main/java/com/ljl/ai/agent/workflow/StockAnalysisTaskNode.java`
-- Test: `src/test/java/com/ljl/ai/agent/workflow/StockAnalysisTaskExecutorTest.java`
+- Create: `../../src/main/java/com/ljl/ai/workflow/StockAnalysisTaskExecutor.java`
+- Create: `../../src/main/java/com/ljl/ai/workflow/StockAnalysisTaskNode.java`
+- Test: `../../src/test/java/com/ljl/ai/workflow/StockAnalysisTaskExecutorTest.java`
 
 **步骤 0：开始任务前更新状态**
 
@@ -262,9 +262,9 @@ Expected: PASS。
 - Actual: `Tests run: 1, Failures: 0, Errors: 0`，BUILD SUCCESS；LangGraph4j 图完成 fan-out/fan-in 并进入 ANSWER 节点。
 
 **涉及文件：**
-- Create: `src/main/java/com/ljl/ai/agent/workflow/StockAnalysisWorkflow.java`
-- Create: `src/main/java/com/ljl/ai/agent/workflow/WorkflowRunner.java`
-- Test: `src/test/java/com/ljl/ai/agent/workflow/StockAnalysisWorkflowTest.java`
+- Create: `../../src/main/java/com/ljl/ai/workflow/StockAnalysisWorkflow.java`
+- Create: `../../src/main/java/com/ljl/ai/workflow/WorkflowRunner.java`
+- Test: `../../src/test/java/com/ljl/ai/workflow/StockAnalysisWorkflowTest.java`
 
 **步骤 0：开始任务前更新状态**
 
@@ -318,9 +318,9 @@ Expected: PASS。
 - Actual: `Tests run: 3, Failures: 0, Errors: 0`，BUILD SUCCESS；覆盖空结果重试、新闻动态追加和可信结果放行。
 
 **涉及文件：**
-- Create: `src/main/java/com/ljl/ai/agent/workflow/WorkflowReflector.java`
-- Create: `src/main/java/com/ljl/ai/agent/workflow/WorkflowRetryPolicy.java`
-- Test: `src/test/java/com/ljl/ai/agent/workflow/WorkflowReflectorTest.java`
+- Create: `../../src/main/java/com/ljl/ai/workflow/WorkflowReflector.java`
+- Create: `../../src/main/java/com/ljl/ai/workflow/WorkflowRetryPolicy.java`
+- Test: `../../src/test/java/com/ljl/ai/workflow/WorkflowReflectorTest.java`
 
 **步骤 0：开始任务前更新状态**
 
@@ -375,9 +375,9 @@ Expected: PASS。
 - Actual: `Tests run: 2, Failures: 0, Errors: 0`，BUILD SUCCESS；已覆盖计划转执行状态和 executionId 恢复入口。
 
 **涉及文件：**
-- Modify: `src/main/java/com/ljl/ai/agent/service/ChatService.java`
-- Modify: `src/main/java/com/ljl/ai/agent/controller/ChatController.java`
-- Create: `src/test/java/com/ljl/ai/agent/service/ChatServiceWorkflowTest.java`
+- Modify: `../../src/main/java/com/ljl/ai/service/ChatService.java`
+- Modify: `../../src/main/java/com/ljl/ai/controller/ChatController.java`
+- Create: `../../src/test/java/com/ljl/ai/service/ChatServiceWorkflowTest.java`
 
 **步骤 0：开始任务前更新状态**
 

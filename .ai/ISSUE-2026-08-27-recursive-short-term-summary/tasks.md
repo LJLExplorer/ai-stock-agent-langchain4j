@@ -21,8 +21,8 @@
 **Green Evidence：** `mvn -q test -Dtest=ShortTermSummaryServiceTest` 通过。
 
 **涉及文件：**
-- Modify: `src/test/java/com/ljl/ai/agent/memoery/ShortTermSummaryServiceTest.java`
-- Modify: `src/main/java/com/ljl/ai/agent/memoery/ShortTermSummaryService.java`
+- Modify: `../../src/test/java/com/ljl/ai/memoery/ShortTermSummaryServiceTest.java`
+- Modify: `../../src/main/java/com/ljl/ai/memoery/ShortTermSummaryService.java`
 
 1. 编写测试，要求生成器收到旧摘要与淘汰消息，且生成结果替换旧摘要。
 2. 运行 `mvn -q test -Dtest=ShortTermSummaryServiceTest`，记录 RED。
@@ -38,9 +38,9 @@
 **Green Evidence：** `mvn -q test -Dtest=ShortTermSummaryServiceTest,ChatServiceMemoryContextTest,ChatServiceToolLoopExceededTest` 通过。
 
 **涉及文件：**
-- Modify: `src/test/java/com/ljl/ai/agent/service/ChatServiceMemoryKeyTest.java`
-- Modify: `src/main/java/com/ljl/ai/agent/service/ChatService.java`
-- Modify: `src/main/java/com/ljl/ai/agent/agent/StockAnalysisAssistant.java`
+- Modify: `../../src/test/java/com/ljl/ai/service/ChatServiceMemoryKeyTest.java`
+- Modify: `../../src/main/java/com/ljl/ai/service/ChatService.java`
+- Modify: `../../src/main/java/com/ljl/ai/agent/StockAnalysisAssistant.java`
 
 1. 编写测试，要求当前用户消息保持原文，摘要通过助手上下文参数传递。
 2. 运行相应测试并记录 RED。
@@ -56,9 +56,9 @@
 **Green Evidence：** `mvn -q test -Dtest=ChatServiceMemoryKeyTest` 通过。
 
 **涉及文件：**
-- Create: `src/main/java/com/ljl/ai/agent/agent/ConversationSummaryAssistant.java`
-- Modify: `src/main/java/com/ljl/ai/agent/agent/AgentConfig.java`
-- Modify: `src/main/java/com/ljl/ai/agent/service/ChatService.java`
+- Create: `../../src/main/java/com/ljl/ai/agent/ConversationSummaryAssistant.java`
+- Modify: `../../src/main/java/com/ljl/ai/agent/AgentConfig.java`
+- Modify: `../../src/main/java/com/ljl/ai/service/ChatService.java`
 
 1. 为摘要器 Bean 和会话删除摘要清理编写失败测试。
 2. 运行聚焦测试并记录 RED。

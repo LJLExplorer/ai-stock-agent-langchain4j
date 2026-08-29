@@ -1,7 +1,6 @@
 package com.ljl.ai;
 
-import com.ljl.ai.agent.StockAnalysisAgentApplication;
-import com.ljl.ai.agent.config.MilvusConfig;
+import com.ljl.ai.config.MilvusConfig;
 import dev.langchain4j.data.embedding.Embedding;
 import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.model.embedding.EmbeddingModel;
