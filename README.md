@@ -47,7 +47,7 @@ Java 21、Spring Boot 3.3、LangChain4j 1.0.0-beta3、LangGraph4j 1.6.1、MongoD
 
 ### 5. Reflector + Critic：把"结果可信吗"从模型手里拿回来
 
-`WorkflowReflector` 用确定性规则逐个检查任务结果：状态是否 `FAILED`、内容是否命中"失败/异常/ERROR"关键词、返回的标的代码是否和计划里的 `symbol` 一致。不可信且还有重试次数的任务标记重试；超过 `WorkflowRetryPolicy`（默认 2 次）上限的标记终态失败；如果所有任务都通过校验但缺了新闻分析，会动态追加一个 `NEWS_ANALYSIS` 任务。`WorkflowCritic` 再把这份复盘结论收敛成四选一的路由（`RETRY`/`ADD_NEWS`/`ANSWER`/`FAILED`）——判断结果是否可信这件事完全交给规则代码，不让 LLM 用自然语言"觉得还行"就把没验证过的数据放进最终回答。
+`WorkflowReflector` 用确定性规则逐个检查任务结果：状态是否 `FAILED`、内容是否命中"失败/异常/ERROR"关键词、返回的标的代码是否和计划里的 `symbol` 一致。不可信且还有重试次数的任务标记重试；超过 `WorkflowRetryPolicy`（默认 8 次）上限的标记终态失败；如果所有任务都通过校验但缺了新闻分析，会动态追加一个 `NEWS_ANALYSIS` 任务。`WorkflowCritic` 再把这份复盘结论收敛成四选一的路由（`RETRY`/`ADD_NEWS`/`ANSWER`/`FAILED`）——判断结果是否可信这件事完全交给规则代码，不让 LLM 用自然语言"觉得还行"就把没验证过的数据放进最终回答。
 
 ### 6. 无工具 Answer Generator：回答阶段不能再调用工具
 
