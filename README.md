@@ -35,7 +35,7 @@ Java 21、Spring Boot 3.3、LangChain4j 1.0.0-beta3、LangGraph4j 1.6.1、MongoD
 
 ### 2. 有环图：支持多轮自我纠正，不是一次性流水线
 
-图不是单向 DAG：`graph.addEdge("RETRY", "INIT")` 和 `graph.addEdge("ADD_NEWS", "INIT")` 把 CRITIC 的两条路由绕回起点，让任务节点重新展开执行。发现某个任务结果不可信，或者缺了新闻分析，工作流会自己再跑一轮，而不是把半成品结果直接扔给回答阶段。循环由 `WorkflowRetryPolicy`（默认 2 次）兜底，任务级 `attempts` 计数保证循环有限终止，不会无限绕圈。
+图不是单向 DAG：`graph.addEdge("RETRY", "INIT")` 和 `graph.addEdge("ADD_NEWS", "INIT")` 把 CRITIC 的两条路由绕回起点，让任务节点重新展开执行。发现某个任务结果不可信，或者缺了新闻分析，工作流会自己再跑一轮，而不是把半成品结果直接扔给回答阶段。循环由 `WorkflowRetryPolicy`（默认 8 次）兜底，任务级 `attempts` 计数保证循环有限终止，不会无限绕圈。
 
 ### 3. Fan-out/Fan-in 并行任务
 
