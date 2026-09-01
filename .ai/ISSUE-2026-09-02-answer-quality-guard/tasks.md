@@ -158,11 +158,16 @@ git commit -m "feat: 增加工作流答案质量检测"
 
 ### Task 2: 为工具结果建立上下文预算
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：**
+- Command: `mvn -q -Dtest=AnswerContextBuilderTest test`
+- Actual: FAIL（测试编译失败：`WorkflowAnswerProperties` 类不存在）。
+- Match Expected: yes
 
-**Green Evidence：** 待填写
+**Green Evidence：**
+- Command: `mvn -q -Dtest=AnswerContextBuilderTest test`
+- Actual: PASS（3 个测试：总/单任务预算、最新结果历史和失败原因保留）。
 
 **涉及文件：**
 - Create: `src/main/java/com/ljl/ai/workflow/WorkflowAnswerProperties.java`
