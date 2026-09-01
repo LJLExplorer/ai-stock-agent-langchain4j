@@ -373,11 +373,21 @@ Commit: `security: 默认隐藏模型诊断日志内容`
 
 ### Task 8: 提供本地基础设施编排
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：**
+- Command: `test -f compose.yaml && docker compose config --quiet`
+- Actual: exit 1；仓库尚无 `compose.yaml`，无法一键启动 MongoDB、Redis 与 Milvus 依赖。
+- Match Expected: yes
 
-**Green Evidence：** 待填写
+**Green Evidence：**
+- Command: `docker compose config --quiet`
+- Actual: exit 0；MongoDB、Redis、etcd、MinIO、Milvus 五个固定版本镜像的 Compose 配置可被 Docker Compose V2 正确解析。
+- Match Expected: yes
+- Command: `docker compose config --images`
+- Actual: 输出五个明确版本的镜像，不使用 `latest`；有状态服务均配置命名卷与健康检查。
+- Match Expected: yes
+- Secret boundary: Compose 仅包含可覆盖的本地开发默认值；真实模型、搜索与飞书凭据只通过本地环境变量注入。
 
 **涉及文件：**
 - Create: `compose.yaml`
