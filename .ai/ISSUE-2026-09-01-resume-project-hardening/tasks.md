@@ -422,11 +422,24 @@ Commit: `build: 增加本地基础设施编排`
 
 ### Task 9: 建立后端与前端持续集成
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：**
+- Command: `test -f .github/workflows/ci.yml`
+- Actual: exit 1；仓库没有持续集成入口，提交无法自动证明后端测试和前端生产构建可通过。
+- Match Expected: yes
 
-**Green Evidence：** 待填写
+**Green Evidence：**
+- Command: `zsh -ic 'jdk21 && mvn -q test'`
+- Actual: exit 0；JDK 21 后端离线单元测试通过。
+- Match Expected: yes
+- Command: `npm ci`
+- Actual: exit 0；npm 11 按 lockfile 干净安装 127 个包，审计结果为 0 个漏洞。
+- Match Expected: yes
+- Command: `npm run build`
+- Actual: exit 0；Vite 8.2.2 完成生产构建，2063 个模块转换成功。
+- Match Expected: yes
+- Reproducibility: 直接依赖不再使用 `latest`，package.json 与 lockfile 已通过 npm 11 严格同步校验；GitHub 官方 Actions 固定到完整提交 SHA。
 
 **涉及文件：**
 - Create: `.github/workflows/ci.yml`
