@@ -222,9 +222,12 @@ Commit: `chore: 移除公开仓库中的本地工具资产`
 
 ### Task 5: 修正 memory 包命名
 
-**状态：** pending
+**状态：** in_progress
 
-**Red Evidence：** 待填写
+**Red Evidence：**
+- Command: `rg -n 'memoery' src/main src/test`
+- Actual: 命中 5 个生产类包声明、4 个同包测试以及 Agent、Service、Listener 和测试中的全部错误 import。
+- Match Expected: yes
 
 **Green Evidence：** 待填写
 
