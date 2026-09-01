@@ -1,4 +1,4 @@
-package com.ljl.ai.memoery;
+package com.ljl.ai.memory;
 
 import com.ljl.ai.model.entity.ChatMessage;
 import com.ljl.ai.model.entity.ChatSession;

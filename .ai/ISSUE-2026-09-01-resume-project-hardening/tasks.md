@@ -222,14 +222,20 @@ Commit: `chore: 移除公开仓库中的本地工具资产`
 
 ### Task 5: 修正 memory 包命名
 
-**状态：** in_progress
+**状态：** completed
 
 **Red Evidence：**
 - Command: `rg -n 'memoery' src/main src/test`
 - Actual: 命中 5 个生产类包声明、4 个同包测试以及 Agent、Service、Listener 和测试中的全部错误 import。
 - Match Expected: yes
 
-**Green Evidence：** 待填写
+**Green Evidence：**
+- Command: `! rg -n 'memoery' src/main src/test`
+- Actual: exit 0，无输出；生产代码、测试代码与目录均不再包含错误拼写。
+- Match Expected: yes
+- Command: `zsh -ic 'jdk21 && mvn -q test'`
+- Actual: exit 0；JDK 21 下默认测试全部通过。
+- Match Expected: yes
 
 **涉及文件：**
 - Rename: `src/main/java/com/ljl/ai/memoery/` → `src/main/java/com/ljl/ai/memory/`

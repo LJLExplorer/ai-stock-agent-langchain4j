@@ -1,4 +1,4 @@
-package com.ljl.ai.memoery;
+package com.ljl.ai.memory;
 
 import com.ljl.ai.config.MemoryConfig;
 import dev.langchain4j.data.message.ChatMessage;
