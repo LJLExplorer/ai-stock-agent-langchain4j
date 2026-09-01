@@ -75,15 +75,24 @@ Commit: `docs: 增加脱敏配置模板`
 
 ### Task 2: 修复 Maven 依赖与 JDK 21 测试运行时
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：**
+- Command: `zsh -ic 'jdk21 && mvn -q -Dtest=AgentConfigToolSelectionTest test'`
+- Actual: exit 1；2 tests run，1 error；Mockito inline MockMaker 无法在 JDK 21 环境完成 Byte Buddy 自附加。
+- Match Expected: yes
 
-**Green Evidence：** 待填写
+**Green Evidence：**
+- Command: `zsh -ic 'jdk21 && mvn -q -Dtest=AgentConfigToolSelectionTest,MarketDataToolTest test'`
+- Actual: exit 0；两组定向测试通过，Mockito 不再尝试 inline self-attach。
+- Match Expected: yes
+- Command: `zsh -ic 'jdk21 && mvn -q validate'`，并统计 `pom.xml` 依赖声明。
+- Actual: exit 0；OkHttp 声明 1 处，JUnit 4 直接依赖 0 处。
 
 **涉及文件：**
 - Modify: `pom.xml`
 - Create: `src/test/resources/mockito-extensions/org.mockito.plugins.MockMaker`
+- Modify: `src/test/java/com/ljl/ai/StockAnalysisAgentApplicationTests.java`（仅迁移到 JUnit Jupiter，测试行为留在 Task 3 调整）
 
 **步骤 0：开始任务前更新状态**
 
@@ -99,6 +108,7 @@ Expected: FAIL，Mockito inline MockMaker 无法在 JDK 21 自附加；同时人
 
 - 删除重复的 OkHttp 依赖，只保留一处版本声明。
 - 删除无意义的 JUnit 4 直接依赖，统一使用 Spring Boot Test 的 JUnit Jupiter。
+- 将仍引用 `org.junit.Test` 的启动测试注解迁移为 `org.junit.jupiter.api.Test`，保证 testCompile 与依赖清理原子完成。
 - 配置 Mockito 使用 subclass MockMaker，避免依赖受限环境中的 JVM 动态自附加。
 
 **步骤 3：验证通过**
