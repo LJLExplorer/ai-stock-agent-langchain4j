@@ -26,46 +26,52 @@
 - 先执行 Red 命令并将实际结果写入 `Red Evidence`，再允许修改交付文件。
 - Green 命令通过后写入 `Green Evidence`，把状态改为 `completed`，然后提交。
 - 不在日志、任务证据或提交信息中粘贴任何凭据值。
-- 当前疑似泄露的模型与飞书凭据必须由仓库所有者在服务端轮换；代码只能阻断继续泄露，不能使历史凭据失效。
+- 不读取、提交或改写被 `.gitignore` 排除的个人配置；若任何凭据曾离开受信边界，应由仓库所有者在服务端轮换。
 
-### Task 1: 阻断测试配置中的凭据泄露
+### Task 1: 提供脱敏配置模板并校验跟踪文件
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：**
+- Command: `test -f src/main/resources/application.example.yml && test -f .env.example`
+- Actual: exit 1，两个脱敏配置模板均不存在。
+- Match Expected: yes
 
-**Green Evidence：** 待填写
+**Green Evidence：**
+- Command: `test -f src/main/resources/application.example.yml && test -f .env.example && ! git grep -Pn '(?<![A-Za-z0-9])sk-[A-Za-z0-9._-]{20,}|(api-key|app-secret):\s+(?!\$\{)[^#\s]+' -- ':!*.md'`
+- Actual: exit 0，无输出；两个模板均存在，且受跟踪的非 Markdown 文件未命中凭据模式。
+- Match Expected: yes
+- Command correction: 原 `sk-` 模式会误匹配 `task-based-asynchronous-programming` 的词内片段；增加 `(?<![A-Za-z0-9])` 后保留全仓扫描并排除该误报。
 
 **涉及文件：**
-- Modify: `src/test/resources/application-test.yml`
 - Create: `src/main/resources/application.example.yml`
 - Create: `.env.example`
 
 **步骤 0：开始任务前更新状态**
 
-- 将状态改为 `in_progress`，不输出原凭据内容。
+- 将状态改为 `in_progress`，不读取或修改被 `.gitignore` 排除的个人配置。
 
 **步骤 1：记录失败证据**
 
-Run: `rg -l 'sk-[A-Za-z0-9._-]{20,}|app-secret:[[:space:]]*[^$]' src/test/resources src/main/resources --glob '!application.yml'`
+Run: `test -f src/main/resources/application.example.yml && test -f .env.example`
 
-Expected: FAIL，命中 `src/test/resources/application-test.yml`。
+Expected: FAIL，仓库没有可提交的脱敏配置模板。
 
 **步骤 2：最小修复**
 
-- 将测试模型、Embedding 与飞书配置改成 `${ENV_NAME:安全占位值}`，不得保留真实默认凭据。
 - 从本地配置键结构生成脱敏 `application.example.yml`，使用 `CHANGE_ME` 或空值表示必填项。
 - 新增 `.env.example`，只列变量名和非敏感示例值。
+- 不复制或修改本地被忽略的 `application.yml`、`application-test.yml`。
 
 **步骤 3：验证通过**
 
-Run: `! rg -l 'sk-[A-Za-z0-9._-]{20,}|app-secret:[[:space:]]*[^$]' src/test/resources src/main/resources/application.example.yml .env.example`
+Run: `test -f src/main/resources/application.example.yml && test -f .env.example && ! git grep -Pn '(?<![A-Za-z0-9])sk-[A-Za-z0-9._-]{20,}|(api-key|app-secret):\s+(?!\$\{)[^#\s]+' -- ':!*.md'`
 
 Expected: PASS。
 
 **步骤 4：回写状态并提交**
 
-Commit: `security: 移除测试配置中的敏感凭据`
+Commit: `docs: 增加脱敏配置模板`
 
 ### Task 2: 修复 Maven 依赖与 JDK 21 测试运行时
 
