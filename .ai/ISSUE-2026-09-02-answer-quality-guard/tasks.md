@@ -24,11 +24,16 @@
 
 ### Task 1: 检测退化 Markdown
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：**
+- Command: `mvn -q -Dtest=AnswerQualityGuardTest test`
+- Actual: FAIL（测试编译失败：`AnswerQualityGuard` 类不存在）。
+- Match Expected: yes
 
-**Green Evidence：** 待填写
+**Green Evidence：**
+- Command: `mvn -q -Dtest=AnswerQualityGuardTest test`
+- Actual: PASS（5 个测试：真实退化样本、合法表格与代码块、未闭合围栏、列数不一致及行内代码）。
 
 **涉及文件：**
 - Create: `src/main/java/com/ljl/ai/workflow/AnswerQualityGuard.java`
@@ -56,9 +61,8 @@ void shouldRejectRealDegeneratedMarkdownSample() {
     AnswerQualityGuard.Validation validation = new AnswerQualityGuard().validate(answer);
 
     assertThat(validation.valid()).isFalse();
-    assertThat(validation.reason()).isIn(
-            AnswerQualityGuard.Reason.EXCESSIVE_MARKDOWN_PUNCTUATION,
-            AnswerQualityGuard.Reason.REPETITIVE_OUTPUT);
+    assertThat(validation.reason())
+            .isEqualTo(AnswerQualityGuard.Reason.EXCESSIVE_MARKDOWN_PUNCTUATION);
 }
 
 @Test
