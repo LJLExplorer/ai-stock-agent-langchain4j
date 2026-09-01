@@ -176,11 +176,18 @@ Commit: `test: 分离单元测试与基础设施集成测试`
 
 ### Task 4: 清理公开仓库边界
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：**
+- Command: `git ls-files .agents .claude .idea | wc -l`
+- Actual: 353，公开交付仍跟踪本地 Agent 技能和 IDE 元数据。
+- Match Expected: yes
 
-**Green Evidence：** 待填写
+**Green Evidence：**
+- Command: `test -z "$(git ls-files .agents .claude .idea)"`
+- Actual: exit 0；353 个本地工具/IDE 文件已停止跟踪。
+- Match Expected: yes
+- Local preservation: `.agents/`、`.claude/`、`.idea/` 均仍存在于本机；两份个人 YAML 均存在且继续被 `.gitignore` 排除。
 
 **涉及文件：**
 - Modify: `.gitignore`
