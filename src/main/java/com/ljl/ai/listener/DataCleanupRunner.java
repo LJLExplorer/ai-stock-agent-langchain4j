@@ -1,6 +1,6 @@
 package com.ljl.ai.listener;
 
-import com.ljl.ai.memoery.ChatMemoryService;
+import com.ljl.ai.memory.ChatMemoryService;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.ApplicationArguments;

@@ -16,13 +16,14 @@ public class RagTraceService {
             if (trace.getCreateTime() == null) trace.setCreateTime(LocalDateTime.now());
 
             log.info("RAG_DIAGNOSTIC traceId={}, createTime={}, userId={}, sessionId={}, "
-                            + "messageId={}, query={}, retrievalCount={}, topScore={}, sourceIds={}, "
-                            + "sourceTitles={}, contextLength={}, answerLength={}, factCheckConfidence={}, "
-                            + "success={}, errorMessage={}",
+                            + "messageId={}, queryLength={}, retrievalCount={}, topScore={}, sourceCount={}, "
+                            + "contextLength={}, answerLength={}, factCheckConfidence={}, success={}, hasError={}",
                     trace.getTraceId(), trace.getCreateTime(), trace.getUserId(), trace.getSessionId(),
-                    trace.getMessageId(), trace.getQuery(), trace.getRetrievalCount(), trace.getTopScore(),
-                    trace.getSourceIds(), trace.getSourceTitles(), trace.getContextLength(), trace.getAnswerLength(),
-                    trace.getFactCheckConfidence(), trace.getSuccess(), trace.getErrorMessage());
+                    trace.getMessageId(), trace.getQuery() == null ? 0 : trace.getQuery().length(),
+                    trace.getRetrievalCount(), trace.getTopScore(),
+                    trace.getSourceIds() == null ? 0 : trace.getSourceIds().size(), trace.getContextLength(),
+                    trace.getAnswerLength(), trace.getFactCheckConfidence(), trace.getSuccess(),
+                    trace.getErrorMessage() != null);
         } catch (Exception e) {
             log.warn("RAG诊断记录写入失败，不影响对话: {}", e.getMessage());
         }

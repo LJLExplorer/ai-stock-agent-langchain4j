@@ -1,6 +1,6 @@
 package com.ljl.ai.service;
 
-import com.ljl.ai.memoery.ChatMemoryService;
+import com.ljl.ai.memory.ChatMemoryService;
 import com.ljl.ai.model.entity.ChatSession;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;

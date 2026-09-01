@@ -1,0 +1,27 @@
+# 变更记录
+
+## 2026-09-01
+
+- 完成公开仓库与本地代码的简历项目体检。
+- 确认项目定位兼顾 Java 后端、AI 应用/Agent 与校招通用岗位。
+- 选定“全面工程化整改”方案。
+- 新增需求与设计文档，明确仓库清理、配置复现、测试分层、CI、代码质量和 README 重写范围。
+- 新增脱敏配置模板，保留本地个人配置并确保其继续被 Git 忽略。
+- 修复 JDK 21 测试运行方式、重复依赖和 JUnit 版本混用；将真实基础设施测试迁移到显式 Maven Profile。
+- 停止跟踪本地 Agent、Claude 和 IDE 资产，修正 `memory` 包与 Redis ChatMemory Provider 命名。
+- 默认隐藏模型诊断日志正文，只有显式开启时才允许受长度限制地记录。
+- 新增固定版本 MongoDB、Redis、Milvus 本地 Compose、配置矩阵及后端/前端 GitHub Actions CI。
+- 修复执行快照乐观锁冲突后的错误覆盖行为：陈旧状态不再获取最新版本号后强行写回。
+- 重写 README 与简历/面试材料，删除并行执行、动态追加新闻、任意节点恢复等超出代码证据的主张，并明确认证、Checkpoint、一致性、性能与投资风险边界。
+- 新增 MIT License。
+
+## 最终验收
+
+- JDK 21 默认测试：108 个测试用例通过，0 failure、0 error。
+- 前端生产构建：Vite 8.2.2 成功转换 2063 个模块。
+- Docker Compose 配置解析通过；Maven `integration-test` Profile 在 `skipITs=true` 下验证通过。
+- 真实 MongoDB/Milvus 连接测试未执行，需要基础设施就绪后显式运行 `mvn -Pintegration-test verify`。
+- 已跟踪文件的常见 API Key、Token、Private Key 与明文密码模式扫描无命中。
+- 个人 `application.yml` 与 `application-test.yml` 均保留在本机，继续被 Git 忽略且未被跟踪；本次未读取、删除、覆盖或提交其中内容。
+- 当前 Git 与公开 `main` 未发现这两份本地 YAML 的暴露证据，因此不要求仅因本次整改轮换密钥。若密钥曾通过其他仓库、日志、截图或聊天记录对外分享，应在对应供应商控制台撤销并重新签发。
+- 未重写 Git 历史，未推送远端。

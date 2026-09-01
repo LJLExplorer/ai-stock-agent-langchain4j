@@ -1,6 +1,6 @@
 package com.ljl.ai.service;
 
-import com.ljl.ai.memoery.ShortTermSummaryService;
+import com.ljl.ai.memory.ShortTermSummaryService;
 import com.ljl.ai.model.entity.UserLongTermMemory;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;

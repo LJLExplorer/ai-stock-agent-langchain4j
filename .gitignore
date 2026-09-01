@@ -34,4 +34,6 @@ frontend/.vite/
 .codegraph/
 
 # Local tool configuration
+.agents/
+.claude/
 mcp-client-config.json

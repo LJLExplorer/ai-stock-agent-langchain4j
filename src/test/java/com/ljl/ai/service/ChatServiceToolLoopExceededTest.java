@@ -1,9 +1,9 @@
 package com.ljl.ai.service;
 
 import com.ljl.ai.agent.StockAnalysisAssistant;
-import com.ljl.ai.memoery.ChatMemoryService;
-import com.ljl.ai.memoery.MongoChatMemoryProvider;
-import com.ljl.ai.memoery.ShortTermSummaryService;
+import com.ljl.ai.memory.ChatMemoryService;
+import com.ljl.ai.memory.RedisChatMemoryProvider;
+import com.ljl.ai.memory.ShortTermSummaryService;
 import com.ljl.ai.model.dto.ChatRequest;
 import com.ljl.ai.model.dto.ChatResponse;
 import com.ljl.ai.model.entity.ChatSession;
@@ -31,7 +31,7 @@ class ChatServiceToolLoopExceededTest {
         ChatService chatService = new ChatService();
 
         ChatMemoryService chatMemoryService = mock(ChatMemoryService.class);
-        MongoChatMemoryProvider chatMemoryProvider = mock(MongoChatMemoryProvider.class);
+        RedisChatMemoryProvider chatMemoryProvider = mock(RedisChatMemoryProvider.class);
         StockAnalysisAssistant assistant = mock(StockAnalysisAssistant.class);
         ChatMemory chatMemory = mock(ChatMemory.class);
         ShortTermSummaryService shortTermSummaryService = mock(ShortTermSummaryService.class);

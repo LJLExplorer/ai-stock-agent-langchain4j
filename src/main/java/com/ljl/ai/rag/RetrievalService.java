@@ -60,7 +60,7 @@ public class RetrievalService {
      * 语义检索相关知识（指定返回数量）
      */
     public List<RetrievalResult> retrieve(String query, int topK) {
-        log.info("开始语义检索, query: {}, topK: {}", query, topK);
+        log.info("开始语义检索, queryLength: {}, topK: {}", query == null ? 0 : query.length(), topK);
 
         // 生成查询向量
         Embedding queryEmbedding = embeddingModel.embed(query).content();

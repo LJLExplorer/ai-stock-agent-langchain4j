@@ -46,7 +46,7 @@ public class KnowledgeService {
     
     /**
      * 同步飞书文档到知识库 - 使用乐观锁处理并发
-     * BUG B003修复: 添加重试机制处理版本冲突，防止并发更新时丢失更新
+     * 重试版本冲突，避免并发更新丢失。
      */
     public KnowledgeDocument syncFeishuDocument(String docToken, String documentType, List<String> tags) {
         log.info("开始同步飞书文档, docToken: {}", docToken);
@@ -102,18 +102,18 @@ public class KnowledgeService {
                 // MongoDB now points at the new vector set. Remove the old set so
                 // updates do not leave stale chunks in Milvus.
                 if (!previousVectorIds.isEmpty()) {
-                    removeVectorsBestEffort(previousVectorIds, docToken);
+                    removeVectorsBestEffort(previousVectorIds);
                 }
 
-                log.info("飞书文档同步完成, docToken: {}, title: {}, chunks: {}",
-                        docToken, title, newVectorIds.size());
+                log.info("飞书文档同步完成, documentId: {}, titleLength: {}, chunks: {}",
+                        document.getDocumentId(), title == null ? 0 : title.length(), newVectorIds.size());
                 return document;
 
             } catch (org.springframework.dao.OptimisticLockingFailureException e) {
                 // The vector store is outside MongoDB's transaction. Remove the
                 // vectors created by this failed attempt before retrying.
                 if (newVectorIds != null) {
-                    removeVectorsBestEffort(newVectorIds, docToken);
+                    removeVectorsBestEffort(newVectorIds);
                 }
                 retry++;
                 log.warn("版本冲突，正在重试 {}/{}, docToken: {}", retry, maxRetries, docToken);
@@ -131,9 +131,9 @@ public class KnowledgeService {
             } catch (Exception e) {
                 // Do not leave vectors behind when the MongoDB write fails.
                 if (newVectorIds != null) {
-                    removeVectorsBestEffort(newVectorIds, docToken);
+                    removeVectorsBestEffort(newVectorIds);
                 }
-                log.error("飞书文档同步失败, docToken: {}", docToken, e);
+                log.error("飞书文档同步失败, errorType={}", e.getClass().getSimpleName());
                 if (e instanceof RuntimeException runtimeException) {
                     throw runtimeException;
                 }
@@ -149,7 +149,7 @@ public class KnowledgeService {
      */
     public KnowledgeDocument addKnowledgeDocument(String title, String content, String documentType,
                                                    List<String> tags, Map<String, String> metadata) {
-        log.info("添加知识文档, title: {}", title);
+        log.info("添加知识文档, titleLength: {}", title == null ? 0 : title.length());
 
         KnowledgeDocument document = KnowledgeDocument.builder()
                 .documentId(UUID.randomUUID().toString())
@@ -172,15 +172,15 @@ public class KnowledgeService {
         // 保存到MongoDB
         mongoTemplate.save(document);
 
-        log.info("知识文档添加完成, id: {}, title: {}, chunks: {}",
-                document.getDocumentId(), title, vectorIds.size());
+        log.info("知识文档添加完成, id: {}, titleLength: {}, chunks: {}",
+                document.getDocumentId(), title == null ? 0 : title.length(), vectorIds.size());
 
         return document;
     }
     
     /**
      * 处理文档并存储向量 - 带容错和补偿机制
-     * BUG B002修复: 实现segment级别异常处理，确保部分失败时能清理已添加的向量
+     * 在分段级失败时清理本次已经写入的向量。
      */
     private List<String> processAndStoreDocument(KnowledgeDocument document) {
         // 创建LangChain4j文档
@@ -217,7 +217,8 @@ public class KnowledgeService {
                 successVectorIds.add(vectorId);
             } catch (Exception e) {
                 failedSegmentIndices.add(i);
-                log.error("向量存储失败, segment索引: {}, error: {}", i, e.getMessage(), e);
+                log.error("向量存储失败, segmentIndex={}, errorType={}", i,
+                        e.getClass().getSimpleName());
             }
         }
 
@@ -233,9 +234,9 @@ public class KnowledgeService {
             for (String vectorId : successVectorIds) {
                 try {
                     embeddingStore.remove(vectorId);
-                    log.debug("补偿删除向量成功, vectorId: {}", vectorId);
+                    log.debug("补偿删除向量成功");
                 } catch (Exception e) {
-                    log.error("补偿删除向量失败, vectorId: {}, error: {}", vectorId, e.getMessage());
+                    log.error("补偿删除向量失败, errorType={}", e.getClass().getSimpleName());
                 }
             }
             throw new RuntimeException(
@@ -287,7 +288,7 @@ public class KnowledgeService {
     
     /**
      * 删除知识文档 - 两阶段删除确保数据一致性
-     * BUG B001修复: 实现向量删除重试机制，防止向量删除失败导致MongoDB记录仍被删除的数据不一致
+     * 重试向量删除，避免向量仍存在时提前移除 MongoDB 元数据。
      * 流程: 标记删除中 -> 删除向量(重试3次) -> 删除MongoDB记录
      */
     public void deleteDocument(String documentId) {
@@ -369,17 +370,17 @@ public class KnowledgeService {
         }
 
         if (!failedIds.isEmpty()) {
-            log.error("向量删除部分失败，孤立向量ID列表({}个): {}", failedIds.size(), failedIds);
+            log.error("向量删除部分失败，孤立向量数量={}", failedIds.size());
             throw new IllegalStateException("向量删除失败，文档保留为DELETING状态: " + failedIds.size());
         }
     }
 
-    private void removeVectorsBestEffort(List<String> vectorIds, String docToken) {
+    private void removeVectorsBestEffort(List<String> vectorIds) {
         for (String vectorId : vectorIds) {
             try {
                 embeddingStore.remove(vectorId);
             } catch (Exception e) {
-                log.error("旧向量清理失败, docToken: {}, vectorId: {}", docToken, vectorId, e);
+                log.error("旧向量清理失败, errorType={}", e.getClass().getSimpleName());
             }
         }
     }
@@ -443,7 +444,7 @@ public class KnowledgeService {
             mongoTemplate.save(document);
             log.info("知识文档已重新启用, id: {}, chunks: {}", documentId, vectorIds.size());
         } catch (RuntimeException exception) {
-            removeVectorsBestEffort(vectorIds, documentId);
+            removeVectorsBestEffort(vectorIds);
             throw exception;
         }
     }

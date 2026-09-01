@@ -92,12 +92,12 @@ public class FeishuClient {
                     if (result.getIntValue("code") == 0) {
                         return result.getJSONObject("data").getString("content");
                     } else {
-                        log.error("获取文档内容失败: {}", result.getString("msg"));
+                        log.error("获取文档内容失败, providerCode={}", result.getIntValue("code"));
                     }
                 }
             }
         } catch (IOException e) {
-            log.error("获取文档内容失败, docToken: {}", docToken, e);
+            log.error("获取文档内容失败, errorType={}", e.getClass().getSimpleName());
         }
         return null;
     }
@@ -168,7 +168,7 @@ public class FeishuClient {
                 }
             }
         } catch (IOException e) {
-            log.error("获取文档元信息失败, docToken: {}", docToken, e);
+            log.error("获取文档元信息失败, errorType={}", e.getClass().getSimpleName());
         }
         return null;
     }

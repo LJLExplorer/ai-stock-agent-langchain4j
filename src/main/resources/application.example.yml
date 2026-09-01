@@ -1,0 +1,77 @@
+server:
+  port: ${SERVER_PORT:8080}
+
+spring:
+  data:
+    mongodb:
+      uri: ${MONGODB_URI:mongodb://localhost:27017/stock_agent}
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      database: ${REDIS_DATABASE:0}
+      username: ${REDIS_USERNAME:}
+      password: ${REDIS_PASSWORD:}
+
+langchain4j:
+  open-ai:
+    chat-model:
+      api-key: ${OPENAI_API_KEY}
+      base-url: ${OPENAI_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode/v1}
+      model-name: ${OPENAI_MODEL_NAME:qwen-plus}
+  community:
+    dashscope:
+      embedding-model:
+        api-key: ${DASHSCOPE_API_KEY}
+        model-name: ${DASHSCOPE_EMBEDDING_MODEL:text-embedding-v3}
+
+milvus:
+  host: ${MILVUS_HOST:localhost}
+  port: ${MILVUS_PORT:19530}
+  collection-name: ${MILVUS_COLLECTION_NAME:kefu_knowledge_base}
+  hybrid-collection-name: ${MILVUS_HYBRID_COLLECTION_NAME:stock_analysis_knowledge_hybrid}
+  dimension: ${MILVUS_DIMENSION:1024}
+  hybrid-search-fallback-enabled: ${MILVUS_HYBRID_SEARCH_FALLBACK_ENABLED:true}
+
+news-search:
+  tavily-api-key: ${TAVILY_API_KEY:}
+  serpapi-api-key: ${SERPAPI_API_KEY:}
+  relevance-threshold: ${NEWS_RELEVANCE_THRESHOLD:0.45}
+  max-retries: ${NEWS_MAX_RETRIES:3}
+  min-relevant-results: ${NEWS_MIN_RELEVANT_RESULTS:3}
+
+feishu:
+  app-id: ${FEISHU_APP_ID:}
+  app-secret: ${FEISHU_APP_SECRET:}
+  base-url: ${FEISHU_BASE_URL:https://open.feishu.cn/open-apis}
+
+prediction:
+  base-url: ${PREDICTION_BASE_URL:http://localhost:8000}
+  timeout-seconds: ${PREDICTION_TIMEOUT_SECONDS:180}
+
+knowledge:
+  chunk:
+    size: ${KNOWLEDGE_CHUNK_SIZE:500}
+    overlap: ${KNOWLEDGE_CHUNK_OVERLAP:50}
+  retrieval:
+    top-k: ${KNOWLEDGE_RETRIEVAL_TOP_K:5}
+    min-score: ${KNOWLEDGE_RETRIEVAL_MIN_SCORE:0.7}
+
+memory:
+  short-term:
+    max-messages: ${MEMORY_SHORT_TERM_MAX_MESSAGES:20}
+    summary-trigger-messages: ${MEMORY_SHORT_TERM_SUMMARY_TRIGGER_MESSAGES:12}
+    max-chars: ${MEMORY_SHORT_TERM_MAX_CHARS:32000}
+    summary-max-chars: ${MEMORY_SHORT_TERM_SUMMARY_MAX_CHARS:8000}
+    ttl: ${MEMORY_SHORT_TERM_TTL:86400}
+  long-term:
+    top-k: ${MEMORY_LONG_TERM_TOP_K:5}
+    min-score: ${MEMORY_LONG_TERM_MIN_SCORE:0.72}
+
+agent:
+  tool:
+    max-sequential-invocations: ${AGENT_TOOL_MAX_SEQUENTIAL_INVOCATIONS:10}
+
+trace:
+  logging:
+    include-content: ${TRACE_LOGGING_INCLUDE_CONTENT:false}
+    max-content-length: ${TRACE_LOGGING_MAX_CONTENT_LENGTH:0}

@@ -14,7 +14,7 @@ import org.slf4j.MDC;
 import java.util.List;
 import java.util.Set;
 
-/** 记录实际发往模型供应商的请求和响应，包含模型原始工具调用。 */
+/** 记录模型调用元数据；仅在显式开启时记录受长度限制的请求和响应正文。 */
 @Slf4j
 public final class TracingChatLanguageModel implements ChatLanguageModel {
     private final ChatLanguageModel delegate;
@@ -72,6 +72,9 @@ public final class TracingChatLanguageModel implements ChatLanguageModel {
     }
 
     private String contentOf(Object value) {
+        if (!config.isIncludeContent()) {
+            return "<redacted>";
+        }
         String content;
         try {
             content = JSON.toJSONString(value);
