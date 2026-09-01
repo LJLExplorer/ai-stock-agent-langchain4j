@@ -123,7 +123,7 @@ public class KnowledgeController {
                 java.util.stream.Collectors.toMap(
                         entry -> (String) entry.getKey(), entry -> (String) entry.getValue()));
 
-        log.info("添加知识文档, title: {}, size: {}", title, content.length());
+        log.info("添加知识文档, titleLength: {}, size: {}", title.length(), content.length());
 
         try {
             KnowledgeDocument document = knowledgeService.addKnowledgeDocument(

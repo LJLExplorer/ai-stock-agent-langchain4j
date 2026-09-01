@@ -7,14 +7,14 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.mock;
 
-class MongoChatMemoryProviderTest {
+class RedisChatMemoryProviderTest {
     @Test
     void shouldCreateMemoryUsingConfiguredRedisStoreAndScopedMemoryId() {
         RedisChatMemoryStore store = mock(RedisChatMemoryStore.class);
         MemoryConfig config = new MemoryConfig();
         config.getShortTerm().setMaxMessages(8);
 
-        MongoChatMemoryProvider provider = new MongoChatMemoryProvider(store, config);
+        RedisChatMemoryProvider provider = new RedisChatMemoryProvider(store, config);
 
         ChatMemory memory = provider.get("user-1:session-1");
 

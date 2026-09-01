@@ -2,7 +2,7 @@ package com.ljl.ai.service;
 
 import com.ljl.ai.agent.StockAnalysisAssistant;
 import com.ljl.ai.memory.ChatMemoryService;
-import com.ljl.ai.memory.MongoChatMemoryProvider;
+import com.ljl.ai.memory.RedisChatMemoryProvider;
 import com.ljl.ai.memory.ShortTermSummaryService;
 import com.ljl.ai.model.dto.ChatRequest;
 import com.ljl.ai.model.entity.ChatSession;
@@ -25,7 +25,7 @@ class ChatServiceMemoryContextTest {
     void shouldPassSummaryAsSystemContextWithoutChangingCurrentUserMessage() {
         ChatService service = new ChatService();
         ChatMemoryService chatMemoryService = mock(ChatMemoryService.class);
-        MongoChatMemoryProvider chatMemoryProvider = mock(MongoChatMemoryProvider.class);
+        RedisChatMemoryProvider chatMemoryProvider = mock(RedisChatMemoryProvider.class);
         ShortTermSummaryService summaryService = mock(ShortTermSummaryService.class);
         LongTermMemoryService longTermMemoryService = mock(LongTermMemoryService.class);
         StockAnalysisAssistant assistant = mock(StockAnalysisAssistant.class);

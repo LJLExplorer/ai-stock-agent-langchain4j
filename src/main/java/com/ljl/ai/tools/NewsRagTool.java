@@ -23,7 +23,8 @@ public class NewsRagTool {
             @P("股票代码或公司名称") String stock,
             @P("检索问题或关键词") String query,
             @P("检索最近多少天") int days) {
-        log.info("检索股票资讯, stock: {}, query: {}, days: {}", stock, query, days);
+        log.info("检索股票资讯, stock: {}, queryLength: {}, days: {}", stock,
+                query == null ? 0 : query.length(), days);
         return ToolResultExecutor.execute("NEWS_SEARCH_ERROR",
                 () -> newsSearchClient.search(stock, query, days, 5));
     }

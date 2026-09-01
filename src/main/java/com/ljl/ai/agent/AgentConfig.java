@@ -1,7 +1,7 @@
 package com.ljl.ai.agent;
 
 import com.ljl.ai.config.AgentToolConfig;
-import com.ljl.ai.memory.MongoChatMemoryProvider;
+import com.ljl.ai.memory.RedisChatMemoryProvider;
 import com.ljl.ai.observability.TraceLoggingConfig;
 import com.ljl.ai.observability.TracingChatLanguageModel;
 import com.ljl.ai.tools.FinancialAnalysisTool;
@@ -46,7 +46,7 @@ public class AgentConfig {
     }
 
     @Resource
-    private MongoChatMemoryProvider chatMemoryProvider;
+    private RedisChatMemoryProvider chatMemoryProvider;
 
     @Resource
     private MarketDataTool marketDataTool;

@@ -8,7 +8,7 @@ import com.ljl.ai.agent.AgentConfig;
 import com.ljl.ai.agent.StockAnalysisAssistant;
 import com.ljl.ai.agent.QueryRewriteAssistant;
 import com.ljl.ai.memory.ChatMemoryService;
-import com.ljl.ai.memory.MongoChatMemoryProvider;
+import com.ljl.ai.memory.RedisChatMemoryProvider;
 import com.ljl.ai.memory.ShortTermSummaryService;
 import com.ljl.ai.model.dto.ChatRequest;
 import com.ljl.ai.model.dto.ChatResponse;
@@ -90,7 +90,7 @@ public class ChatService {
     private ChatMemoryService chatMemoryService;
 
     @Resource
-    private MongoChatMemoryProvider chatMemoryProvider;
+    private RedisChatMemoryProvider chatMemoryProvider;
 
     @Resource
     private RagPipelineService ragPipelineService;
@@ -108,7 +108,9 @@ public class ChatService {
         String previousTraceId = MDC.get("traceId");
         String traceId = UUID.randomUUID().toString();
         MDC.put("traceId", traceId);
-        log.info("chat_request_received traceId={}, request={}", traceId, JSON.toJSONString(request));
+        log.info("chat_request_received traceId={}, userId={}, sessionId={}, enableRag={}, enableTools={}, messageLength={}",
+                traceId, request.getUserId(), request.getSessionId(), request.getEnableRag(), request.getEnableTools(),
+                request.getMessage() == null ? 0 : request.getMessage().length());
         try {
             if (StringUtils.isBlank(request.getSessionId())) {
                 return chatInternal(request);
@@ -185,8 +187,8 @@ public class ChatService {
                 userMessage = userMessage + "\n当前用户正在咨询股票：" + request.getOrderId();
             }
             String retrievalQuery = rewriteRetrievalQuery(userMessage, shortTermSummaryService.get(memoryId));
-            log.info("chat_retrieval_query_ready traceId={}, sessionId={}, query={}", MDC.get("traceId"), sessionId,
-                    retrievalQuery);
+            log.info("chat_retrieval_query_ready traceId={}, sessionId={}, queryLength={}", MDC.get("traceId"),
+                    sessionId, retrievalQuery == null ? 0 : retrievalQuery.length());
 
             // 2. 执行RAG检索（如果启用）
             List<KnowledgeSource> knowledgeSources = null;
@@ -202,12 +204,13 @@ public class ChatService {
                     // 获取RAG上下文，作为系统消息的一部分
                     ragContext = ragResult.getAugmentedContext();
                 }
-                log.info("chat_rag_finished traceId={}, sessionId={}, resultCount={}, context={}", MDC.get("traceId"),
-                        sessionId, ragResult.getRetrievalResults().size(), ragContext);
+                log.info("chat_rag_finished traceId={}, sessionId={}, resultCount={}, contextLength={}",
+                        MDC.get("traceId"), sessionId, ragResult.getRetrievalResults().size(),
+                        ragContext == null ? 0 : ragContext.length());
             }
 
             // 3. 调用智能体生成回复
-            // ChatMemory 使用 MongoDB 持久化（chat_memory_records 集合）
+            // LangChain4j 近轮消息窗口使用 Redis；业务会话与展示消息使用 MongoDB。
 
             String memoryContext = buildMemoryContext(request.getUserId(), sessionId, retrievalQuery);
 
@@ -225,9 +228,9 @@ public class ChatService {
                         executionState = workflowRunner.run(executionState);
                         workflowToolInvocations = workflowToolInvocations(executionState);
                         workflowAnswer = executionState.getFinalAnswer();
-                        log.info("plan_execution_summary traceId={}, sessionId={}, executionId={}, status={}, tasks={}",
+                        log.info("plan_execution_summary traceId={}, sessionId={}, executionId={}, status={}, taskCount={}",
                                 MDC.get("traceId"), sessionId, executionState.getExecutionId(),
-                                executionState.getWorkflowStatus(), JSON.toJSONString(executionState.getTasks()));
+                                executionState.getWorkflowStatus(), executionState.getTasks().size());
                         assistant = stockAnalysisAssistantWithoutTools;
                         userMessage = userMessage + "\n【工作流分析结果】\n" + executionResults(executionState);
                     } else {
@@ -255,8 +258,8 @@ public class ChatService {
                 aiResponse = "系统暂未生成有效回复，请稍后重试。";
             }
             aiResponse = AnswerTextFormatter.format(aiResponse);
-            log.info("chat_response_generated traceId={}, sessionId={}, response={}", MDC.get("traceId"), sessionId,
-                    aiResponse);
+            log.info("chat_response_generated traceId={}, sessionId={}, responseLength={}", MDC.get("traceId"),
+                    sessionId, aiResponse.length());
 
             List<ToolInvocation> toolInvocations = new ArrayList<>(
                     collectToolInvocations(memoryId, previousToolInvocationIds));
@@ -302,7 +305,7 @@ public class ChatService {
                     .build();
 
         } catch (Exception e) {
-            log.error("对话处理失败", e);
+            log.error("对话处理失败, errorType={}", e.getClass().getSimpleName());
 
             boolean toolLoopExceeded = hasMessage(e, "exceeded") && hasMessage(e, "sequential tool executions");
             String content = "抱歉，处理您的请求时出现了问题，请稍后重试或联系人工投研助手。";
@@ -336,7 +339,8 @@ public class ChatService {
                 return Optional.empty();
             }
             String rawPlan = agentPlannerAssistant.plan(userMessage);
-            log.info("planner_call_finished traceId={}, response={}", MDC.get("traceId"), rawPlan);
+            log.info("planner_call_finished traceId={}, responseLength={}", MDC.get("traceId"),
+                    rawPlan == null ? 0 : rawPlan.length());
             AgentPlan candidate;
             try {
                 candidate = JSON.parseObject(extractJsonObject(rawPlan), AgentPlan.class);
@@ -357,7 +361,7 @@ public class ChatService {
                     JSON.toJSONString(validated.plan()));
             return Optional.of(validated);
         } catch (Exception e) {
-            log.warn("Planner 执行失败，降级到完整工具助手", e);
+            log.warn("Planner 执行失败，降级到完整工具助手, errorType={}", e.getClass().getSimpleName());
             return Optional.empty();
         }
     }
@@ -494,17 +498,6 @@ public class ChatService {
         throw new IllegalArgumentException("Planner 返回中的 JSON 对象不完整");
     }
 
-    private static String abbreviatePlannerOutput(String rawPlan) {
-        if (rawPlan == null) {
-            return "<null>";
-        }
-        String normalized = rawPlan.replaceAll("\\s+", " ").trim();
-        int maxLength = 1000;
-        return normalized.length() <= maxLength
-                ? normalized
-                : normalized.substring(0, maxLength) + "...<已截断>";
-    }
-
     ExecutionState createExecutionState(String userId, String sessionId, String question,
                                         PlanValidator.ValidatedPlan validatedPlan) {
         List<ExecutionTask> tasks = validatedPlan.plan().getTasks().stream()
@@ -515,9 +508,9 @@ public class ChatService {
         state.setTraceId(MDC.get("traceId"));
         state.setUserId(userId);
         state.setPlan(validatedPlan.plan());
-        log.info("plan_execution_confirmed traceId={}, sessionId={}, executionId={}, symbol={}, tasks={}",
+        log.info("plan_execution_confirmed traceId={}, sessionId={}, executionId={}, symbol={}, taskTypes={}",
                 state.getTraceId(), sessionId, state.getExecutionId(), state.getPlan().getSymbol(),
-                JSON.toJSONString(state.getTasks()));
+                state.getPlan().getTasks());
         return state;
     }
 
@@ -544,7 +537,8 @@ public class ChatService {
             }
             return rewritten.trim();
         } catch (Exception exception) {
-            log.warn("查询重写失败，使用原始问题检索: {}", exception.getMessage());
+            log.warn("查询重写失败，使用原始问题检索, errorType={}",
+                    exception.getClass().getSimpleName());
             return query;
         }
     }
@@ -564,11 +558,13 @@ public class ChatService {
                         .collect(Collectors.joining("\n")));
             }
         } catch (IllegalArgumentException e) {
-            log.warn("长期记忆召回 - 非法参数: {}", e.getMessage());
+            log.warn("长期记忆召回参数非法, errorType={}", e.getClass().getSimpleName());
         } catch (RuntimeException e) {
-            log.error("长期记忆召回异常，本轮跳过，userId: {}", userId, e);
+            log.error("长期记忆召回异常，本轮跳过, userId={}, errorType={}", userId,
+                    e.getClass().getSimpleName());
         } catch (Exception e) {
-            log.error("长期记忆召回未知异常，本轮跳过，userId: {}", userId, e);
+            log.error("长期记忆召回未知异常，本轮跳过, userId={}, errorType={}", userId,
+                    e.getClass().getSimpleName());
         }
         return String.join("\n\n", sections);
     }

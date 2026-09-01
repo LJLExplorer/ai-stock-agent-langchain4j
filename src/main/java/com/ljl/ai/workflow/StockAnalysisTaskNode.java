@@ -25,24 +25,24 @@ public class StockAnalysisTaskNode {
         String symbol = state.getPlan() == null ? null : state.getPlan().getSymbol();
         task.start();
         long started = System.nanoTime();
-        log.info("tool_execution_started executionId={}, taskId={}, tool={}, symbol={}, query={}, period={}, attempt={}",
+        log.info("tool_execution_started executionId={}, taskId={}, tool={}, symbol={}, queryLength={}, period={}, attempt={}",
                 state.getExecutionId(), task.getTaskId(), task.getTaskType().toolName(), symbol,
-                state.getOriginalQuestion(), "latest", task.getAttempts());
+                state.getOriginalQuestion() == null ? 0 : state.getOriginalQuestion().length(), "latest", task.getAttempts());
         try {
             ToolResult<?> result = executor.execute(task.getTaskType(), symbol,
                     state.getOriginalQuestion(), "latest");
-            log.info("tool_execution_finished executionId={}, taskId={}, tool={}, success={}, elapsedMs={}, result={}",
+            log.info("tool_execution_finished executionId={}, taskId={}, tool={}, success={}, elapsedMs={}, errorCode={}",
                     state.getExecutionId(), task.getTaskId(), task.getTaskType().toolName(), result.isSuccess(),
-                    elapsedMillis(started), JSON.toJSONString(result));
+                    elapsedMillis(started), result.getErrorCode());
             if (result.isSuccess()) {
                 task.complete(JSON.toJSONString(result.getData()));
             } else {
                 task.fail(result.getErrorMessage());
             }
         } catch (Exception exception) {
-            log.error("tool_execution_failed executionId={}, taskId={}, tool={}, elapsedMs={}, error={}",
+            log.error("tool_execution_failed executionId={}, taskId={}, tool={}, elapsedMs={}, errorType={}",
                     state.getExecutionId(), task.getTaskId(), task.getTaskType().toolName(), elapsedMillis(started),
-                    exception.getMessage(), exception);
+                    exception.getClass().getSimpleName());
             task.fail(exception.getMessage() == null
                     ? exception.getClass().getSimpleName() : exception.getMessage());
         }

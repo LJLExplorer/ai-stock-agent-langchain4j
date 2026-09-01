@@ -9,14 +9,12 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 /**
- * ChatMemory 提供者
- * 使用 MongoDB 持久化的 ChatMemoryStore
- * 消息存储在独立的 chat_memory_records 集合，保留所有消息类型
+ * 使用 Redis 持久化短期对话窗口的 ChatMemory 提供者。
  */
 @Slf4j
 @Component
 @RequiredArgsConstructor
-public class MongoChatMemoryProvider implements ChatMemoryProvider {
+public class RedisChatMemoryProvider implements ChatMemoryProvider {
 
     private final RedisChatMemoryStore redisChatMemoryStore;
     private final MemoryConfig memoryConfig;

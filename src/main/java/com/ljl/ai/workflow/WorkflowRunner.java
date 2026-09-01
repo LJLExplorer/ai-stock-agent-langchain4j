@@ -40,20 +40,13 @@ public class WorkflowRunner {
         try {
             long previousVersion = state.getVersion();
             workflow.run(state);
-            try {
-                stateStore.save(state, previousVersion);
-            } catch (CheckpointConflictException conflict) {
-                long latestVersion = stateStore.load(state.getExecutionId())
-                        .map(ExecutionState::getVersion)
-                        .orElseThrow(() -> conflict);
-                stateStore.save(state, latestVersion);
-            }
+            stateStore.save(state, previousVersion);
             log.info("workflow_execution_finished executionId={}, status={}, elapsedMs={}", state.getExecutionId(),
                     state.getWorkflowStatus(), elapsedMillis(started));
             return state;
         } catch (RuntimeException exception) {
-            log.error("workflow_execution_failed executionId={}, elapsedMs={}", state.getExecutionId(),
-                    elapsedMillis(started), exception);
+            log.error("workflow_execution_failed executionId={}, elapsedMs={}, errorType={}", state.getExecutionId(),
+                    elapsedMillis(started), exception.getClass().getSimpleName());
             throw exception;
         } finally {
             if (previousTraceId == null) {

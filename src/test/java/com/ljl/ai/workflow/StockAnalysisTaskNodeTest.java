@@ -20,7 +20,7 @@ import static org.mockito.Mockito.mock;
 class StockAnalysisTaskNodeTest {
 
     @Test
-    void shouldLogCompleteToolInputAndOutput() {
+    void shouldLogToolMetadataWithoutSensitiveInputOrOutput() {
         StockAnalysisTaskExecutor executor = mock(StockAnalysisTaskExecutor.class);
         ToolResult<?> result = ToolResult.success("完整工具输出");
         doReturn(result).when(executor).execute(any(), any(), any(), any());
@@ -28,9 +28,11 @@ class StockAnalysisTaskNodeTest {
         List<String> logs = executeAndCapture(new StockAnalysisTaskNode(executor), state(task), task);
 
         assertThat(logs).anySatisfy(message -> assertThat(message)
-                .contains("tool_execution_started").contains("600519.SH").contains("分析600519"));
+                .contains("tool_execution_started").contains("600519.SH")
+                .doesNotContain("分析600519"));
         assertThat(logs).anySatisfy(message -> assertThat(message)
-                .contains("tool_execution_finished").contains("完整工具输出").contains("success=true"));
+                .contains("tool_execution_finished").contains("success=true")
+                .doesNotContain("完整工具输出"));
     }
 
     @Test
@@ -42,7 +44,8 @@ class StockAnalysisTaskNodeTest {
         List<String> logs = executeAndCapture(new StockAnalysisTaskNode(executor), state(task), task);
 
         assertThat(logs).anySatisfy(message -> assertThat(message)
-                .contains("tool_execution_finished").contains("TOOL_ERROR").contains("数据源失败").contains("success=false"));
+                .contains("tool_execution_finished").contains("TOOL_ERROR").contains("success=false")
+                .doesNotContain("数据源失败"));
     }
 
     @Test
@@ -53,7 +56,8 @@ class StockAnalysisTaskNodeTest {
         List<String> logs = executeAndCapture(new StockAnalysisTaskNode(executor), state(task), task);
 
         assertThat(logs).anySatisfy(message -> assertThat(message)
-                .contains("tool_execution_failed").contains("连接超时"));
+                .contains("tool_execution_failed").contains("IllegalStateException")
+                .doesNotContain("连接超时"));
     }
 
     private List<String> executeAndCapture(StockAnalysisTaskNode node, ExecutionState state, ExecutionTask task) {

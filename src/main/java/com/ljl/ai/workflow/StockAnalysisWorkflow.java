@@ -101,8 +101,8 @@ public class StockAnalysisWorkflow {
     }
 
     public ExecutionState run(ExecutionState executionState) {
-        log.info("workflow_graph_started executionId={}, status={}, tasks={}", executionState.getExecutionId(),
-                executionState.getWorkflowStatus(), executionState.getTasks());
+        log.info("workflow_graph_started executionId={}, status={}, taskCount={}", executionState.getExecutionId(),
+                executionState.getWorkflowStatus(), executionState.getTasks().size());
         compile(executionState).invoke(Map.of("question", executionState.getOriginalQuestion(),
                 "executionId", executionState.getExecutionId()));
         log.info("workflow_graph_finished executionId={}, status={}, currentNode={}", executionState.getExecutionId(),
@@ -172,7 +172,8 @@ public class StockAnalysisWorkflow {
                                         + "次结果）：" + history.get(index));
                     })
                     .collect(java.util.stream.Collectors.joining("\n"));
-            log.info("workflow_answer_context executionId={}, taskResults={}", state.getExecutionId(), results);
+            log.info("workflow_answer_context_ready executionId={}, contextLength={}", state.getExecutionId(),
+                    results.length());
             answerGenerator.generate(state, results);
         }
         state.complete();

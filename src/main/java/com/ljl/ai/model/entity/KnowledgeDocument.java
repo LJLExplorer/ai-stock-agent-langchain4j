@@ -30,7 +30,7 @@ public class KnowledgeDocument {
 
     /**
      * 文档版本 - 用于乐观锁，防止并发更新冲突
-     * BUG B003修复: 添加@Version注解支持MongoDB乐观锁
+     * 使用 MongoDB 乐观锁保护并发更新。
      */
     @Version
     private Long version;
@@ -90,7 +90,7 @@ public class KnowledgeDocument {
      * ACTIVE: 正常状态
      * DELETING: 正在删除中
      * DELETED: 已删除（逻辑删除）
-     * BUG B001修复: 添加删除状态跟踪，防止删除失败导致不一致
+     * 跟踪分阶段删除状态，避免元数据与向量删除结果不一致。
      */
     private String deleteStatus;
 

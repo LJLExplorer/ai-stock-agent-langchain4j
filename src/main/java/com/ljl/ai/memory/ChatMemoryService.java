@@ -18,7 +18,7 @@ import java.util.UUID;
 /**
  * 会话管理服务
  * 负责会话的创建、查询、管理等功能
- * 消息的持久化由 MongoChatMemoryStore 通过 LangChain4j 自动处理
+ * 业务消息保存在 MongoDB；LangChain4j 的短期消息窗口由 RedisChatMemoryStore 独立维护。
  */
 @Slf4j
 @Service
@@ -130,7 +130,8 @@ public class ChatMemoryService {
             session.setTitle(title);
             session.setLastUpdateTime(LocalDateTime.now());
             mongoTemplate.save(session);
-            log.debug("更新会话标题, sessionId: {}, title: {}", sessionId, title);
+            log.debug("更新会话标题, sessionId: {}, titleLength: {}", sessionId,
+                    title == null ? 0 : title.length());
         }
     }
 
@@ -143,7 +144,8 @@ public class ChatMemoryService {
         session.setTitle(title);
         session.setLastUpdateTime(LocalDateTime.now());
         mongoTemplate.save(session);
-        log.debug("更新自定义会话标题, sessionId: {}, title: {}", sessionId, title);
+        log.debug("更新自定义会话标题, sessionId: {}, titleLength: {}", sessionId,
+                title == null ? 0 : title.length());
     }
 
     /**

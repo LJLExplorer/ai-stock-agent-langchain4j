@@ -68,7 +68,8 @@ public class NewsSearchClient {
         for (int attempt = 0; attempt <= retryCount && collected.size() < minRelevantResults; attempt++) {
             String searchQuery = attempt == 0 ? query : broadenQuery(query, attempt);
             if (attempt > 0) {
-                log.info("新闻相关结果不足，执行第 {} 次扩展关键词重查, stock: {}, query: {}", attempt, stock, searchQuery);
+                log.info("新闻相关结果不足，执行第 {} 次扩展关键词重查, stock: {}, queryLength: {}", attempt,
+                        stock, searchQuery.length());
             }
             List<NewsItem> filtered = filterByRelevance(searcher.search(searchQuery, resultLimit), stock, query);
             filtered.forEach(item -> collected.putIfAbsent(resultKey(item), item));
@@ -153,15 +154,15 @@ public class NewsSearchClient {
                 if (score >= relevanceThreshold) {
                     filtered.add(item.withRelevanceScore(score));
                 } else {
-                    log.debug("过滤低相关度新闻, score: {}, threshold: {}, title: {}", score,
-                            relevanceThreshold, item.title());
+                    log.debug("过滤低相关度新闻, score: {}, threshold: {}", score, relevanceThreshold);
                 }
             }
             log.info("新闻语义过滤完成, 原始结果: {}, 保留结果: {}, threshold: {}", items.size(), filtered.size(),
                     relevanceThreshold);
             return filtered;
         } catch (RuntimeException exception) {
-            log.warn("新闻语义过滤失败，保留供应商结果: {}", exception.getMessage());
+            log.warn("新闻语义过滤失败，保留供应商结果, errorType={}",
+                    exception.getClass().getSimpleName());
             return items;
         }
     }

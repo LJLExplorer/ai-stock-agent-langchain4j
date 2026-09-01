@@ -41,7 +41,7 @@ public class RagController {
         }
         int topK = number.intValue();
 
-        log.info("语义检索, query: {}, topK: {}", query, topK);
+        log.info("语义检索, queryLength: {}, topK: {}", query.length(), topK);
         List<RetrievalResult> results = retrievalService.retrieve(query, topK);
 
         return ResponseEntity.ok(results);
@@ -64,7 +64,7 @@ public class RagController {
             ));
         }
 
-        log.info("RAG增强查询, query: {}", query);
+        log.info("RAG增强查询, queryLength: {}", query.length());
 
         try {
             RagResult result = ragPipelineService.executeRag(query);
@@ -74,7 +74,8 @@ public class RagController {
             ));
 
         } catch (Exception e) {
-            log.error("RAG检索失败，执行降级处理，query: {}", query, e);
+            log.error("RAG检索失败，执行降级处理, queryLength={}, errorType={}", query.length(),
+                    e.getClass().getSimpleName());
 
             // 降级方案: 返回空知识源，但允许对话继续
             RagResult fallbackResult = RagResult.builder()

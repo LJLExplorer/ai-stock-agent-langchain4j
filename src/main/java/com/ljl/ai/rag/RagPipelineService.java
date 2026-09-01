@@ -23,7 +23,7 @@ public class RagPipelineService {
      * 执行RAG流程
      */
     public RagResult executeRag(String userQuery) {
-        log.info("执行RAG流程, query: {}", userQuery);
+        log.info("执行RAG流程, queryLength: {}", userQuery == null ? 0 : userQuery.length());
 
         // 1. 语义检索
         List<RetrievalResult> retrievalResults = retrievalService.retrieve(userQuery);
@@ -79,7 +79,7 @@ public class RagPipelineService {
 
     /**
      * 验证回答与知识库的一致性（幻觉抑制）
-     * BUG B004修复: 修复置信度计算逻辑，无检索结果时置信度应为0
+     * 无检索结果时置信度为 0。
      *
      * 置信度计算规则:
      * - 无检索结果: 0.0 (无知识库支持，完全不可信)

@@ -1,7 +1,7 @@
 package com.ljl.ai.service;
 
 import com.ljl.ai.memory.ChatMemoryService;
-import com.ljl.ai.memory.MongoChatMemoryProvider;
+import com.ljl.ai.memory.RedisChatMemoryProvider;
 import com.ljl.ai.memory.ShortTermSummaryService;
 import com.ljl.ai.model.entity.ChatSession;
 import org.junit.jupiter.api.Test;
@@ -22,7 +22,7 @@ class ChatServiceMemoryKeyTest {
     void shouldDeleteShortTermSummaryWhenSessionIsDeleted() {
         ChatService service = new ChatService();
         ChatMemoryService chatMemoryService = mock(ChatMemoryService.class);
-        MongoChatMemoryProvider memoryProvider = mock(MongoChatMemoryProvider.class);
+        RedisChatMemoryProvider memoryProvider = mock(RedisChatMemoryProvider.class);
         ShortTermSummaryService summaryService = mock(ShortTermSummaryService.class);
         when(chatMemoryService.getSession("session-1"))
                 .thenReturn(ChatSession.builder().sessionId("session-1").userId("user-1").build());
