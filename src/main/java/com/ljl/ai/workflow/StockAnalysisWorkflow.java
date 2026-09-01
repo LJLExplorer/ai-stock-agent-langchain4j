@@ -161,20 +161,7 @@ public class StockAnalysisWorkflow {
 
     private void answer(ExecutionState state) {
         if (answerGenerator != null) {
-            String results = state.getTasks().stream()
-                    .flatMap(task -> {
-                        List<String> history = task.getResultHistory();
-                        if (history == null || history.isEmpty()) {
-                            return java.util.stream.Stream.of("- " + task.getTaskType() + "：" + task.getResult());
-                        }
-                        return java.util.stream.IntStream.range(0, history.size())
-                                .mapToObj(index -> "- " + task.getTaskType() + "（第" + (index + 1)
-                                        + "次结果）：" + history.get(index));
-                    })
-                    .collect(java.util.stream.Collectors.joining("\n"));
-            log.info("workflow_answer_context_ready executionId={}, contextLength={}", state.getExecutionId(),
-                    results.length());
-            answerGenerator.generate(state, results);
+            answerGenerator.generate(state);
         }
         state.complete();
     }

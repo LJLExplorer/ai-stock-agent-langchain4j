@@ -138,8 +138,7 @@ public final class AnswerQualityGuard {
 
     private boolean hasSuspiciousEnding(String answer) {
         String trimmed = answer.trim();
-        return trimmed.endsWith(":---") || trimmed.endsWith("|")
-                || trimmed.matches("(?s).*`{4,}$");
+        return trimmed.endsWith(":---") || trimmed.matches("(?s).*`{4,}$");
     }
 
     private boolean containsMarkdownPunctuation(String value) {

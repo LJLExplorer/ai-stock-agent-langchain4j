@@ -36,6 +36,19 @@ class AnswerQualityGuardTest {
     }
 
     @Test
+    void shouldAcceptAnswerEndingWithValidTableRow() {
+        String answer = """
+                ## 数据
+
+                | 指标 | 数值 |
+                | --- | ---: |
+                | 最新价 | 1500 |
+                """;
+
+        assertThat(new AnswerQualityGuard().validate(answer).valid()).isTrue();
+    }
+
+    @Test
     void shouldRejectUnclosedCodeFence() {
         String answer = "## 结论\n\n```text\n未完成的代码块";
 

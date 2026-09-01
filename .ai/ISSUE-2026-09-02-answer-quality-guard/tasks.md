@@ -392,11 +392,16 @@ git commit -m "feat: 隔离工作流答案模型调用"
 
 ### Task 4: 接入校验、单次重写和安全降级
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：**
+- Command: `mvn -q -Dtest=WorkflowAnswerGeneratorTest,StockAnalysisWorkflowTest test`
+- Actual: FAIL（`WorkflowAnswerGenerator` 仍只有旧构造器和 `generate(ExecutionState, String)` 方法）。
+- Match Expected: yes
 
-**Green Evidence：** 待填写
+**Green Evidence：**
+- Command: `mvn -q -Dtest=AnswerQualityGuardTest,AnswerContextBuilderTest,WorkflowAnswerGeneratorTest,StockAnalysisWorkflowTest test`
+- Actual: PASS（定向回归通过；Mockito/Byte Buddy 仅输出 JDK 动态 agent 未来兼容性提示）。
 
 **涉及文件：**
 - Modify: `src/main/java/com/ljl/ai/workflow/WorkflowAnswerGenerator.java`
