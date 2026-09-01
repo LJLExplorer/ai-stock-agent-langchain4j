@@ -475,16 +475,31 @@ Commit: `ci: 增加后端测试与前端构建检查`
 
 ### Task 10: 重写面向面试官的 README
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：**
+- Command: `rg -n 'CI|测试分层|配置矩阵|设计取舍|已知边界|简历描述' README.md docs/resume-and-interview.md`
+- Actual: exit 2；简历与面试材料文件不存在，README 也缺少完整的测试、CI、配置矩阵和已知边界证据链。
+- Match Expected: yes
+- Manual audit: 旧 README 将分支图表述为已验证并行执行，将当前不可达的 `ADD_NEWS` 路由表述为启用能力，并夸大为任意中断点 Checkpoint 恢复；这些主张均超出当前代码证据。
 
-**Green Evidence：** 待填写
+**Green Evidence：**
+- Command: `test -f docs/resume-and-interview.md && rg -n 'Plan-and-Execute|RRF|Checkpoint|mvn test|npm.*build|已知边界' README.md`
+- Actual: exit 0；README 覆盖架构、请求链路、设计取舍、配置、测试分层、CI、API、项目结构与已知边界，简历材料包含三类岗位版本和 12 个追问主题。
+- Match Expected: yes
+- Manual code audit: 已逐项核对 `ChatService`、`StockAnalysisWorkflow`、`WorkflowRunner`、`RetrievalService`、记忆服务和各 Controller；删除或限定了并行、`ADD_NEWS`、任意节点恢复、RAG 降级及用户隔离等过度主张。
+- Engineering follow-up: 修正 Redis ChatMemory Provider 命名；新增乐观锁冲突回归测试并禁止陈旧状态强制覆盖；核心业务日志改为元数据记录。
+- Command: `zsh -ic 'jdk21 && mvn -q test'`
+- Actual: exit 0；文档配套的命名、日志和乐观锁修改通过全量默认测试。
+- Match Expected: yes
 
 **涉及文件：**
 - Modify: `README.md`
 - Create: `docs/resume-and-interview.md`
+- Create: `LICENSE`
 - Modify: `.ai/ISSUE-2026-09-01-resume-project-hardening/changelog.md`
+- Rename: `MongoChatMemoryProvider` → `RedisChatMemoryProvider` 及对应测试/引用
+- Modify: `WorkflowRunner`，并新增乐观锁冲突回归测试
 
 **步骤 0：开始任务前更新状态**
 

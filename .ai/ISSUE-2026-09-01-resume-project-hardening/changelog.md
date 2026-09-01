@@ -6,3 +6,11 @@
 - 确认项目定位兼顾 Java 后端、AI 应用/Agent 与校招通用岗位。
 - 选定“全面工程化整改”方案。
 - 新增需求与设计文档，明确仓库清理、配置复现、测试分层、CI、代码质量和 README 重写范围。
+- 新增脱敏配置模板，保留本地个人配置并确保其继续被 Git 忽略。
+- 修复 JDK 21 测试运行方式、重复依赖和 JUnit 版本混用；将真实基础设施测试迁移到显式 Maven Profile。
+- 停止跟踪本地 Agent、Claude 和 IDE 资产，修正 `memory` 包与 Redis ChatMemory Provider 命名。
+- 默认隐藏模型诊断日志正文，只有显式开启时才允许受长度限制地记录。
+- 新增固定版本 MongoDB、Redis、Milvus 本地 Compose、配置矩阵及后端/前端 GitHub Actions CI。
+- 修复执行快照乐观锁冲突后的错误覆盖行为：陈旧状态不再获取最新版本号后强行写回。
+- 重写 README 与简历/面试材料，删除并行执行、动态追加新闻、任意节点恢复等超出代码证据的主张，并明确认证、Checkpoint、一致性、性能与投资风险边界。
+- 新增 MIT License。
