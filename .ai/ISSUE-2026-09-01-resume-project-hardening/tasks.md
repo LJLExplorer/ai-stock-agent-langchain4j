@@ -272,11 +272,21 @@ Commit: `refactor: 修正 memory 包命名`
 
 ### Task 6: 清理后端代码观感问题
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：**
+- Command: `rg -n '@Autowired|BUG B[0-9]+' src/main/java/com/ljl/ai/controller`
+- Actual: 命中 4 处字段注入和 2 处历史 BUG 编号注释。
+- Match Expected: yes
 
-**Green Evidence：** 待填写
+**Green Evidence：**
+- Command: `! rg -n '@Autowired|BUG B[0-9]+' src/main/java/com/ljl/ai/controller`
+- Actual: exit 0，无字段注入或历史 BUG 编号残留。
+- Match Expected: yes
+- Command: `zsh -ic "jdk21 && mvn -q -Dtest='*ControllerTest' test"`
+- Actual: exit 0；Controller 定向测试通过。构造器注入使原反射赋值测试先发生 testCompile 失败，测试改为显式构造依赖后通过。
+- Command: `zsh -ic 'jdk21 && mvn -q test'`
+- Actual: exit 0；全量离线单元测试通过。
 
 **涉及文件：**
 - Modify: `src/main/java/com/ljl/ai/controller/ChatController.java`

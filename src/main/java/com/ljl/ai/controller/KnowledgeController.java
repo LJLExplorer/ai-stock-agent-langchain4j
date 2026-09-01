@@ -2,8 +2,8 @@ package com.ljl.ai.controller;
 
 import com.ljl.ai.knowledge.KnowledgeService;
 import com.ljl.ai.model.entity.KnowledgeDocument;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.*;
@@ -18,10 +18,10 @@ import java.nio.charset.StandardCharsets;
 @Slf4j
 @RestController
 @RequestMapping("/api/knowledge")
+@RequiredArgsConstructor
 public class KnowledgeController {
 
-    @Autowired
-    private  KnowledgeService knowledgeService;
+    private final KnowledgeService knowledgeService;
     
     /**
      * 同步飞书文档
@@ -54,7 +54,7 @@ public class KnowledgeController {
     /**
      * 添加知识文档
      * POST /api/knowledge/documents
-     * BUG B005修复: 添加参数验证，防止null或过大的内容导致异常
+     * 校验空值和内容大小，避免非法文档进入分块与向量化流程。
      */
     @PostMapping("/documents")
     public ResponseEntity<?> addDocument(@RequestBody Map<String, Object> request) {

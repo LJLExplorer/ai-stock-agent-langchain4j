@@ -6,7 +6,6 @@ import com.ljl.ai.rag.RetrievalResult;
 import com.ljl.ai.rag.RetrievalService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.*;
@@ -22,10 +21,8 @@ import java.util.Map;
 @RequestMapping("/api/rag")
 @RequiredArgsConstructor
 public class RagController {
-    @Autowired
-    private RetrievalService retrievalService;
-    @Autowired
-    private RagPipelineService ragPipelineService;
+    private final RetrievalService retrievalService;
+    private final RagPipelineService ragPipelineService;
 
     /**
      * 语义检索
@@ -53,7 +50,7 @@ public class RagController {
     /**
      * RAG增强查询
      * POST /api/rag/query
-     * BUG B006修复: 添加异常捕获和降级方案，RAG失败不影响对话
+     * 检索失败时降级为普通查询，避免知识库故障中断对话。
      */
     @PostMapping("/query")
     public ResponseEntity<?> ragQuery(@RequestBody Map<String, Object> request) {
