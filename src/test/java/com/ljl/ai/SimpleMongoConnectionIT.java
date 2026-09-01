@@ -9,6 +9,7 @@ import org.springframework.data.mongodb.core.MongoTemplate;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -17,7 +18,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * 用于验证 MongoDB 连接是否正常工作
  */
 @SpringBootTest(classes = StockAnalysisAgentApplication.class)
-public class SimpleMongoConnectionTest {
+public class SimpleMongoConnectionIT {
 
     @Resource
     private MongoTemplate mongoTemplate;
@@ -49,22 +50,24 @@ public class SimpleMongoConnectionTest {
      */
     @Test
     public void testMongoDBBasicOperation() {
+        String collectionName = "mongo_connection_it_" + UUID.randomUUID().toString().replace("-", "");
+        try {
+            // 创建测试数据
+            Map<String, Object> testData = new HashMap<>();
+            testData.put("name", "测试用户");
+            testData.put("age", 25);
+            testData.put("email", "test@example.com");
 
-        // 创建测试数据
-        Map<String, Object> testData = new HashMap<>();
-        testData.put("name", "测试用户");
-        testData.put("age", 25);
-        testData.put("email", "test@example.com");
+            // 保存数据
+            Map<String, Object> savedData = mongoTemplate.save(testData, collectionName);
+            assertNotNull(savedData, "保存的数据不应为空");
 
-        // 保存数据
-        Map<String, Object> savedData = mongoTemplate.save(testData, "customer_memory");
-        assertNotNull(savedData, "保存的数据不应为空");
-
-        System.out.println("数据保存成功: " + savedData);
-
-//        // 清理测试数据
-//        mongoTemplate.dropCollection(collectionName);
-//        System.out.println("测试数据已清理");
+            System.out.println("数据保存成功: " + savedData);
+        } finally {
+            if (mongoTemplate.collectionExists(collectionName)) {
+                mongoTemplate.dropCollection(collectionName);
+            }
+        }
     }
 
     /**

@@ -123,11 +123,20 @@ Commit: `build: 修复 JDK 21 测试运行与重复依赖`
 
 ### Task 3: 隔离真实基础设施集成测试
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：**
+- Command: `zsh -ic 'jdk21 && mvn -q test'`
+- Actual: exit 1；112 tests run，7 errors；错误全部来自 `MilvusConnectionTest` 与 `SimpleMongoConnectionTest` 启动完整 Spring 上下文并连接 MongoDB/Milvus。
+- Match Expected: yes
 
-**Green Evidence：** 待填写
+**Green Evidence：**
+- Command: `zsh -ic 'jdk21 && mvn -q test'`
+- Actual: exit 0；默认单元测试通过，未启动 `MilvusConnectionIT` / `SimpleMongoConnectionIT`，日志中没有 MongoDB/Milvus 外部连接尝试。
+- Match Expected: yes
+- Command: `zsh -ic 'jdk21 && mvn -q -Pintegration-test -DskipITs=true verify'`
+- Actual: exit 0；Failsafe Profile 可解析，`skipITs` 跳过真实基础设施集成测试，verify 生命周期通过。
+- Match Expected: yes
 
 **涉及文件：**
 - Rename: `src/test/java/com/ljl/ai/MilvusConnectionTest.java` → `src/test/java/com/ljl/ai/MilvusConnectionIT.java`
