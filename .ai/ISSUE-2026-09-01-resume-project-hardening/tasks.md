@@ -38,10 +38,10 @@
 - Match Expected: yes
 
 **Green Evidence：**
-- Command: `test -f src/main/resources/application.example.yml && test -f .env.example && ! git grep -Pn '(?<![A-Za-z0-9])sk-[A-Za-z0-9._-]{20,}|(api-key|app-secret):\s+(?!\$\{)[^#\s]+' -- ':!*.md'`
-- Actual: exit 0，无输出；两个模板均存在，且受跟踪的非 Markdown 文件未命中凭据模式。
+- Command: `test -f src/main/resources/application.example.yml && test -f .env.example && ! git grep -InP '(?i)^[ \t]*(?:api-key|app-secret|password):[ \t]*(?:[^\s$][^\s]*|\$\{[^}:]+:[^}\s]+\})' -- src/main/resources/application.example.yml && ! git grep -InP '^[A-Z][A-Z0-9_]*(?:KEY|SECRET|TOKEN|PASSWORD)=\S+' -- .env.example && ! git grep -InP '(?<![A-Za-z0-9])sk-[A-Za-z0-9._-]{20,}' -- ':!*.md'`
+- Actual: exit 0，无输出；YAML 密钥字段无字面量或非空占位默认值，`.env.example` 凭据变量均为空，且所有受跟踪的非 Markdown 文件未命中 token 模式。
 - Match Expected: yes
-- Command correction: 原 `sk-` 模式会误匹配 `task-based-asynchronous-programming` 的词内片段；增加 `(?<![A-Za-z0-9])` 后保留全仓扫描并排除该误报。
+- Command correction: YAML 模式锚定行首配置键，避免把安全占位符变量名中的 `PASSWORD:` 误判为 YAML 键；全仓 token 模式使用 `(?<![A-Za-z0-9])` 排除 `task-based-asynchronous-programming` 的词内误报。
 
 **涉及文件：**
 - Create: `src/main/resources/application.example.yml`
@@ -65,7 +65,7 @@ Expected: FAIL，仓库没有可提交的脱敏配置模板。
 
 **步骤 3：验证通过**
 
-Run: `test -f src/main/resources/application.example.yml && test -f .env.example && ! git grep -Pn '(?<![A-Za-z0-9])sk-[A-Za-z0-9._-]{20,}|(api-key|app-secret):\s+(?!\$\{)[^#\s]+' -- ':!*.md'`
+Run: `test -f src/main/resources/application.example.yml && test -f .env.example && ! git grep -InP '(?i)^[ \t]*(?:api-key|app-secret|password):[ \t]*(?:[^\s$][^\s]*|\$\{[^}:]+:[^}\s]+\})' -- src/main/resources/application.example.yml && ! git grep -InP '^[A-Z][A-Z0-9_]*(?:KEY|SECRET|TOKEN|PASSWORD)=\S+' -- .env.example && ! git grep -InP '(?<![A-Za-z0-9])sk-[A-Za-z0-9._-]{20,}' -- ':!*.md'`
 
 Expected: PASS。
 
