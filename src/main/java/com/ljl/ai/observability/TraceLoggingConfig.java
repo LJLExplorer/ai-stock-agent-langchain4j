@@ -9,6 +9,9 @@ import org.springframework.context.annotation.Configuration;
 @ConfigurationProperties(prefix = "trace.logging")
 public class TraceLoggingConfig {
 
-    /** 0 表示记录完整内容。 */
+    /** 仅在受控诊断环境中显式开启；默认不记录模型请求和响应正文。 */
+    private boolean includeContent = false;
+
+    /** 开启正文记录后的最大长度；0 表示不截断。 */
     private int maxContentLength;
 }

@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.verify;
@@ -16,7 +17,7 @@ import static org.mockito.Mockito.when;
 class TracingChatLanguageModelTest {
 
     @Test
-    void shouldLogModelRequestAndResponseWithTraceId() {
+    void shouldHideModelRequestAndResponseContentByDefault() {
         ChatLanguageModel delegate = Mockito.mock(ChatLanguageModel.class);
         when(delegate.doChat(null)).thenReturn(null);
         TraceLoggingConfig config = new TraceLoggingConfig();
@@ -37,7 +38,21 @@ class TracingChatLanguageModelTest {
         verify(delegate).doChat(null);
         assertThat(appender.list)
                 .extracting(ILoggingEvent::getFormattedMessage)
-                .anySatisfy(message -> assertThat(message).contains("model_call_started"))
-                .anySatisfy(message -> assertThat(message).contains("model_call_finished"));
+                .anySatisfy(message -> assertThat(message)
+                        .contains("model_call_started", "trace-model-test", "request=<redacted>"))
+                .anySatisfy(message -> assertThat(message)
+                        .contains("model_call_finished", "trace-model-test", "response=<redacted>"));
+    }
+
+    @Test
+    void shouldOnlyExposeTruncatedContentWhenExplicitlyEnabled() {
+        TraceLoggingConfig config = new TraceLoggingConfig();
+        config.setIncludeContent(true);
+        config.setMaxContentLength(8);
+        TracingChatLanguageModel model = new TracingChatLanguageModel(Mockito.mock(ChatLanguageModel.class), config);
+
+        String content = ReflectionTestUtils.invokeMethod(model, "contentOf", "sensitive-model-content");
+
+        assertThat(content).isEqualTo("\"sensiti...<truncated>");
     }
 }

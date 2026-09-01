@@ -73,4 +73,5 @@ agent:
 
 trace:
   logging:
+    include-content: ${TRACE_LOGGING_INCLUDE_CONTENT:false}
     max-content-length: ${TRACE_LOGGING_MAX_CONTENT_LENGTH:0}

@@ -322,15 +322,25 @@ Commit: `refactor: 统一控制器依赖注入与注释`
 
 ### Task 7: 收紧诊断日志的隐私默认值
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：**
+- Command: `zsh -ic 'jdk21 && mvn -q -Dtest=TracingChatLanguageModelTest test'`
+- Actual: exit 1；测试要求显式 `includeContent` 开关，但 `TraceLoggingConfig` 尚无该安全边界。
+- Match Expected: yes
 
-**Green Evidence：** 待填写
+**Green Evidence：**
+- Command: `zsh -ic 'jdk21 && mvn -q -Dtest=TracingChatLanguageModelTest test'`
+- Actual: exit 0；默认日志仅含 traceId、operation、耗时及 `<redacted>`，显式开启后正文仍受长度上限限制。
+- Match Expected: yes
+- Command: `zsh -ic 'jdk21 && mvn -q test'`
+- Actual: exit 0；全量离线单元测试通过。
+- Security review: `chat`、`doChat` 与异常分支均通过同一个 `contentOf` 边界；默认输入和响应正文不可到达日志 sink，显式诊断模式保持兼容。
 
 **涉及文件：**
 - Modify: `src/main/java/com/ljl/ai/observability/TraceLoggingConfig.java`
 - Modify: `src/main/java/com/ljl/ai/observability/TracingChatLanguageModel.java`
+- Modify: `src/main/resources/application.example.yml`
 - Test: `src/test/java/com/ljl/ai/observability/TracingChatLanguageModelTest.java`
 
 **步骤 0：开始任务前更新状态**
