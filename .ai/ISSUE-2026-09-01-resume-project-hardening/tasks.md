@@ -531,11 +531,27 @@ Commit: `docs: 重写项目说明与简历面试材料`
 
 ### Task 11: 完成全量验收与安全收尾
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** N/A；本任务是对已完成整改执行最终验收，不引入新的行为需求。
 
-**Green Evidence：** 待填写
+**Green Evidence：**
+- Command: `zsh -ic 'jdk21 && mvn -q test'`
+- Actual: exit 0；Surefire 报告共 108 个测试用例，0 failure、0 error。
+- Match Expected: yes
+- Command: `npm --prefix frontend run build`
+- Actual: exit 0；Vite 8.2.2 转换 2063 个模块并生成生产 Bundle。
+- Match Expected: yes
+- Command: `docker compose config --quiet`
+- Actual: exit 0；本地基础设施编排可解析。
+- Match Expected: yes
+- Command: `zsh -ic 'jdk21 && mvn -q -Pintegration-test -DskipITs=true verify'`
+- Actual: exit 0；集成测试 Profile 可解析；真实 MongoDB/Milvus `*IT` 未执行，未伪装为通过。
+- Match Expected: yes
+- Command: `git diff --check && test -z "$(git ls-files .agents .claude .idea)"`
+- Actual: exit 0；无空白错误，本地工具与 IDE 资产未被跟踪。
+- Match Expected: yes
+- Secret scan: 两组已跟踪文件凭据模式扫描均无命中；本地 `application.yml` 与 `application-test.yml` 均存在、被忽略且 tracked count 为 0。
 
 **涉及文件：**
 - Modify: `.ai/ISSUE-2026-09-01-resume-project-hardening/tasks.md`
