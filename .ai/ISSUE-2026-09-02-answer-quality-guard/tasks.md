@@ -522,11 +522,19 @@ git commit -m "fix: 拦截工作流异常答案并安全降级"
 
 ### Task 5: 完成生产回归验证
 
-**状态：** pending
+**状态：** completed
 
 **Red Evidence：** 待填写
 
-**Green Evidence：** 待填写
+**Green Evidence：**
+- Command: `mvn -q -DskipTests compile`
+- Actual: PASS。
+- Command: `mvn -q test`
+- Actual: PASS（仅有 Mockito/Byte Buddy 动态 agent 的 JDK 未来兼容性提示）。
+- Command: `npm --prefix frontend run build`
+- Actual: PASS（Vite 生产构建完成）。
+- Command: `git diff --check`
+- Actual: PASS。
 
 **涉及文件：**
 - Modify: `.ai/ISSUE-2026-09-02-answer-quality-guard/tasks.md`
