@@ -7,3 +7,4 @@
 - 建立需求与设计文档，尚未修改生产代码。
 - 新增 `AnswerQualityGuard`：在持久化前拒绝空答案、未闭合围栏、非法表格、异常 Markdown 标点、重复退化和可疑结尾；真实 MongoDB 异常样本已纳入回归测试。
 - 新增可配置的工作流答案上下文预算：按任务保留状态、错误和最新结果历史，超限内容按 Unicode code point 安全裁剪并标记。
+- 新增无记忆、无工具的 `WorkflowAnswerAssistant` Bean，最终工作流答案不再写入 Redis 对话记忆；首次和重写 Prompt 分别限定合法表格与纯列表输出。

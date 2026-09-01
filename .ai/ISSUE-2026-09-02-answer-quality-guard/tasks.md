@@ -276,11 +276,16 @@ git commit -m "feat: 限制工作流答案上下文规模"
 
 ### Task 3: 建立无记忆的工作流答案模型入口
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：**
+- Command: `mvn -q -Dtest=WorkflowAnswerAssistantContractTest test`
+- Actual: FAIL（测试编译失败：`WorkflowAnswerAssistant` 接口不存在）。
+- Match Expected: yes
 
-**Green Evidence：** 待填写
+**Green Evidence：**
+- Command: `mvn -q -Dtest=WorkflowAnswerAssistantContractTest,AgentConfigToolSelectionTest test`
+- Actual: PASS（4 个测试；Maven 输出仅包含 Mockito/Byte Buddy 动态 agent 的 JDK 未来兼容性提示）。
 
 **涉及文件：**
 - Create: `src/main/java/com/ljl/ai/agent/WorkflowAnswerAssistant.java`
