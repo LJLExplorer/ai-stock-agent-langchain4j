@@ -71,6 +71,12 @@ agent:
   tool:
     max-sequential-invocations: ${AGENT_TOOL_MAX_SEQUENTIAL_INVOCATIONS:10}
 
+workflow:
+  answer:
+    max-context-chars: ${WORKFLOW_ANSWER_MAX_CONTEXT_CHARS:12000}
+    max-task-chars: ${WORKFLOW_ANSWER_MAX_TASK_CHARS:3500}
+    max-history-entries: ${WORKFLOW_ANSWER_MAX_HISTORY_ENTRIES:2}
+
 trace:
   logging:
     include-content: ${TRACE_LOGGING_INCLUDE_CONTENT:false}

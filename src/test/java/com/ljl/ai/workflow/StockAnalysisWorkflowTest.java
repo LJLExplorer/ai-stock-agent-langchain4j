@@ -15,6 +15,8 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 
 class StockAnalysisWorkflowTest {
 
@@ -88,5 +90,20 @@ class StockAnalysisWorkflowTest {
                 .extracting(ILoggingEvent::getFormattedMessage)
                 .anySatisfy(message -> assertThat(message).contains("workflow_node_started").contains("INIT"))
                 .anySatisfy(message -> assertThat(message).contains("workflow_route_selected").contains("ANSWER"));
+    }
+
+    @Test
+    void shouldDelegateAnswerGenerationWithExecutionState() {
+        ExecutionTask market = ExecutionTask.pending("market", StockAnalysisTask.MARKET_DATA);
+        market.start();
+        market.complete("股票：600519.SH；价格：1500");
+        ExecutionState state = ExecutionState.planned("execution-answer", "session-1", "分析600519.SH", List.of(market));
+        state.setPlan(AgentPlan.builder().intent("STOCK_ANALYSIS").symbol("600519.SH")
+                .tasks(List.of(StockAnalysisTask.MARKET_DATA)).build());
+        WorkflowAnswerGenerator answerGenerator = mock(WorkflowAnswerGenerator.class);
+
+        new StockAnalysisWorkflow(null, new WorkflowReflector(), new WorkflowCritic(), answerGenerator).run(state);
+
+        verify(answerGenerator).generate(state);
     }
 }

@@ -24,11 +24,16 @@
 
 ### Task 1: 检测退化 Markdown
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：**
+- Command: `mvn -q -Dtest=AnswerQualityGuardTest test`
+- Actual: FAIL（测试编译失败：`AnswerQualityGuard` 类不存在）。
+- Match Expected: yes
 
-**Green Evidence：** 待填写
+**Green Evidence：**
+- Command: `mvn -q -Dtest=AnswerQualityGuardTest test`
+- Actual: PASS（5 个测试：真实退化样本、合法表格与代码块、未闭合围栏、列数不一致及行内代码）。
 
 **涉及文件：**
 - Create: `src/main/java/com/ljl/ai/workflow/AnswerQualityGuard.java`
@@ -56,9 +61,8 @@ void shouldRejectRealDegeneratedMarkdownSample() {
     AnswerQualityGuard.Validation validation = new AnswerQualityGuard().validate(answer);
 
     assertThat(validation.valid()).isFalse();
-    assertThat(validation.reason()).isIn(
-            AnswerQualityGuard.Reason.EXCESSIVE_MARKDOWN_PUNCTUATION,
-            AnswerQualityGuard.Reason.REPETITIVE_OUTPUT);
+    assertThat(validation.reason())
+            .isEqualTo(AnswerQualityGuard.Reason.EXCESSIVE_MARKDOWN_PUNCTUATION);
 }
 
 @Test
@@ -154,11 +158,16 @@ git commit -m "feat: 增加工作流答案质量检测"
 
 ### Task 2: 为工具结果建立上下文预算
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：**
+- Command: `mvn -q -Dtest=AnswerContextBuilderTest test`
+- Actual: FAIL（测试编译失败：`WorkflowAnswerProperties` 类不存在）。
+- Match Expected: yes
 
-**Green Evidence：** 待填写
+**Green Evidence：**
+- Command: `mvn -q -Dtest=AnswerContextBuilderTest test`
+- Actual: PASS（3 个测试：总/单任务预算、最新结果历史和失败原因保留）。
 
 **涉及文件：**
 - Create: `src/main/java/com/ljl/ai/workflow/WorkflowAnswerProperties.java`
@@ -267,11 +276,16 @@ git commit -m "feat: 限制工作流答案上下文规模"
 
 ### Task 3: 建立无记忆的工作流答案模型入口
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：**
+- Command: `mvn -q -Dtest=WorkflowAnswerAssistantContractTest test`
+- Actual: FAIL（测试编译失败：`WorkflowAnswerAssistant` 接口不存在）。
+- Match Expected: yes
 
-**Green Evidence：** 待填写
+**Green Evidence：**
+- Command: `mvn -q -Dtest=WorkflowAnswerAssistantContractTest,AgentConfigToolSelectionTest test`
+- Actual: PASS（4 个测试；Maven 输出仅包含 Mockito/Byte Buddy 动态 agent 的 JDK 未来兼容性提示）。
 
 **涉及文件：**
 - Create: `src/main/java/com/ljl/ai/agent/WorkflowAnswerAssistant.java`
@@ -378,11 +392,16 @@ git commit -m "feat: 隔离工作流答案模型调用"
 
 ### Task 4: 接入校验、单次重写和安全降级
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：**
+- Command: `mvn -q -Dtest=WorkflowAnswerGeneratorTest,StockAnalysisWorkflowTest test`
+- Actual: FAIL（`WorkflowAnswerGenerator` 仍只有旧构造器和 `generate(ExecutionState, String)` 方法）。
+- Match Expected: yes
 
-**Green Evidence：** 待填写
+**Green Evidence：**
+- Command: `mvn -q -Dtest=AnswerQualityGuardTest,AnswerContextBuilderTest,WorkflowAnswerGeneratorTest,StockAnalysisWorkflowTest test`
+- Actual: PASS（定向回归通过；Mockito/Byte Buddy 仅输出 JDK 动态 agent 未来兼容性提示）。
 
 **涉及文件：**
 - Modify: `src/main/java/com/ljl/ai/workflow/WorkflowAnswerGenerator.java`
@@ -503,11 +522,19 @@ git commit -m "fix: 拦截工作流异常答案并安全降级"
 
 ### Task 5: 完成生产回归验证
 
-**状态：** pending
+**状态：** completed
 
 **Red Evidence：** 待填写
 
-**Green Evidence：** 待填写
+**Green Evidence：**
+- Command: `mvn -q -DskipTests compile`
+- Actual: PASS。
+- Command: `mvn -q test`
+- Actual: PASS（仅有 Mockito/Byte Buddy 动态 agent 的 JDK 未来兼容性提示）。
+- Command: `npm --prefix frontend run build`
+- Actual: PASS（Vite 生产构建完成）。
+- Command: `git diff --check`
+- Actual: PASS。
 
 **涉及文件：**
 - Modify: `.ai/ISSUE-2026-09-02-answer-quality-guard/tasks.md`

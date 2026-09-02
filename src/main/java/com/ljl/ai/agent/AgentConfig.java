@@ -140,6 +140,16 @@ public class AgentConfig {
     }
 
     /**
+     * 最终工作流答案不进入用户会话记忆，避免内部上下文或损坏输出污染后续对话。
+     */
+    @Bean
+    public WorkflowAnswerAssistant workflowAnswerAssistant() {
+        return AiServices.builder(WorkflowAnswerAssistant.class)
+                .chatLanguageModel(tracingChatLanguageModel())
+                .build();
+    }
+
+    /**
      * 创建不注册工具的助手，用于请求级别关闭工具调用。
      */
     @Bean
