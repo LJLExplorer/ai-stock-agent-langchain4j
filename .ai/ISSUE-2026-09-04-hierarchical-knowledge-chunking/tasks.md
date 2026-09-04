@@ -308,9 +308,9 @@
 
 **状态：** completed
 
-**Red Evidence：** `mvn -q -Dtest=KnowledgeIngestionServiceTest,KnowledgeServiceTest test`（2026-09-04）：FAIL（testCompile）；`KnowledgeIngestionService` 及其 `IngestionResult` 尚不存在，符合统一层级入库尚未实现的预期。
+**Red Evidence：** 初始实现：`mvn -q -Dtest=KnowledgeIngestionServiceTest,KnowledgeServiceTest test`（2026-09-04）：FAIL（testCompile）；`KnowledgeIngestionService` 及其 `IngestionResult` 尚不存在，符合统一层级入库尚未实现的预期。审查修复：`mvn -q -Dtest=KnowledgeIngestionServiceTest#writesVersionScopedHybridChunkIdsForRepeatedIngestionOfTheSameSection test`（2026-09-04）：FAIL（1 failure；两个版本的 Hybrid `chunkId` 均为 `doc-versioned:0:0`），符合版本隔离缺失的预期。
 
-**Green Evidence：** `mvn -q -Dtest=KnowledgeIngestionServiceTest,KnowledgeServiceTest test`（2026-09-04）：PASS（10 tests）；验证每个 Child 仅嵌入一次、Embedding 输入使用 `embeddingText`、语义 `TextSegment` 保持干净正文与完整元数据、Parent/Hybrid/语义写入使用同一版本，以及中间失败按版本补偿。`mvn -q test`：PASS。`git diff --check`：PASS（无输出）。
+**Green Evidence：** 初始实现：`mvn -q -Dtest=KnowledgeIngestionServiceTest,KnowledgeServiceTest test`（2026-09-04）：PASS（10 tests）；验证每个 Child 仅嵌入一次、Embedding 输入使用 `embeddingText`、语义 `TextSegment` 保持干净正文与完整元数据、Parent/Hybrid/语义写入使用同一版本，以及中间失败按版本补偿。审查修复：`mvn -q -Dtest=KnowledgeIngestionServiceTest,HierarchicalDocumentChunkerTest,KnowledgeServiceTest test`（2026-09-04）：PASS；重复入库同一 Parent 产生不同 Hybrid 主键，且各行保留对应 ingestionVersion。`mvn -q test`：PASS。`git diff --check`：PASS（无输出）。
 
 **涉及文件：**
 

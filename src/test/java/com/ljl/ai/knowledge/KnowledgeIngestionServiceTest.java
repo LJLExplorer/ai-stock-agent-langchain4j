@@ -17,6 +17,7 @@ import org.mockito.ArgumentCaptor;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -28,6 +29,36 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class KnowledgeIngestionServiceTest {
+
+    @Test
+    void writesVersionScopedHybridChunkIdsForRepeatedIngestionOfTheSameSection() {
+        KnowledgeSectionStore sectionStore = mock(KnowledgeSectionStore.class);
+        EmbeddingModel embeddingModel = mock(EmbeddingModel.class);
+        EmbeddingStore<TextSegment> embeddingStore = mock(EmbeddingStore.class);
+        MilvusHybridCollectionManager hybridManager = mock(MilvusHybridCollectionManager.class);
+        when(embeddingModel.embed(anyString()))
+                .thenReturn(Response.from(new Embedding(new float[]{0.1f, 0.2f})));
+        when(embeddingStore.add(any(Embedding.class), any(TextSegment.class)))
+                .thenReturn("vector-first", "vector-second");
+        KnowledgeDocument document = KnowledgeDocument.builder().documentId("doc-versioned").title("年报")
+                .rawContent("同一 Parent Section 的正文。")
+                .documentType("REPORT").source("MANUAL").build();
+        KnowledgeIngestionService service = new KnowledgeIngestionService(new HierarchicalDocumentChunker(), sectionStore,
+                embeddingModel, embeddingStore, hybridManager);
+
+        KnowledgeIngestionService.IngestionResult first = service.ingest(document);
+        KnowledgeIngestionService.IngestionResult second = service.ingest(document);
+
+        ArgumentCaptor<HybridChunkRow> rows = ArgumentCaptor.forClass(HybridChunkRow.class);
+        verify(hybridManager, times(2)).insert(rows.capture());
+        HybridChunkRow firstRow = rows.getAllValues().get(0);
+        HybridChunkRow secondRow = rows.getAllValues().get(1);
+        assertEquals(firstRow.parentSectionId(), secondRow.parentSectionId());
+        assertEquals(firstRow.chunkIndex(), secondRow.chunkIndex());
+        assertNotEquals(firstRow.chunkId(), secondRow.chunkId());
+        assertEquals(first.ingestionVersion(), firstRow.ingestionVersion());
+        assertEquals(second.ingestionVersion(), secondRow.ingestionVersion());
+    }
 
     @Test
     void ingestsOneSharedChunkedDocumentIntoParentsAndBothChildIndexes() {

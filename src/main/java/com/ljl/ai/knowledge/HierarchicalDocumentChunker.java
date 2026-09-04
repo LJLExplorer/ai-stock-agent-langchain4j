@@ -121,7 +121,7 @@ public class HierarchicalDocumentChunker {
             String embeddingText = "[标题路径] " + String.join(" > ", parent.getHeadingPath())
                     + "\n[正文] " + childContent;
             children.add(new ChildDraft(
-                    parentSectionId + ":" + index,
+                    ingestionVersion + ":" + parentSectionId + ":" + index,
                     parentSectionId,
                     parent.getSectionIndex(),
                     index,
