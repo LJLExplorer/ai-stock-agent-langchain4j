@@ -91,11 +91,11 @@
 
 ### Task 2: 解析 Markdown 与中文标题并构建 Parent 层级
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `mvn -q -Dtest=HierarchicalDocumentChunkerTest#parsesHeadingHierarchy test`（2026-09-04）：FAIL（testCompile）；`HierarchicalDocumentChunker` 尚不存在，符合预期。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `mvn -q -Dtest=HierarchicalDocumentChunkerTest test`（2026-09-04）：PASS（3 tests, exit 0）。
 
 **涉及文件：**
 
