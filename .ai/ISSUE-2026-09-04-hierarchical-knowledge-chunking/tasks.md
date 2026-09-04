@@ -41,11 +41,11 @@
 
 ### Task 1: 建立层级分块配置与版本化 Parent 数据契约
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `mvn -q -Dtest=KnowledgeSectionTest test`（2026-09-04）：FAIL（testCompile）；`KnowledgeConfig.ChunkConfig` 缺少层级分块默认值访问器，且 `KnowledgeSection` / `ChunkSpan` 尚不存在，符合预期。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `mvn -q -Dtest=KnowledgeSectionTest test`（2026-09-04）：PASS（2 tests, exit 0）。
 
 **涉及文件：**
 
