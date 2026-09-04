@@ -90,13 +90,15 @@ public class HierarchicalDocumentChunker {
         if (content.isEmpty()) {
             return List.of();
         }
-        List<Integer> semanticBoundaries = semanticBoundaries(content);
+        List<Integer> paragraphBoundaries = paragraphBoundaries(content);
+        List<Integer> sentenceBoundaries = sentenceBoundaries(content);
+        List<Integer> semanticBoundaries = mergeBoundaries(paragraphBoundaries, sentenceBoundaries);
         List<MutableChild> spans = new ArrayList<>();
         int newStart = 0;
         while (newStart < content.length()) {
             int overlapStart = spans.isEmpty() ? newStart
                     : overlapStart(content, semanticBoundaries, newStart);
-            int end = chooseEnd(content.length(), semanticBoundaries, overlapStart);
+            int end = chooseEnd(content.length(), paragraphBoundaries, sentenceBoundaries, overlapStart);
             spans.add(new MutableChild(newStart, overlapStart, end));
             newStart = end;
         }
@@ -124,16 +126,27 @@ public class HierarchicalDocumentChunker {
         return children;
     }
 
-    private List<Integer> semanticBoundaries(String content) {
+    private List<Integer> paragraphBoundaries(String content) {
         List<Integer> boundaries = new ArrayList<>();
         Matcher paragraph = Pattern.compile("(?:\\r?\\n\\s*){2,}").matcher(content);
         while (paragraph.find()) {
             boundaries.add(paragraph.end());
         }
+        return boundaries;
+    }
+
+    private List<Integer> sentenceBoundaries(String content) {
+        List<Integer> boundaries = new ArrayList<>();
         Matcher sentence = Pattern.compile("[。！？!?；;]").matcher(content);
         while (sentence.find()) {
             boundaries.add(sentence.end());
         }
+        return boundaries;
+    }
+
+    private List<Integer> mergeBoundaries(List<Integer> paragraphBoundaries, List<Integer> sentenceBoundaries) {
+        List<Integer> boundaries = new ArrayList<>(paragraphBoundaries);
+        boundaries.addAll(sentenceBoundaries);
         boundaries.sort(Integer::compareTo);
         return boundaries.stream().distinct().toList();
     }
@@ -154,13 +167,23 @@ public class HierarchicalDocumentChunker {
         return selected >= 0 ? selected : Math.max(0, newStart - TARGET_OVERLAP);
     }
 
-    private int chooseEnd(int contentLength, List<Integer> boundaries, int overlapStart) {
+    private int chooseEnd(int contentLength, List<Integer> paragraphBoundaries,
+                          List<Integer> sentenceBoundaries, int overlapStart) {
         int remaining = contentLength - overlapStart;
         if (remaining <= MAX_CHILD_SIZE) {
             return contentLength;
         }
         int lowerBound = overlapStart + MIN_CHILD_SIZE;
         int upperBound = overlapStart + MAX_CHILD_SIZE;
+        int paragraphEnd = closestToTarget(paragraphBoundaries, lowerBound, upperBound, overlapStart);
+        if (paragraphEnd >= 0) {
+            return paragraphEnd;
+        }
+        int sentenceEnd = closestToTarget(sentenceBoundaries, lowerBound, upperBound, overlapStart);
+        return sentenceEnd >= 0 ? sentenceEnd : Math.min(contentLength, overlapStart + TARGET_CHILD_SIZE);
+    }
+
+    private int closestToTarget(List<Integer> boundaries, int lowerBound, int upperBound, int overlapStart) {
         int selected = -1;
         int bestDistance = Integer.MAX_VALUE;
         for (int boundary : boundaries) {
@@ -176,7 +199,7 @@ public class HierarchicalDocumentChunker {
                 bestDistance = distance;
             }
         }
-        return selected >= 0 ? selected : Math.min(contentLength, overlapStart + TARGET_CHILD_SIZE);
+        return selected;
     }
 
     private void mergeShortTail(List<MutableChild> spans) {

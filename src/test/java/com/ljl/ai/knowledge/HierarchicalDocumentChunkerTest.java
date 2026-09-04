@@ -152,4 +152,30 @@ class HierarchicalDocumentChunkerTest {
         assertTrue(tail.getContent().length() < 600);
         assertTrue(tail.getContent().length() <= 800);
     }
+
+    @Test
+    void prioritizesParagraphsBeforeSentencesUnlessParagraphIsOverlong() {
+        String firstParagraph = "第一段落标记" + "甲".repeat(693) + "。";
+        String secondParagraph = "第二段落标记" + "乙".repeat(900) + "。";
+        KnowledgeDocument paragraphDocument = KnowledgeDocument.builder()
+                .documentId("paragraph-priority")
+                .title("段落优先")
+                .rawContent(firstParagraph + "\n\n" + secondParagraph)
+                .build();
+
+        HierarchicalDocumentChunker.ChunkedDocument paragraphChunked = chunker.chunk(paragraphDocument, "version-4");
+
+        assertEquals(firstParagraph.length() + 2, paragraphChunked.getChildren().getFirst().getEndOffset());
+
+        String longParagraph = "超长单段标记" + "丙".repeat(690) + "。" + "丁".repeat(690) + "。";
+        KnowledgeDocument sentenceDocument = KnowledgeDocument.builder()
+                .documentId("sentence-fallback")
+                .title("句子兜底")
+                .rawContent(longParagraph)
+                .build();
+
+        HierarchicalDocumentChunker.ChunkedDocument sentenceChunked = chunker.chunk(sentenceDocument, "version-5");
+
+        assertEquals(longParagraph.indexOf('。') + 1, sentenceChunked.getChildren().getFirst().getEndOffset());
+    }
 }

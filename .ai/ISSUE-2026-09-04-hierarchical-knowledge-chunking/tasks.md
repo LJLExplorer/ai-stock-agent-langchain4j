@@ -126,9 +126,9 @@
 
 **状态：** completed
 
-**Red Evidence：** `mvn -q '-Dtest=HierarchicalDocumentChunkerTest#splitsChildrenByParagraphSentenceAndCharacter+keepsOverlapWithinParent+allowsShortTailWhenMergeWouldOverflow' test`（2026-09-04）：FAIL（testCompile）；`HierarchicalDocumentChunker` 缺少 `ChunkedDocument`、`ChildDraft` 及 `chunk(KnowledgeDocument, String)`，符合预期。
+**Red Evidence：** 初始实现：`mvn -q '-Dtest=HierarchicalDocumentChunkerTest#splitsChildrenByParagraphSentenceAndCharacter+keepsOverlapWithinParent+allowsShortTailWhenMergeWouldOverflow' test`（2026-09-04）：FAIL（testCompile）；`HierarchicalDocumentChunker` 缺少 `ChunkedDocument`、`ChildDraft` 及 `chunk(KnowledgeDocument, String)`，符合预期。审查修复：`mvn -q -Dtest=HierarchicalDocumentChunkerTest#prioritizesParagraphsBeforeSentencesUnlessParagraphIsOverlong test`（2026-09-04）：FAIL（expected `<702>` but was `<700>`）；同一目标窗口内的句末被选为边界而非段落边界，符合预期。
 
-**Green Evidence：** `mvn -q '-Dtest=HierarchicalDocumentChunkerTest#splitsChildrenByParagraphSentenceAndCharacter+keepsOverlapWithinParent+allowsShortTailWhenMergeWouldOverflow' test`（2026-09-04）：PASS（3 tests, exit 0）。回归：`mvn -q -Dtest=HierarchicalDocumentChunkerTest test`（2026-09-04）：PASS（8 tests, exit 0）。
+**Green Evidence：** 初始实现：`mvn -q '-Dtest=HierarchicalDocumentChunkerTest#splitsChildrenByParagraphSentenceAndCharacter+keepsOverlapWithinParent+allowsShortTailWhenMergeWouldOverflow' test`（2026-09-04）：PASS（3 tests, exit 0）。审查修复：`mvn -q -Dtest=HierarchicalDocumentChunkerTest#prioritizesParagraphsBeforeSentencesUnlessParagraphIsOverlong test`（2026-09-04）：PASS（1 test, exit 0）。回归：`mvn -q -Dtest=HierarchicalDocumentChunkerTest test`（2026-09-04）：PASS（9 tests, exit 0）。
 
 **涉及文件：**
 
