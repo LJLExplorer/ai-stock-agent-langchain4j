@@ -252,11 +252,11 @@
 
 ### Task 7: 扩展新版 Milvus Hybrid Collection 的 Child schema
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `mvn -q -Dtest=MilvusHybridCollectionManagerTest test`（2026-09-04）失败：测试编译阶段找不到 `HybridChunkRow` 与 `deleteDocumentVersion(String, String)`，证明旧 API 尚未承载版本化 Child 元数据和精确删除。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `mvn -q -Dtest=MilvusHybridCollectionManagerTest test`（2026-09-04）通过；schema、v2 默认 collection、`HybridChunkRow` 全字段写入以及 document/version 转义删除均由单元测试覆盖。`git diff --check` 通过。
 
 **涉及文件：**
 

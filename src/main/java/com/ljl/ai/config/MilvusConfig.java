@@ -28,7 +28,7 @@ public class MilvusConfig {
     private String collectionName = "kefu_knowledge_base";
 
     /** Milvus BM25 + 稠密向量混合检索 collection。 */
-    private String hybridCollectionName = "stock_analysis_knowledge_hybrid";
+    private String hybridCollectionName = "stock_analysis_knowledge_hybrid_v2";
 
     /**
      * 向量维度
