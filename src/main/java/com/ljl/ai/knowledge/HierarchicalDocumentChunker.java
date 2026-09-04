@@ -1,5 +1,6 @@
 package com.ljl.ai.knowledge;
 
+import com.ljl.ai.model.entity.KnowledgeDocument;
 import lombok.Value;
 import org.springframework.stereotype.Component;
 
@@ -15,6 +16,13 @@ import java.util.regex.Pattern;
  */
 @Component
 public class HierarchicalDocumentChunker {
+
+    private static final int TARGET_CHILD_SIZE = 700;
+    private static final int MIN_CHILD_SIZE = 600;
+    private static final int MAX_CHILD_SIZE = 800;
+    private static final int TARGET_OVERLAP = 100;
+    private static final int MIN_OVERLAP = 80;
+    private static final int MAX_OVERLAP = 120;
 
     private static final Pattern MARKDOWN_HEADING = Pattern.compile("^(#{1,6})\\s+(.+?)\\s*$");
     private static final Pattern CHINESE_CHAPTER = Pattern.compile("^第[一二三四五六七八九十百千万零〇两0-9]+[章节篇部分](?:\\s+\\S.*)?$");
@@ -57,6 +65,130 @@ public class HierarchicalDocumentChunker {
             return List.of(new ParentDraft(0, List.of(title), content, safeTags, safeMetadata));
         }
         return result;
+    }
+
+    /**
+     * 将文档的每个 Parent Section 独立切分为 Child。Child 的 startOffset 表示不含
+     * overlap 的新正文起点，overlapStartOffset 表示实际 Child 正文的起点。
+     */
+    public ChunkedDocument chunk(KnowledgeDocument document, String ingestionVersion) {
+        String title = document == null ? null : document.getTitle();
+        String documentId = document == null || document.getDocumentId() == null ? "" : document.getDocumentId();
+        String rawContent = document == null ? null : document.getRawContent();
+        List<String> tags = document == null ? List.of() : document.getTags();
+        Map<String, String> metadata = document == null ? Map.of() : document.getMetadata();
+        List<ParentDraft> parents = parseSections(title, rawContent, tags, metadata);
+        List<ChildDraft> children = new ArrayList<>();
+        for (ParentDraft parent : parents) {
+            children.addAll(splitParent(documentId, ingestionVersion, parent));
+        }
+        return new ChunkedDocument(parents, children);
+    }
+
+    private List<ChildDraft> splitParent(String documentId, String ingestionVersion, ParentDraft parent) {
+        String content = parent.getContent();
+        if (content.isEmpty()) {
+            return List.of();
+        }
+        List<Integer> semanticBoundaries = semanticBoundaries(content);
+        List<MutableChild> spans = new ArrayList<>();
+        int newStart = 0;
+        while (newStart < content.length()) {
+            int overlapStart = spans.isEmpty() ? newStart
+                    : overlapStart(content, semanticBoundaries, newStart);
+            int end = chooseEnd(content.length(), semanticBoundaries, overlapStart);
+            spans.add(new MutableChild(newStart, overlapStart, end));
+            newStart = end;
+        }
+        mergeShortTail(spans);
+
+        String parentSectionId = documentId + ":" + parent.getSectionIndex();
+        List<ChildDraft> children = new ArrayList<>(spans.size());
+        for (int index = 0; index < spans.size(); index++) {
+            MutableChild span = spans.get(index);
+            String childContent = content.substring(span.overlapStartOffset, span.endOffset);
+            String embeddingText = "[标题路径] " + String.join(" > ", parent.getHeadingPath())
+                    + "\n[正文] " + childContent;
+            children.add(new ChildDraft(
+                    parentSectionId + ":" + index,
+                    parentSectionId,
+                    parent.getSectionIndex(),
+                    index,
+                    parent.getHeadingPath(),
+                    childContent,
+                    embeddingText,
+                    span.newStartOffset,
+                    span.endOffset,
+                    span.overlapStartOffset));
+        }
+        return children;
+    }
+
+    private List<Integer> semanticBoundaries(String content) {
+        List<Integer> boundaries = new ArrayList<>();
+        Matcher paragraph = Pattern.compile("(?:\\r?\\n\\s*){2,}").matcher(content);
+        while (paragraph.find()) {
+            boundaries.add(paragraph.end());
+        }
+        Matcher sentence = Pattern.compile("[。！？!?；;]").matcher(content);
+        while (sentence.find()) {
+            boundaries.add(sentence.end());
+        }
+        boundaries.sort(Integer::compareTo);
+        return boundaries.stream().distinct().toList();
+    }
+
+    private int overlapStart(String content, List<Integer> boundaries, int newStart) {
+        int lowerBound = Math.max(0, newStart - MAX_OVERLAP);
+        int upperBound = newStart - MIN_OVERLAP;
+        int selected = -1;
+        for (int boundary : boundaries) {
+            if (boundary < lowerBound) {
+                continue;
+            }
+            if (boundary > upperBound) {
+                break;
+            }
+            selected = boundary;
+        }
+        return selected >= 0 ? selected : Math.max(0, newStart - TARGET_OVERLAP);
+    }
+
+    private int chooseEnd(int contentLength, List<Integer> boundaries, int overlapStart) {
+        int remaining = contentLength - overlapStart;
+        if (remaining <= MAX_CHILD_SIZE) {
+            return contentLength;
+        }
+        int lowerBound = overlapStart + MIN_CHILD_SIZE;
+        int upperBound = overlapStart + MAX_CHILD_SIZE;
+        int selected = -1;
+        int bestDistance = Integer.MAX_VALUE;
+        for (int boundary : boundaries) {
+            if (boundary < lowerBound) {
+                continue;
+            }
+            if (boundary > upperBound) {
+                break;
+            }
+            int distance = Math.abs(boundary - (overlapStart + TARGET_CHILD_SIZE));
+            if (distance < bestDistance) {
+                selected = boundary;
+                bestDistance = distance;
+            }
+        }
+        return selected >= 0 ? selected : Math.min(contentLength, overlapStart + TARGET_CHILD_SIZE);
+    }
+
+    private void mergeShortTail(List<MutableChild> spans) {
+        if (spans.size() < 2) {
+            return;
+        }
+        MutableChild tail = spans.getLast();
+        MutableChild previous = spans.get(spans.size() - 2);
+        if (tail.length() < MIN_CHILD_SIZE && tail.endOffset - previous.overlapStartOffset <= MAX_CHILD_SIZE) {
+            previous.endOffset = tail.endOffset;
+            spans.removeLast();
+        }
     }
 
     private void addDraftIfPresent(List<ParentDraft> drafts, List<Heading> headingStack,
@@ -104,5 +236,43 @@ public class HierarchicalDocumentChunker {
         String content;
         List<String> tags;
         Map<String, String> metadata;
+    }
+
+    /** 一次层级切分产生的 Parent 草稿及其 Child 草稿。 */
+    @Value
+    public static class ChunkedDocument {
+        List<ParentDraft> parents;
+        List<ChildDraft> children;
+    }
+
+    /** 可写入向量索引的 Child 草稿，offset 相对于 Parent 正文。 */
+    @Value
+    public static class ChildDraft {
+        String chunkId;
+        String parentSectionId;
+        int parentSectionIndex;
+        int chunkIndex;
+        List<String> headingPath;
+        String content;
+        String embeddingText;
+        int startOffset;
+        int endOffset;
+        int overlapStartOffset;
+    }
+
+    private static class MutableChild {
+        private final int newStartOffset;
+        private final int overlapStartOffset;
+        private int endOffset;
+
+        private MutableChild(int newStartOffset, int overlapStartOffset, int endOffset) {
+            this.newStartOffset = newStartOffset;
+            this.overlapStartOffset = overlapStartOffset;
+            this.endOffset = endOffset;
+        }
+
+        private int length() {
+            return endOffset - overlapStartOffset;
+        }
     }
 }

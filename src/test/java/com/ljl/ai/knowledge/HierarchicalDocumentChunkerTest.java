@@ -1,5 +1,6 @@
 package com.ljl.ai.knowledge;
 
+import com.ljl.ai.model.entity.KnowledgeDocument;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -82,5 +83,73 @@ class HierarchicalDocumentChunkerTest {
         assertEquals(List.of("1.1 二级标题"), sections.get(0).getHeadingPath());
         assertEquals(List.of("1.1 二级标题", "1.1.1 三级标题"), sections.get(1).getHeadingPath());
         assertEquals(List.of("1.2 同级标题"), sections.get(2).getHeadingPath());
+    }
+
+    @Test
+    void splitsChildrenByParagraphSentenceAndCharacter() {
+        String paragraph = "段落标记" + "甲".repeat(330) + "。";
+        String hardLimitSentence = "超长句标记" + "乙".repeat(1_700);
+        KnowledgeDocument document = KnowledgeDocument.builder()
+                .documentId("document-1")
+                .title("测试文档")
+                .rawContent(String.join("\n\n", paragraph, paragraph, paragraph, hardLimitSentence))
+                .build();
+
+        HierarchicalDocumentChunker.ChunkedDocument chunked = chunker.chunk(document, "version-1");
+
+        assertTrue(chunked.getChildren().size() >= 3);
+        for (int index = 0; index < chunked.getChildren().size(); index++) {
+            HierarchicalDocumentChunker.ChildDraft child = chunked.getChildren().get(index);
+            assertEquals(index, child.getChunkIndex());
+            assertTrue(child.getContent().length() <= 800);
+            assertTrue(child.getEmbeddingText().contains("测试文档"));
+        }
+        assertTrue(chunked.getChildren().stream().anyMatch(child -> child.getContent().contains("超长句标记")));
+    }
+
+    @Test
+    void keepsOverlapWithinParent() {
+        String firstParent = "第一父段标记" + "甲".repeat(2_400) + "。";
+        String secondParent = "第二父段标记" + "乙".repeat(2_400) + "。";
+        KnowledgeDocument document = KnowledgeDocument.builder()
+                .documentId("document-2")
+                .title("测试文档")
+                .rawContent("# 第一父段\n" + firstParent + "\n# 第二父段\n" + secondParent)
+                .build();
+
+        HierarchicalDocumentChunker.ChunkedDocument chunked = chunker.chunk(document, "version-2");
+
+        List<HierarchicalDocumentChunker.ChildDraft> firstChildren = chunked.getChildren().stream()
+                .filter(child -> child.getParentSectionIndex() == 0).toList();
+        List<HierarchicalDocumentChunker.ChildDraft> secondChildren = chunked.getChildren().stream()
+                .filter(child -> child.getParentSectionIndex() == 1).toList();
+        assertTrue(firstChildren.size() > 1);
+        assertTrue(secondChildren.size() > 1);
+        assertTrue(firstChildren.stream().allMatch(child -> child.getContent().contains("甲")));
+        assertTrue(secondChildren.stream().allMatch(child -> child.getContent().contains("乙")));
+        for (int index = 1; index < firstChildren.size(); index++) {
+            HierarchicalDocumentChunker.ChildDraft child = firstChildren.get(index);
+            assertEquals(index, child.getChunkIndex());
+            int overlapLength = child.getStartOffset() - child.getOverlapStartOffset();
+            assertTrue(overlapLength >= 80 && overlapLength <= 120);
+        }
+    }
+
+    @Test
+    void allowsShortTailWhenMergeWouldOverflow() {
+        String content = "尾块前段标记" + "甲".repeat(760) + "。\n\n尾块标记" + "乙".repeat(180) + "。";
+        KnowledgeDocument document = KnowledgeDocument.builder()
+                .documentId("document-3")
+                .title("测试文档")
+                .rawContent(content)
+                .build();
+
+        HierarchicalDocumentChunker.ChunkedDocument chunked = chunker.chunk(document, "version-3");
+
+        assertEquals(2, chunked.getChildren().size());
+        HierarchicalDocumentChunker.ChildDraft tail = chunked.getChildren().getLast();
+        assertTrue(tail.getContent().contains("尾块标记"));
+        assertTrue(tail.getContent().length() < 600);
+        assertTrue(tail.getContent().length() <= 800);
     }
 }
