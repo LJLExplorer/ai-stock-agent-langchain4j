@@ -219,9 +219,9 @@
 
 **状态：** completed
 
-**Red Evidence：** `mvn -q -Dtest=ParentContextAssemblerTest test`（2026-09-04）：FAIL（testCompile）；`ParentContextAssembler`、`ChildHit` 与 `SectionVersionKey` 尚不存在，符合预期。
+**Red Evidence：** 初始实现：`mvn -q -Dtest=ParentContextAssemblerTest test`（2026-09-04）：FAIL（testCompile）；`ParentContextAssembler`、`ChildHit` 与 `SectionVersionKey` 尚不存在，符合预期。审查修复：`mvn -q -Dtest=ParentContextAssemblerTest test`（2026-09-04）：FAIL（1 failure；expected `<2>` but was `<1>`）；相邻但不重叠的 `[0,2]` 与 `[3,5]` 被错误合并，符合预期。
 
-**Green Evidence：** `mvn -q -Dtest=ParentContextAssemblerTest test`（2026-09-04）：PASS（3 tests, exit 0）。覆盖短 Parent 去重全文、首尾邻居裁剪、重叠窗口合并、字符区间去重、不相交窗口保留，以及按 RRF/命中数/语义分数/原始顺序排序并在最终窗口层截取 topK。
+**Green Evidence：** 初始实现：`mvn -q -Dtest=ParentContextAssemblerTest test`（2026-09-04）：PASS（3 tests, exit 0）。审查修复后：`mvn -q -Dtest=ParentContextAssemblerTest test`（2026-09-04）：PASS（4 tests, exit 0）；仅有共同 chunkIndex 的窗口才合并，邻接无交集窗口独立保留。`git diff --check`：PASS（exit 0）。
 
 **涉及文件：**
 

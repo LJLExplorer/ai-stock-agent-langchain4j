@@ -64,7 +64,7 @@ public class ParentContextAssembler {
 
         List<Window> merged = new ArrayList<>();
         for (Window next : windows) {
-            if (merged.isEmpty() || next.startIndex() > merged.getLast().endIndex() + 1) {
+            if (merged.isEmpty() || next.startIndex() > merged.getLast().endIndex()) {
                 merged.add(next);
                 continue;
             }

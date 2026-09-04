@@ -80,6 +80,22 @@ class ParentContextAssemblerTest {
         assertEquals(2, assembler.assemble(hits, Map.of(key(high), high, key(tied), tied), 2).size());
     }
 
+    @Test
+    void doesNotMergeAdjacentButNonOverlappingWindows() {
+        KnowledgeSection section = longSection("adjacent", 7);
+
+        List<RetrievalResult> results = assembler.assemble(List.of(
+                hit("adjacent-1", "adjacent", 1, 0.8, 0.4, 0),
+                hit("adjacent-4", "adjacent", 4, 0.7, 0.3, 1)),
+                Map.of(key(section), section), 5);
+
+        assertEquals(2, results.size());
+        assertEquals(0, results.get(0).getWindowStartIndex());
+        assertEquals(2, results.get(0).getWindowEndIndex());
+        assertEquals(3, results.get(1).getWindowStartIndex());
+        assertEquals(5, results.get(1).getWindowEndIndex());
+    }
+
     private ParentContextAssembler.ChildHit hit(String chunkId, String parentId, int chunkIndex,
                                                 double rrf, double semantic, int originalOrder) {
         return new ParentContextAssembler.ChildHit(chunkId, parentId, "v1", chunkIndex,
