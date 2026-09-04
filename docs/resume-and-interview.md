@@ -24,6 +24,7 @@ Stock Insight Agent｜Java AI 股票研究与知识检索系统
 - 设计 Planner 提议、Java 白名单校验、StateGraph 执行的 Plan-and-Execute 链路，将行情、技术、财务、新闻任务映射为确定性 Tool 调用，并通过 Reflector/Critic 规则完成失败重试和有限路由。
 - 以 MongoDB 保存会话、知识元数据和执行快照，使用 `executionId + version` 条件更新拒绝陈旧写入；对 MongoDB/Milvus 双写采用状态标记、重试和失败补偿，显式处理跨存储一致性。
 - 使用 Redis 实现按用户与会话隔离的短期消息窗口，并通过“旧摘要 + 淘汰消息”递归压缩控制上下文；摘要写入失败时恢复原始窗口，避免静默丢失。
+- 面向长篇研究资料设计 Parent/Child 层级分片：按标题、段落、句子逐级切分，以 Child 完成检索；命中后回到 Parent 扩展相邻片段，兼顾召回粒度和章节上下文。
 - 将默认 Maven 测试与真实 MongoDB/Milvus 集成测试分层，建立 JDK 21 后端测试和 Node 前端构建 CI，并提供固定版本 Docker Compose 与脱敏配置模板。
 
 ### 适合追问的关键词
@@ -44,6 +45,7 @@ Stock Insight Agent｜可控 Plan-and-Execute 与 Hybrid RAG
 
 - 将 LLM 限制为候选计划生成器，使用 `PlanValidator` 校验意图、股票代码和任务枚举；合法计划进入 LangGraph4j 状态图，回答节点使用无工具 Assistant，避免绕过结果校验重新调用工具。
 - 在 Milvus 2.5 中构建 Dense COSINE 与 BM25 Sparse 双路检索，通过 RRF 融合排序，并用带阈值的 Dense 结果复核候选；Hybrid 异常时支持可配置的单路语义降级。
+- 实现中文 Parent/Child 层级分片：Child 携带标题路径和金融上下文参与向量检索；命中后合并同章节相邻片段，短章节返回全文，长章节返回摘要与相关窗口，减少孤立片段造成的上下文缺失。
 - 构建近轮原文、递归摘要、用户长期记忆三层上下文；查询重写只服务检索，长期记忆扩大候选池后按 `userId` 和启用状态过滤。
 - 为模型调用、工作流路由和工具执行关联 `traceId/sessionId/executionId`；模型请求与响应默认脱敏，显式开启诊断时仍受长度限制。
 
@@ -65,6 +67,7 @@ Stock Insight Agent｜Java 全栈 AI 研究助手
 
 - 使用 Spring Boot + LangChain4j 实现股票研究对话，接入 7 类业务工具，并通过计划校验、失败重试和无工具回答阶段约束模型行为。
 - 使用 Milvus Dense + BM25 + RRF 构建混合知识检索，结合 MongoDB 文档状态过滤和失败降级返回可追溯知识来源。
+- 将长文按章节构建 Parent/Child 分片，Child 负责精确召回，命中后补充同章节相邻内容与 Parent 摘要，使回答既能定位细节又保留上下文。
 - 使用 Redis 管理短期窗口和递归摘要，使用 MongoDB/Milvus 保存用户主动录入的长期记忆，实现多轮查询重写和按用户过滤。
 - 使用 React/Vite 完成会话、知识来源和工具结果展示；补齐 Docker Compose、配置模板、JUnit 测试分层和 GitHub Actions。
 
@@ -98,7 +101,7 @@ Stock Insight Agent｜Java 全栈 AI 研究助手
 
 ### 6. 为什么 Hybrid Search 后还做 Dense 复核？
 
-RRF 是排名融合分数，不等于语义相似度。候选很少时，不相关文档也可能获得可见排名。因此项目使用同一查询向量跑带 `minScore` 的 Dense 检索，以 `documentId + content` 验证融合候选，再过滤文档启用/删除状态。
+RRF 是排名融合分数，不等于语义相似度。候选很少时，不相关文档也可能获得可见排名。因此项目使用同一查询向量跑带 `minScore` 的 Dense 检索，以 `documentId + ingestionVersion + chunkId + content` 验证融合候选，再过滤文档启用/删除状态。
 
 ### 7. BM25 与 Dense 分别解决什么问题？
 
@@ -108,19 +111,25 @@ BM25 对股票代码、公司名、指标名等精确词更敏感；Dense 对同
 
 会，任何有损压缩都有风险。当前只压缩较早一半消息，保留最近原文，并限制摘要为空或超长时不能淘汰窗口；更新失败会尝试回滚。更严格场景可增加事实槽位、摘要版本和离线评测。
 
-### 9. 长期记忆如何避免用户串数据？
+### 9. 为什么不直接检索并返回整段章节？
+
+整段章节过长会稀释向量语义，且容易占满模型上下文；只返回命中 Child 又会丢失前后论据。项目先按“标题 → 段落 → 句子 → 字符”建立 Parent/Child 关系：Child 负责 Dense/BM25 召回，命中后只在同一 Parent 内扩展相邻 Child。短 Parent 直接返回全文；长 Parent 返回标题路径、抽取式摘要和合并后的命中窗口。这样能同时控制检索粒度与上下文完整性。
+
+代码入口：`HierarchicalDocumentChunker`、`ParentContextAssembler`、`RetrievalService`。
+
+### 10. 长期记忆如何避免用户串数据？
 
 向量写入携带 `userId/memoryId`，召回先扩大共享候选池，再按用户过滤，并到 MongoDB 校验记录是否启用。但这仍是应用层隔离；没有认证的 `userId` 不能作为生产安全边界。
 
-### 10. MongoDB 与 Milvus 如何保证一致性？
+### 11. MongoDB 与 Milvus 如何保证一致性？
 
 当前不是分布式事务，而是状态标记、重试和补偿。新增元数据失败会清理向量；文档删除先标记、再删除向量、最后删除元数据。极端故障仍需对账任务，所以不能表述为强一致。
 
-### 11. 如何防止模型泄露用户内容到日志？
+### 12. 如何防止模型泄露用户内容到日志？
 
 `TracingChatLanguageModel` 默认用 `<redacted>` 代替模型请求和响应正文；显式开启时仍应用最大长度。核心业务日志已收敛为长度、数量、状态和错误类型；但第三方 SDK、异常链以及显式开启的模型正文仍需要集中脱敏、访问控制和保留周期，不能只依赖一个开关。
 
-### 12. 项目有什么测试证据？
+### 13. 项目有什么测试证据？
 
 默认 `mvn test` 运行离线单元/组件测试；真实 MongoDB 和 Milvus 连接测试使用 `*IT` 命名并由 Maven Profile 显式执行。CI 独立运行 JDK 21 后端测试与 Node 前端生产构建。没有发布覆盖率数字就不要口头编一个。
 
