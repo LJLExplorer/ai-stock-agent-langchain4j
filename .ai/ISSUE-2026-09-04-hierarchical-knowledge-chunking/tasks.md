@@ -364,11 +364,11 @@
 
 ### Task 11: 将 Child 检索结果扩展为 Parent 上下文窗口
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `mvn -q -Dtest=RetrievalServiceTest test`（2026-09-04）：FAIL（2 failures）；Hybrid 仍以 `topK=5` 请求候选导致期望的 15 个候选返回 0 个结果，且语义检索没有按 `activeIngestionVersion` 过滤，返回 2 个 Child 而非仅活动版本的 1 个，符合预期。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `mvn -q -Dtest=RetrievalServiceTest test`（2026-09-04）：PASS（4 tests, exit 0）；Hybrid 使用 `topK * 3` 候选池，Hybrid 与语义降级均仅接受 `documentId -> activeIngestionVersion` 对应的 Child，并批量加载 Parent 后交由 `ParentContextAssembler` 组装。Parent 缺失时保留原 Child 与 headingPath，日志只记录 Parent 标识、版本和错误类型。`git diff --check`：PASS（无输出）。
 
 **涉及文件：**
 
