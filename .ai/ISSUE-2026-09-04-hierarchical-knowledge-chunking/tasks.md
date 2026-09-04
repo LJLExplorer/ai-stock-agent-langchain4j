@@ -217,11 +217,11 @@
 
 ### Task 6: 根据 Parent 原文区间合并命中窗口
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `mvn -q -Dtest=ParentContextAssemblerTest test`（2026-09-04）：FAIL（testCompile）；`ParentContextAssembler`、`ChildHit` 与 `SectionVersionKey` 尚不存在，符合预期。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `mvn -q -Dtest=ParentContextAssemblerTest test`（2026-09-04）：PASS（3 tests, exit 0）。覆盖短 Parent 去重全文、首尾邻居裁剪、重叠窗口合并、字符区间去重、不相交窗口保留，以及按 RRF/命中数/语义分数/原始顺序排序并在最终窗口层截取 topK。
 
 **涉及文件：**
 
