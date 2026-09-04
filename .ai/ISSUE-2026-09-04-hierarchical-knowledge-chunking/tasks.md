@@ -41,11 +41,11 @@
 
 ### Task 1: 建立层级分块配置与版本化 Parent 数据契约
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `mvn -q -Dtest=KnowledgeSectionTest test`（2026-09-04）：FAIL（testCompile）；`KnowledgeConfig.ChunkConfig` 缺少层级分块默认值访问器，且 `KnowledgeSection` / `ChunkSpan` 尚不存在，符合预期。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `mvn -q -Dtest=KnowledgeSectionTest test`（2026-09-04）：PASS（2 tests, exit 0）。
 
 **涉及文件：**
 
@@ -91,11 +91,11 @@
 
 ### Task 2: 解析 Markdown 与中文标题并构建 Parent 层级
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `mvn -q -Dtest=HierarchicalDocumentChunkerTest#parsesHeadingHierarchy test`（2026-09-04）：FAIL（testCompile）；`HierarchicalDocumentChunker` 尚不存在，符合预期。审查修复：`mvn -q '-Dtest=HierarchicalDocumentChunkerTest#preservesLeadingContentAsDocumentTitleRootParent+usesDecimalSegmentCountAsHeadingLevel' test`（2026-09-04）：FAIL（2 failures）；首个标题前正文被丢弃，且 `1.2` 错误继承 `1.1/1.1.1` 路径，符合预期。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `mvn -q -Dtest=HierarchicalDocumentChunkerTest test`（2026-09-04）：PASS（3 tests, exit 0）。审查修复后：`mvn -q -Dtest=HierarchicalDocumentChunkerTest test`（2026-09-04）：PASS（5 tests, exit 0）。
 
 **涉及文件：**
 
@@ -124,11 +124,11 @@
 
 ### Task 3: 实现段落、句子与字符三级 Child 切分
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** 初始实现：`mvn -q '-Dtest=HierarchicalDocumentChunkerTest#splitsChildrenByParagraphSentenceAndCharacter+keepsOverlapWithinParent+allowsShortTailWhenMergeWouldOverflow' test`（2026-09-04）：FAIL（testCompile）；`HierarchicalDocumentChunker` 缺少 `ChunkedDocument`、`ChildDraft` 及 `chunk(KnowledgeDocument, String)`，符合预期。审查修复：`mvn -q -Dtest=HierarchicalDocumentChunkerTest#prioritizesParagraphsBeforeSentencesUnlessParagraphIsOverlong test`（2026-09-04）：FAIL（expected `<702>` but was `<700>`）；同一目标窗口内的句末被选为边界而非段落边界，符合预期。
 
-**Green Evidence：** 待填写
+**Green Evidence：** 初始实现：`mvn -q '-Dtest=HierarchicalDocumentChunkerTest#splitsChildrenByParagraphSentenceAndCharacter+keepsOverlapWithinParent+allowsShortTailWhenMergeWouldOverflow' test`（2026-09-04）：PASS（3 tests, exit 0）。审查修复：`mvn -q -Dtest=HierarchicalDocumentChunkerTest#prioritizesParagraphsBeforeSentencesUnlessParagraphIsOverlong test`（2026-09-04）：PASS（1 test, exit 0）。回归：`mvn -q -Dtest=HierarchicalDocumentChunkerTest test`（2026-09-04）：PASS（9 tests, exit 0）。
 
 **涉及文件：**
 
@@ -156,11 +156,11 @@
 
 ### Task 4: 继承金融元数据并生成抽取式 Parent 摘要
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** 2026-09-04：运行 `mvn -q '-Dtest=HierarchicalDocumentChunkerTest#inheritsFinancialMetadata+createsExtractiveSummary' test`，因 `ParentDraft`/`ChildDraft` 尚无 stockCode、year、summary 与 tags 访问器而 testCompile 失败，符合 RED 预期。
 
-**Green Evidence：** 待填写
+**Green Evidence：** 2026-09-04：`mvn -q '-Dtest=HierarchicalDocumentChunkerTest#inheritsFinancialMetadata+createsExtractiveSummary' test` 通过；`mvn -q -Dtest=HierarchicalDocumentChunkerTest test` 通过；`git diff --check` 无输出。
 
 **涉及文件：**
 
@@ -183,11 +183,11 @@
 
 ### Task 5: 持久化并按版本管理 Parent Section
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `mvn -q -Dtest=KnowledgeSectionStoreTest test`（2026-09-04）：FAIL（testCompile）；`KnowledgeSectionStore` 尚不存在，符合预期。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `mvn -q -Dtest=KnowledgeSectionStoreTest test`（2026-09-04）：PASS（4 tests, exit 0）。
 
 **涉及文件：**
 
@@ -217,11 +217,11 @@
 
 ### Task 6: 根据 Parent 原文区间合并命中窗口
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** 初始实现：`mvn -q -Dtest=ParentContextAssemblerTest test`（2026-09-04）：FAIL（testCompile）；`ParentContextAssembler`、`ChildHit` 与 `SectionVersionKey` 尚不存在，符合预期。审查修复：`mvn -q -Dtest=ParentContextAssemblerTest test`（2026-09-04）：FAIL（1 failure；expected `<2>` but was `<1>`）；相邻但不重叠的 `[0,2]` 与 `[3,5]` 被错误合并，符合预期。
 
-**Green Evidence：** 待填写
+**Green Evidence：** 初始实现：`mvn -q -Dtest=ParentContextAssemblerTest test`（2026-09-04）：PASS（3 tests, exit 0）。审查修复后：`mvn -q -Dtest=ParentContextAssemblerTest test`（2026-09-04）：PASS（4 tests, exit 0）；仅有共同 chunkIndex 的窗口才合并，邻接无交集窗口独立保留。`git diff --check`：PASS（exit 0）。
 
 **涉及文件：**
 
@@ -252,11 +252,11 @@
 
 ### Task 7: 扩展新版 Milvus Hybrid Collection 的 Child schema
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `mvn -q -Dtest=MilvusHybridCollectionManagerTest test`（2026-09-04）失败：测试编译阶段找不到 `HybridChunkRow` 与 `deleteDocumentVersion(String, String)`，证明旧 API 尚未承载版本化 Child 元数据和精确删除。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `mvn -q -Dtest=MilvusHybridCollectionManagerTest test`（2026-09-04）通过；schema、v2 默认 collection、`HybridChunkRow` 全字段写入以及 document/version 转义删除均由单元测试覆盖。`git diff --check` 通过。
 
 **涉及文件：**
 
@@ -279,11 +279,11 @@
 
 ### Task 8: 将 Parent/版本元数据映射到 Hybrid Search 命中
 
-**状态：** pending
+**状态：** complete
 
-**Red Evidence：** 待填写
+**Red Evidence：** `mvn -q -Dtest=MilvusHybridSearchResultTest test` 失败：新增测试无法编译，`MilvusHybridSearchResult` 尚未暴露 ingestionVersion、parentSectionId、headingPath、chunkIndex/chunkCount、stockCode/year/tags 等层级元数据访问器。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `mvn -q -Dtest=MilvusHybridSearchResultTest test` 通过（3 tests）。验证 Hybrid Search 请求使用调用方提供的 candidateCount=15，并返回全部 Child 上下文字段；JSON 数组、Long 数字字段能够映射，缺失或畸形可选元数据安全降级为空值/空列表。
 
 **涉及文件：**
 
@@ -306,11 +306,11 @@
 
 ### Task 9: 统一写入 Parent 与两套 Child 向量并支持回滚
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** 初始实现：`mvn -q -Dtest=KnowledgeIngestionServiceTest,KnowledgeServiceTest test`（2026-09-04）：FAIL（testCompile）；`KnowledgeIngestionService` 及其 `IngestionResult` 尚不存在，符合统一层级入库尚未实现的预期。审查修复：`mvn -q -Dtest=KnowledgeIngestionServiceTest#writesVersionScopedHybridChunkIdsForRepeatedIngestionOfTheSameSection test`（2026-09-04）：FAIL（1 failure；两个版本的 Hybrid `chunkId` 均为 `doc-versioned:0:0`），符合版本隔离缺失的预期。
 
-**Green Evidence：** 待填写
+**Green Evidence：** 初始实现：`mvn -q -Dtest=KnowledgeIngestionServiceTest,KnowledgeServiceTest test`（2026-09-04）：PASS（10 tests）；验证每个 Child 仅嵌入一次、Embedding 输入使用 `embeddingText`、语义 `TextSegment` 保持干净正文与完整元数据、Parent/Hybrid/语义写入使用同一版本，以及中间失败按版本补偿。审查修复：`mvn -q -Dtest=KnowledgeIngestionServiceTest,HierarchicalDocumentChunkerTest,KnowledgeServiceTest test`（2026-09-04）：PASS；重复入库同一 Parent 产生不同 Hybrid 主键，且各行保留对应 ingestionVersion。`mvn -q test`：PASS。`git diff --check`：PASS（无输出）。
 
 **涉及文件：**
 
@@ -335,11 +335,11 @@
 
 ### Task 10: 统一回填、禁用、删除与旧版本清理
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `mvn -q -Dtest=HybridKnowledgeBackfillTest,KnowledgeServiceTest test`（2026-09-04）：FAIL（testCompile）；`HybridKnowledgeBackfill` 仍要求旧的 `EmbeddingModel` 构造依赖，且 `KnowledgeService.reingestForBackfill(KnowledgeDocument)` 尚不存在，符合“回填必须委托统一分层入库入口”的预期 RED。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `mvn -q -Dtest=HybridKnowledgeBackfillTest,KnowledgeServiceTest test`（2026-09-04）：PASS（12 tests, exit 0）；覆盖策略落后时统一分层入库、策略一致跳过、单篇失败继续、发布后旧版本 Parent/Hybrid 最佳努力清理，以及禁用/删除的可见性屏障和 Parent/Hybrid 清理顺序。`git diff --check`（2026-09-04）：PASS（无输出）。
 
 **涉及文件：**
 
@@ -364,11 +364,11 @@
 
 ### Task 11: 将 Child 检索结果扩展为 Parent 上下文窗口
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `mvn -q -Dtest=RetrievalServiceTest test`（2026-09-04）：FAIL（2 failures）；Hybrid 仍以 `topK=5` 请求候选导致期望的 15 个候选返回 0 个结果，且语义检索没有按 `activeIngestionVersion` 过滤，返回 2 个 Child 而非仅活动版本的 1 个，符合预期。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `mvn -q -Dtest=RetrievalServiceTest test`（2026-09-04）：PASS（4 tests, exit 0）；Hybrid 使用 `topK * 3` 候选池，Hybrid 与语义降级均仅接受 `documentId -> activeIngestionVersion` 对应的 Child，并批量加载 Parent 后交由 `ParentContextAssembler` 组装。Parent 缺失时保留原 Child 与 headingPath，日志只记录 Parent 标识、版本和错误类型。`git diff --check`：PASS（无输出）。
 
 **涉及文件：**
 
@@ -391,15 +391,16 @@
 
 ### Task 12: 更新配置、文档并完成 API 回归验证
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `mvn -q -Dtest=RagControllerTest test`（2026-09-04）：FAIL（1 failure）；`applicationConfigurationExplicitlyEnablesHierarchicalRetrievalDefaults` 期望 `milvus.hybrid-collection-name=stock_analysis_knowledge_hybrid_v2`，实际为旧值 `stock_analysis_knowledge_hybrid`，证明活动配置尚未显式切换新版 collection，符合预期。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `mvn -q -Dtest=RagControllerTest test`（2026-09-04）：PASS（3 tests）；验证真实公开端点 `POST /api/rag/search` 保持 `content`、`similarity`、`documentId`、`title` 字段并序列化 Parent/窗口扩展字段，且 `EMPTY_QUERY`/`INVALID_TOP_K` 行为不变；同时验证安全 YAML 模板显式包含 v2 collection、层级分块阈值和 candidate multiplier 3。`mvn -q -Dtest=HierarchicalDocumentChunkerTest,KnowledgeSectionStoreTest,ParentContextAssemblerTest,MilvusHybridCollectionManagerTest,MilvusHybridSearchResultTest,KnowledgeIngestionServiceTest,HybridKnowledgeBackfillTest,KnowledgeServiceTest,RetrievalServiceTest,RagControllerTest test`：PASS。`mvn -q test`：PASS。`git diff --check`：PASS（无输出）。
 
 **涉及文件：**
 
 - Modify: `src/main/resources/application.yml`
+- Modify: `src/main/resources/application.example.yml`（安全的可提交配置模板；本地 `application.yml` 保持忽略，避免提交凭据）
 - Modify: `README.md`
 - Create: `src/test/java/com/ljl/ai/controller/RagControllerTest.java`
 

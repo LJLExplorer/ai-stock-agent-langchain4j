@@ -133,17 +133,13 @@ flowchart TD
 
 ## 混合 RAG
 
-知识文档写入时同时保存 MongoDB 元数据与 Milvus 向量：
+查询仍使用 COSINE Dense ANN 与 BM25 两路召回，并由 `RRFRanker` 融合；融合结果经过稠密相似度校验，且会过滤禁用或删除中的文档。Hybrid 客户端失败时可降级为单路 Dense 检索。
 
-1. 文本分块并生成 Dense Embedding。
-2. Milvus Function 从 `content` 生成 BM25 Sparse Vector。
-3. 查询时构造 COSINE Dense ANN 与 BM25 两路请求。
-4. `RRFRanker` 融合两路排名。
-5. 使用带 `minScore` 的 Dense 检索再次校验融合候选，过滤“只有排名、语义不相关”的结果。
-6. 根据 MongoDB 状态过滤已禁用和删除中的文档。
-7. Hybrid 客户端失败且允许降级时，回退到单路 Dense 检索；关闭降级开关则直接暴露故障。
+### 优化亮点
 
-`KnowledgeService` 对跨 MongoDB/Milvus 写入采用补偿思路：写元数据失败时清理已写向量；删除时先标记状态，再重试删除向量，最后移除元数据。它降低了双写不一致概率，但不是跨数据库 ACID 事务。
+1. 按“标题 → 段落 → 句子 → 字符”分层切片，Child 是唯一检索单元。
+2. Parent 保留完整章节语义，Child 继承标题路径等上下文，检索结果更容易理解和溯源。
+3. 命中 Child 后只扩展同一 Parent 的相邻块；短 Parent 返回全文，长 Parent 返回标题、摘要与命中窗口，并按原文顺序去重拼接。
 
 ## 分层记忆
 

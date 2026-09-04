@@ -3,13 +3,7 @@ package com.ljl.ai.knowledge;
 import com.ljl.ai.client.FeishuClient;
 import com.ljl.ai.config.KnowledgeConfig;
 import com.ljl.ai.model.entity.KnowledgeDocument;
-import dev.langchain4j.data.document.Document;
-import dev.langchain4j.data.document.DocumentSplitter;
-import dev.langchain4j.data.document.Metadata;
-import dev.langchain4j.data.document.splitter.DocumentSplitters;
-import dev.langchain4j.data.embedding.Embedding;
 import dev.langchain4j.data.segment.TextSegment;
-import dev.langchain4j.model.embedding.EmbeddingModel;
 import dev.langchain4j.store.embedding.EmbeddingStore;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -36,13 +30,16 @@ import java.util.UUID;
 public class KnowledgeService {
     
     private final FeishuClient feishuClient;
-    private final EmbeddingModel embeddingModel;
     private final EmbeddingStore<TextSegment> embeddingStore;
     private final MongoTemplate mongoTemplate;
     private final KnowledgeConfig knowledgeConfig;
+    private final KnowledgeIngestionService ingestionService;
 
     @Autowired(required = false)
     private MilvusHybridCollectionManager hybridCollectionManager;
+
+    @Autowired(required = false)
+    private KnowledgeSectionStore sectionStore;
     
     /**
      * 同步飞书文档到知识库 - 使用乐观锁处理并发
@@ -65,12 +62,13 @@ public class KnowledgeService {
         int retry = 0;
 
         while (retry < maxRetries) {
-            List<String> newVectorIds = null;
+            KnowledgeIngestionService.IngestionResult ingestion = null;
             try {
                 KnowledgeDocument existingDoc = findByFeishuDocToken(docToken);
                 KnowledgeDocument document = existingDoc != null ? existingDoc : new KnowledgeDocument();
                 List<String> previousVectorIds = existingDoc != null && existingDoc.getVectorIds() != null
                         ? new ArrayList<>(existingDoc.getVectorIds()) : List.of();
+                String previousIngestionVersion = existingDoc == null ? null : existingDoc.getActiveIngestionVersion();
 
                 // 设置文档属性
                 document.setFeishuDocToken(docToken);
@@ -90,10 +88,9 @@ public class KnowledgeService {
                 }
                 document.setUpdateTime(LocalDateTime.now());
 
-                // 处理文档向量（此处可能耗时）
-                newVectorIds = processAndStoreDocument(document);
-                document.setVectorIds(newVectorIds);
-                document.setChunkCount(newVectorIds.size());
+                // 新 Parent 与两套 Child 索引全部成功后，才发布 MongoDB 活动版本。
+                ingestion = ingestionService.ingest(document);
+                applyIngestionResult(document, ingestion);
 
                 // 保存 - 乐观锁会自动检查version
                 // 如果版本不匹配会抛OptimisticLockingFailureException
@@ -104,16 +101,18 @@ public class KnowledgeService {
                 if (!previousVectorIds.isEmpty()) {
                     removeVectorsBestEffort(previousVectorIds);
                 }
+                cleanupPreviousVersionBestEffort(document.getDocumentId(), previousIngestionVersion,
+                        ingestion.ingestionVersion());
 
                 log.info("飞书文档同步完成, documentId: {}, titleLength: {}, chunks: {}",
-                        document.getDocumentId(), title == null ? 0 : title.length(), newVectorIds.size());
+                        document.getDocumentId(), title == null ? 0 : title.length(), ingestion.chunkCount());
                 return document;
 
             } catch (org.springframework.dao.OptimisticLockingFailureException e) {
                 // The vector store is outside MongoDB's transaction. Remove the
                 // vectors created by this failed attempt before retrying.
-                if (newVectorIds != null) {
-                    removeVectorsBestEffort(newVectorIds);
+                if (ingestion != null) {
+                    ingestionService.rollback(ingestion);
                 }
                 retry++;
                 log.warn("版本冲突，正在重试 {}/{}, docToken: {}", retry, maxRetries, docToken);
@@ -130,8 +129,8 @@ public class KnowledgeService {
                 }
             } catch (Exception e) {
                 // Do not leave vectors behind when the MongoDB write fails.
-                if (newVectorIds != null) {
-                    removeVectorsBestEffort(newVectorIds);
+                if (ingestion != null) {
+                    ingestionService.rollback(ingestion);
                 }
                 log.error("飞书文档同步失败, errorType={}", e.getClass().getSimpleName());
                 if (e instanceof RuntimeException runtimeException) {
@@ -164,86 +163,51 @@ public class KnowledgeService {
                 .enabled(true)
                 .build();
 
-        // 处理文档并存储向量
-        List<String> vectorIds = processAndStoreDocument(document);
-        document.setVectorIds(vectorIds);
-        document.setChunkCount(vectorIds.size());
-
-        // 保存到MongoDB
-        mongoTemplate.save(document);
+        KnowledgeIngestionService.IngestionResult ingestion = ingestionService.ingest(document);
+        try {
+            applyIngestionResult(document, ingestion);
+            mongoTemplate.save(document);
+        } catch (RuntimeException exception) {
+            ingestionService.rollback(ingestion);
+            throw exception;
+        }
 
         log.info("知识文档添加完成, id: {}, titleLength: {}, chunks: {}",
-                document.getDocumentId(), title == null ? 0 : title.length(), vectorIds.size());
+                document.getDocumentId(), title == null ? 0 : title.length(), ingestion.chunkCount());
 
         return document;
     }
     
+    private void applyIngestionResult(KnowledgeDocument document,
+                                      KnowledgeIngestionService.IngestionResult ingestion) {
+        document.setVectorIds(ingestion.vectorIds());
+        document.setChunkCount(ingestion.chunkCount());
+        document.setActiveIngestionVersion(ingestion.ingestionVersion());
+        document.setChunkingStrategyVersion(knowledgeConfig.getChunk().getStrategyVersion());
+    }
+
     /**
-     * 处理文档并存储向量 - 带容错和补偿机制
-     * 在分段级失败时清理本次已经写入的向量。
+     * 启动回填使用与新增、同步、重新启用相同的 Parent/Child 写入与发布顺序。
      */
-    private List<String> processAndStoreDocument(KnowledgeDocument document) {
-        // 创建LangChain4j文档
-        Document doc = Document.from(document.getRawContent(), Metadata.from(Map.of(
-                "documentId", document.getDocumentId(),
-                "title", document.getTitle(),
-                "documentType", document.getDocumentType() != null ? document.getDocumentType() : "",
-                "source", document.getSource() != null ? document.getSource() : ""
-        )));
-
-        // 文档分块
-        DocumentSplitter splitter = DocumentSplitters.recursive(
-                knowledgeConfig.getChunk().getSize(),
-                knowledgeConfig.getChunk().getOverlap()
-        );
-        List<TextSegment> segments = splitter.split(doc);
-
-        log.info("文档分块完成, 共 {} 个片段", segments.size());
-
-        // 处理向量 - 记录成功和失败的vectorIds
-        List<String> successVectorIds = new ArrayList<>();
-        List<Integer> failedSegmentIndices = new ArrayList<>();
-
-        for (int i = 0; i < segments.size(); i++) {
-            TextSegment segment = segments.get(i);
-            try {
-                Embedding embedding = embeddingModel.embed(segment).content();
-                String vectorId = embeddingStore.add(embedding, segment);
-                if (hybridCollectionManager != null) {
-                    hybridCollectionManager.insert(document.getDocumentId() + ":" + i, document.getDocumentId(),
-                            document.getTitle(), document.getDocumentType(), document.getSource(), segment.text(),
-                            embedding.vector());
-                }
-                successVectorIds.add(vectorId);
-            } catch (Exception e) {
-                failedSegmentIndices.add(i);
-                log.error("向量存储失败, segmentIndex={}, errorType={}", i,
-                        e.getClass().getSimpleName());
-            }
+    public void reingestForBackfill(KnowledgeDocument document) {
+        if (document == null || document.getDocumentId() == null || document.getDocumentId().isBlank()) {
+            throw new IllegalArgumentException("知识文档及 documentId 不能为空");
         }
-
-        // 检查是否有失败
-        if (!failedSegmentIndices.isEmpty()) {
-            double successRate = (double) successVectorIds.size() / segments.size();
-            log.warn("部分segment处理失败: {}/{}, 成功率: {}%",
-                    failedSegmentIndices.size(), segments.size(), String.format("%.1f", successRate * 100));
-
-            // A document must not be published with missing chunks. Roll back
-            // all vectors created for this document and let the caller retry.
-            log.error("存在失败的文档片段({}个)，执行补偿操作删除已添加的向量", failedSegmentIndices.size());
-            for (String vectorId : successVectorIds) {
-                try {
-                    embeddingStore.remove(vectorId);
-                    log.debug("补偿删除向量成功");
-                } catch (Exception e) {
-                    log.error("补偿删除向量失败, errorType={}", e.getClass().getSimpleName());
-                }
-            }
-            throw new RuntimeException(
-                    String.format("向量存储失败，%d个片段未成功，已回滚", failedSegmentIndices.size()));
+        List<String> previousVectorIds = document.getVectorIds() == null ? List.of()
+                : new ArrayList<>(document.getVectorIds());
+        String previousIngestionVersion = document.getActiveIngestionVersion();
+        KnowledgeIngestionService.IngestionResult ingestion = ingestionService.ingest(document);
+        try {
+            applyIngestionResult(document, ingestion);
+            document.setUpdateTime(LocalDateTime.now());
+            mongoTemplate.save(document);
+            removeVectorsBestEffort(previousVectorIds);
+            cleanupPreviousVersionBestEffort(document.getDocumentId(), previousIngestionVersion,
+                    ingestion.ingestionVersion());
+        } catch (RuntimeException exception) {
+            ingestionService.rollback(ingestion);
+            throw exception;
         }
-
-        return successVectorIds;
     }
     
     /**
@@ -304,6 +268,7 @@ public class KnowledgeService {
             // 阶段1: 标记为删除中 - 防止重复删除
             Update markDelete = new Update()
                     .set("deleteStatus", "DELETING")
+                    .set("enabled", false)
                     .set("deleteTimestamp", LocalDateTime.now());
             mongoTemplate.updateFirst(query, markDelete, KnowledgeDocument.class);
             log.debug("已标记文档为删除中, id: {}", documentId);
@@ -312,6 +277,7 @@ public class KnowledgeService {
             if (document.getVectorIds() != null && !document.getVectorIds().isEmpty()) {
                 deleteVectorsWithRetry(document.getVectorIds(), documentId);
             }
+            deleteHierarchyData(documentId);
 
             // 阶段3: 删除MongoDB记录
             mongoTemplate.remove(query, KnowledgeDocument.class);
@@ -410,7 +376,7 @@ public class KnowledgeService {
         if (document.getVectorIds() != null && !document.getVectorIds().isEmpty()) {
             deleteVectorsWithRetry(document.getVectorIds(), documentId);
         }
-        if (hybridCollectionManager != null) hybridCollectionManager.deleteDocument(documentId);
+        deleteHierarchyData(documentId);
         document.setVectorIds(List.of());
         document.setChunkCount(0);
         document.setUpdateTime(LocalDateTime.now());
@@ -428,24 +394,48 @@ public class KnowledgeService {
             throw new IllegalStateException("知识文档没有可用于重建向量的原始内容: " + documentId);
         }
 
-        if (document.getVectorIds() != null && !document.getVectorIds().isEmpty()) {
-            deleteVectorsWithRetry(document.getVectorIds(), documentId);
-            document.setVectorIds(List.of());
-            document.setChunkCount(0);
-        }
-
-        List<String> vectorIds = processAndStoreDocument(document);
+        List<String> previousVectorIds = document.getVectorIds() == null ? List.of()
+                : new ArrayList<>(document.getVectorIds());
+        String previousIngestionVersion = document.getActiveIngestionVersion();
+        KnowledgeIngestionService.IngestionResult ingestion = ingestionService.ingest(document);
         try {
-            document.setVectorIds(vectorIds);
-            document.setChunkCount(vectorIds.size());
+            applyIngestionResult(document, ingestion);
             document.setEnabled(true);
             document.setDeleteStatus(null);
             document.setUpdateTime(LocalDateTime.now());
             mongoTemplate.save(document);
-            log.info("知识文档已重新启用, id: {}, chunks: {}", documentId, vectorIds.size());
+            removeVectorsBestEffort(previousVectorIds);
+            cleanupPreviousVersionBestEffort(documentId, previousIngestionVersion, ingestion.ingestionVersion());
+            log.info("知识文档已重新启用, id: {}, chunks: {}", documentId, ingestion.chunkCount());
         } catch (RuntimeException exception) {
-            removeVectorsBestEffort(vectorIds);
+            ingestionService.rollback(ingestion);
             throw exception;
+        }
+    }
+
+    private void deleteHierarchyData(String documentId) {
+        if (sectionStore != null) sectionStore.deleteDocument(documentId);
+        if (hybridCollectionManager != null) hybridCollectionManager.deleteDocument(documentId);
+    }
+
+    /** 发布已完成后才清旧版本；失败不撤销新活动版本，后续可安全重试。 */
+    private void cleanupPreviousVersionBestEffort(String documentId, String previousVersion, String activeVersion) {
+        if (previousVersion == null || previousVersion.isBlank() || previousVersion.equals(activeVersion)) return;
+        if (sectionStore != null) {
+            try {
+                sectionStore.deleteVersion(documentId, previousVersion);
+            } catch (RuntimeException exception) {
+                log.error("旧 Parent Section 清理失败，可后续重试, documentId: {}, version: {}", documentId,
+                        previousVersion, exception);
+            }
+        }
+        if (hybridCollectionManager != null) {
+            try {
+                hybridCollectionManager.deleteDocumentVersion(documentId, previousVersion);
+            } catch (RuntimeException exception) {
+                log.error("旧 Hybrid Child 清理失败，可后续重试, documentId: {}, version: {}", documentId,
+                        previousVersion, exception);
+            }
         }
     }
 }

@@ -108,6 +108,16 @@ public class KnowledgeDocument {
      * 分块数量
      */
     private Integer chunkCount;
+
+    /**
+     * 当前可参与检索的入库版本。
+     */
+    private String activeIngestionVersion;
+
+    /**
+     * 当前文档使用的分块策略版本。
+     */
+    private String chunkingStrategyVersion;
     
     /**
      * 标签
