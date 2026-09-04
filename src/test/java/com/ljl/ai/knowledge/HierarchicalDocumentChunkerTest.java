@@ -8,6 +8,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class HierarchicalDocumentChunkerTest {
@@ -177,5 +178,104 @@ class HierarchicalDocumentChunkerTest {
         HierarchicalDocumentChunker.ChunkedDocument sentenceChunked = chunker.chunk(sentenceDocument, "version-5");
 
         assertEquals(longParagraph.indexOf('。') + 1, sentenceChunked.getChildren().getFirst().getEndOffset());
+    }
+
+    @Test
+    void inheritsFinancialMetadata() {
+        KnowledgeDocument explicitDocument = KnowledgeDocument.builder()
+                .documentId("financial-explicit")
+                .title("贵州茅台 600519 2024 年报")
+                .rawContent("# 2023 年经营回顾\n正文提及 000858 与 2021 年。")
+                .tags(List.of("年报", "白酒"))
+                .metadata(Map.of("stockCode", "000858", "year", "2022"))
+                .build();
+
+        HierarchicalDocumentChunker.ChunkedDocument explicit = chunker.chunk(explicitDocument, "version-financial");
+        HierarchicalDocumentChunker.ParentDraft explicitParent = explicit.getParents().getFirst();
+        HierarchicalDocumentChunker.ChildDraft explicitChild = explicit.getChildren().getFirst();
+        assertEquals("000858", explicitParent.getStockCode());
+        assertEquals("2022", explicitParent.getYear());
+        assertEquals(List.of("年报", "白酒"), explicitParent.getTags());
+        assertEquals("000858", explicitChild.getStockCode());
+        assertEquals("2022", explicitChild.getYear());
+        assertEquals(List.of("年报", "白酒"), explicitChild.getTags());
+
+        KnowledgeDocument titleDocument = KnowledgeDocument.builder()
+                .documentId("financial-title")
+                .title("贵州茅台 600519 2024 年报")
+                .rawContent("普通正文。")
+                .build();
+        HierarchicalDocumentChunker.ParentDraft titleParent = chunker.chunk(titleDocument, "version-title")
+                .getParents().getFirst();
+        assertEquals("600519", titleParent.getStockCode());
+        assertEquals("2024", titleParent.getYear());
+
+        KnowledgeDocument headingDocument = KnowledgeDocument.builder()
+                .documentId("financial-heading")
+                .title("行业研究")
+                .rawContent("# 五粮液 000858 2023 年报\n普通正文。")
+                .build();
+        HierarchicalDocumentChunker.ParentDraft headingParent = chunker.chunk(headingDocument, "version-heading")
+                .getParents().getFirst();
+        assertEquals("000858", headingParent.getStockCode());
+        assertEquals("2023", headingParent.getYear());
+
+        KnowledgeDocument bodyDocument = KnowledgeDocument.builder()
+                .documentId("financial-body")
+                .title("行业研究")
+                .rawContent("正文提及股票代码 300750，分析 2025 年表现。")
+                .build();
+        HierarchicalDocumentChunker.ParentDraft bodyParent = chunker.chunk(bodyDocument, "version-body")
+                .getParents().getFirst();
+        assertEquals("300750", bodyParent.getStockCode());
+        assertEquals("2025", bodyParent.getYear());
+
+        KnowledgeDocument unknownDocument = KnowledgeDocument.builder()
+                .documentId("financial-unknown")
+                .title("行业研究")
+                .rawContent("没有可识别的证券或年份。")
+                .build();
+        HierarchicalDocumentChunker.ParentDraft unknownParent = chunker.chunk(unknownDocument, "version-unknown")
+                .getParents().getFirst();
+        assertNull(unknownParent.getStockCode());
+        assertNull(unknownParent.getYear());
+    }
+
+    @Test
+    void createsExtractiveSummary() {
+        String firstParagraph = "首个有效段落说明本章节聚焦贵州茅台经营质量、行业竞争格局与未来战略，供投资研究和风险判断使用。"
+                + "研究范围覆盖产品结构、渠道效率、品牌势能、行业供需、公司治理和长期现金回报。".repeat(7);
+        String revenueSentence = "公司营业收入同比增长25%，归母净利润增长18%，毛利率继续提升，核心财务指标显示盈利能力改善。";
+        String valuationSentence = "当前估值处于近三年中枢，市盈率约25倍，现金流充裕且经营活动现金流同比增长30%，具备估值支撑。";
+        String riskSentence = "需要关注渠道库存上升、消费需求下降、商誉减值以及潜在诉讼风险，这些风险可能影响后续业绩。";
+        String longContent = firstParagraph + "\n\n" + "背景信息".repeat(350) + "。"
+                + revenueSentence + revenueSentence + valuationSentence + riskSentence + "补充说明".repeat(350) + "。";
+        KnowledgeDocument longDocument = KnowledgeDocument.builder()
+                .documentId("summary-long")
+                .title("贵州茅台研究")
+                .rawContent("# 财务分析\n" + longContent)
+                .build();
+
+        HierarchicalDocumentChunker.ParentDraft longParent = chunker.chunk(longDocument, "version-summary")
+                .getParents().getFirst();
+        String summary = longParent.getSummary();
+        assertTrue(summary.length() >= 400 && summary.length() <= 600);
+        assertTrue(summary.contains("财务分析"));
+        assertTrue(summary.contains(firstParagraph));
+        assertTrue(summary.contains(revenueSentence));
+        assertTrue(summary.contains(valuationSentence));
+        assertTrue(summary.contains(riskSentence));
+        assertTrue(summary.indexOf(revenueSentence) < summary.indexOf(valuationSentence));
+        assertTrue(summary.indexOf(valuationSentence) < summary.indexOf(riskSentence));
+        assertEquals(summary.indexOf(revenueSentence), summary.lastIndexOf(revenueSentence));
+        assertTrue(chunker.chunk(longDocument, "version-summary").getChildren().stream()
+                .noneMatch(child -> child.getEmbeddingText().contains(summary)));
+
+        KnowledgeDocument shortDocument = KnowledgeDocument.builder()
+                .documentId("summary-short")
+                .title("短文")
+                .rawContent("# 简短章节\n营业收入同比增长。")
+                .build();
+        assertNull(chunker.chunk(shortDocument, "version-short").getParents().getFirst().getSummary());
     }
 }

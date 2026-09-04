@@ -156,11 +156,11 @@
 
 ### Task 4: 继承金融元数据并生成抽取式 Parent 摘要
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** 2026-09-04：运行 `mvn -q '-Dtest=HierarchicalDocumentChunkerTest#inheritsFinancialMetadata+createsExtractiveSummary' test`，因 `ParentDraft`/`ChildDraft` 尚无 stockCode、year、summary 与 tags 访问器而 testCompile 失败，符合 RED 预期。
 
-**Green Evidence：** 待填写
+**Green Evidence：** 2026-09-04：`mvn -q '-Dtest=HierarchicalDocumentChunkerTest#inheritsFinancialMetadata+createsExtractiveSummary' test` 通过；`mvn -q -Dtest=HierarchicalDocumentChunkerTest test` 通过；`git diff --check` 无输出。
 
 **涉及文件：**
 

@@ -5,9 +5,12 @@ import lombok.Value;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -23,6 +26,9 @@ public class HierarchicalDocumentChunker {
     private static final int TARGET_OVERLAP = 100;
     private static final int MIN_OVERLAP = 80;
     private static final int MAX_OVERLAP = 120;
+    private static final int SHORT_PARENT_THRESHOLD = 1200;
+    private static final int SUMMARY_MIN_SIZE = 400;
+    private static final int SUMMARY_MAX_SIZE = 600;
 
     private static final Pattern MARKDOWN_HEADING = Pattern.compile("^(#{1,6})\\s+(.+?)\\s*$");
     private static final Pattern CHINESE_CHAPTER = Pattern.compile("^第[一二三四五六七八九十百千万零〇两0-9]+[章节篇部分](?:\\s+\\S.*)?$");
@@ -30,6 +36,9 @@ public class HierarchicalDocumentChunker {
     private static final Pattern CHINESE_PARENTHESIZED = Pattern.compile("^（[一二三四五六七八九十百千万零〇两0-9]+）(?:\\s*\\S.*)?$");
     private static final Pattern DECIMAL_HEADING = Pattern.compile("^\\d+(?:\\.\\d+)+(?:\\s+\\S.*)?$");
     private static final Pattern NUMBERED_HEADING = Pattern.compile("^\\d+\\.(?:\\s+\\S.*)?$");
+    private static final Pattern STOCK_CODE = Pattern.compile("(?<!\\d)(\\d{6})(?!\\d)");
+    private static final Pattern YEAR = Pattern.compile("(?<!\\d)((?:19|20)\\d{2})(?!\\d)");
+    private static final Pattern SENTENCE = Pattern.compile("[^。！？!?；;]+[。！？!?；;]?");
 
     /**
      * 解析 Markdown 标题和常见中文章节编号。只有整行匹配标题模式的文本才会改变标题栈。
@@ -62,7 +71,7 @@ public class HierarchicalDocumentChunker {
         addDraftIfPresent(result, headingStack, sectionContent, title, safeTags, safeMetadata);
 
         if (result.isEmpty()) {
-            return List.of(new ParentDraft(0, List.of(title), content, safeTags, safeMetadata));
+            return List.of(parentDraft(0, List.of(title), content, safeTags, safeMetadata, title));
         }
         return result;
     }
@@ -119,6 +128,9 @@ public class HierarchicalDocumentChunker {
                     parent.getHeadingPath(),
                     childContent,
                     embeddingText,
+                    parent.getStockCode(),
+                    parent.getYear(),
+                    parent.getTags(),
                     span.newStartOffset,
                     span.endOffset,
                     span.overlapStartOffset));
@@ -222,7 +234,126 @@ public class HierarchicalDocumentChunker {
         }
         List<String> path = headingStack.isEmpty() ? List.of(documentTitle)
                 : headingStack.stream().map(Heading::text).toList();
-        drafts.add(new ParentDraft(drafts.size(), path, content.toString().strip(), tags, metadata));
+        drafts.add(parentDraft(drafts.size(), path, content.toString().strip(), tags, metadata, documentTitle));
+    }
+
+    private ParentDraft parentDraft(int sectionIndex, List<String> headingPath, String content,
+                                    List<String> tags, Map<String, String> metadata, String documentTitle) {
+        String normalizedContent = content == null ? "" : content.strip();
+        String stockCode = resolveMetadata(metadata, "stockCode", STOCK_CODE, documentTitle, headingPath, normalizedContent);
+        String year = resolveMetadata(metadata, "year", YEAR, documentTitle, headingPath, normalizedContent);
+        String summary = normalizedContent.length() > SHORT_PARENT_THRESHOLD
+                ? createExtractiveSummary(headingPath, normalizedContent) : null;
+        return new ParentDraft(sectionIndex, headingPath, normalizedContent, tags, metadata, stockCode, year, summary);
+    }
+
+    private String resolveMetadata(Map<String, String> metadata, String key, Pattern pattern,
+                                   String documentTitle, List<String> headingPath, String content) {
+        String explicit = metadata == null ? null : metadata.get(key);
+        if (explicit != null && !explicit.isBlank()) {
+            return explicit.strip();
+        }
+        for (String source : List.of(documentTitle == null ? "" : documentTitle,
+                String.join(" > ", headingPath), content)) {
+            Matcher matcher = pattern.matcher(source);
+            if (matcher.find()) {
+                return matcher.group(1);
+            }
+        }
+        return null;
+    }
+
+    private String createExtractiveSummary(List<String> headingPath, String content) {
+        String heading = String.join(" > ", headingPath);
+        String firstParagraph = firstEffectiveParagraph(content);
+        List<SentenceCandidate> candidates = sentenceCandidates(content);
+        List<String> selected = new ArrayList<>();
+        selected.add(firstParagraph);
+        Set<String> seen = new HashSet<>();
+        seen.add(firstParagraph);
+        candidates.stream()
+                .filter(candidate -> firstParagraph.contains(candidate.text()))
+                .forEach(candidate -> seen.add(candidate.text()));
+
+        candidates.stream()
+                .sorted(Comparator.comparingInt(SentenceCandidate::score).reversed()
+                        .thenComparingInt(SentenceCandidate::position))
+                .filter(candidate -> seen.add(candidate.text()))
+                .limit(3)
+                .sorted(Comparator.comparingInt(SentenceCandidate::position))
+                .forEach(candidate -> selected.add(candidate.text()));
+
+        appendUntilMinimum(selected, seen, candidates, heading.length() + 1);
+        return joinWithinLimit(heading, selected);
+    }
+
+    private String firstEffectiveParagraph(String content) {
+        for (String paragraph : content.split("(?:\\r?\\n\\s*){2,}")) {
+            if (!paragraph.isBlank()) {
+                return paragraph.strip();
+            }
+        }
+        return content.strip();
+    }
+
+    private List<SentenceCandidate> sentenceCandidates(String content) {
+        List<SentenceCandidate> candidates = new ArrayList<>();
+        Matcher matcher = SENTENCE.matcher(content);
+        while (matcher.find()) {
+            String sentence = matcher.group().strip();
+            if (!sentence.isEmpty()) {
+                candidates.add(new SentenceCandidate(matcher.start(), sentence, scoreSentence(sentence)));
+            }
+        }
+        return candidates;
+    }
+
+    private int scoreSentence(String sentence) {
+        int score = 0;
+        for (String keyword : List.of("营业收入", "净利润", "毛利率", "财务指标", "同比", "环比", "增长", "下降",
+                "估值", "市盈率", "现金流", "负债", "风险", "减值", "诉讼")) {
+            if (sentence.contains(keyword)) {
+                score += 4;
+            }
+        }
+        if (sentence.matches(".*\\d.*")) {
+            score += 2;
+        }
+        if (sentence.matches(".*(?:%|亿元|万元|倍).*")) {
+            score += 3;
+        }
+        return score;
+    }
+
+    private void appendUntilMinimum(List<String> selected, Set<String> seen,
+                                    List<SentenceCandidate> candidates, int prefixLength) {
+        for (SentenceCandidate candidate : candidates) {
+            if (summaryLength(prefixLength, selected) >= SUMMARY_MIN_SIZE) {
+                return;
+            }
+            if (seen.add(candidate.text()) && summaryLength(prefixLength, selected) + candidate.text().length() + 1
+                    <= SUMMARY_MAX_SIZE) {
+                selected.add(candidate.text());
+            }
+        }
+    }
+
+    private int summaryLength(int prefixLength, List<String> parts) {
+        return prefixLength + parts.stream().mapToInt(String::length).sum() + parts.size();
+    }
+
+    private String joinWithinLimit(String heading, List<String> parts) {
+        StringBuilder summary = new StringBuilder(heading).append('\n');
+        for (String part : parts) {
+            if (summary.length() + part.length() + 1 > SUMMARY_MAX_SIZE) {
+                continue;
+            }
+            if (summary.length() > heading.length() + 1) {
+                summary.append('\n');
+            }
+            summary.append(part);
+        }
+        return summary.toString();
     }
 
     private Heading headingOf(String line) {
@@ -251,6 +382,9 @@ public class HierarchicalDocumentChunker {
     private record Heading(int level, String text) {
     }
 
+    private record SentenceCandidate(int position, String text, int score) {
+    }
+
     /** Parent Section 在持久化及 Child 切分前使用的不可变草稿。 */
     @Value
     public static class ParentDraft {
@@ -259,6 +393,9 @@ public class HierarchicalDocumentChunker {
         String content;
         List<String> tags;
         Map<String, String> metadata;
+        String stockCode;
+        String year;
+        String summary;
     }
 
     /** 一次层级切分产生的 Parent 草稿及其 Child 草稿。 */
@@ -278,6 +415,9 @@ public class HierarchicalDocumentChunker {
         List<String> headingPath;
         String content;
         String embeddingText;
+        String stockCode;
+        String year;
+        List<String> tags;
         int startOffset;
         int endOffset;
         int overlapStartOffset;
