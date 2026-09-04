@@ -183,11 +183,11 @@
 
 ### Task 5: 持久化并按版本管理 Parent Section
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `mvn -q -Dtest=KnowledgeSectionStoreTest test`（2026-09-04）：FAIL（testCompile）；`KnowledgeSectionStore` 尚不存在，符合预期。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `mvn -q -Dtest=KnowledgeSectionStoreTest test`（2026-09-04）：PASS（4 tests, exit 0）。
 
 **涉及文件：**
 
