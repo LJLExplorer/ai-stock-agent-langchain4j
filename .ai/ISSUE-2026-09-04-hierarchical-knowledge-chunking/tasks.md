@@ -93,9 +93,9 @@
 
 **状态：** completed
 
-**Red Evidence：** `mvn -q -Dtest=HierarchicalDocumentChunkerTest#parsesHeadingHierarchy test`（2026-09-04）：FAIL（testCompile）；`HierarchicalDocumentChunker` 尚不存在，符合预期。
+**Red Evidence：** `mvn -q -Dtest=HierarchicalDocumentChunkerTest#parsesHeadingHierarchy test`（2026-09-04）：FAIL（testCompile）；`HierarchicalDocumentChunker` 尚不存在，符合预期。审查修复：`mvn -q '-Dtest=HierarchicalDocumentChunkerTest#preservesLeadingContentAsDocumentTitleRootParent+usesDecimalSegmentCountAsHeadingLevel' test`（2026-09-04）：FAIL（2 failures）；首个标题前正文被丢弃，且 `1.2` 错误继承 `1.1/1.1.1` 路径，符合预期。
 
-**Green Evidence：** `mvn -q -Dtest=HierarchicalDocumentChunkerTest test`（2026-09-04）：PASS（3 tests, exit 0）。
+**Green Evidence：** `mvn -q -Dtest=HierarchicalDocumentChunkerTest test`（2026-09-04）：PASS（3 tests, exit 0）。审查修复后：`mvn -q -Dtest=HierarchicalDocumentChunkerTest test`（2026-09-04）：PASS（5 tests, exit 0）。
 
 **涉及文件：**
 

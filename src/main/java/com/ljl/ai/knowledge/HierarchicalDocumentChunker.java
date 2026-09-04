@@ -33,7 +33,7 @@ public class HierarchicalDocumentChunker {
         List<String> safeTags = tags == null ? List.of() : List.copyOf(tags);
         Map<String, String> safeMetadata = metadata == null ? Map.of() : Map.copyOf(new LinkedHashMap<>(metadata));
         List<ParentDraft> result = new ArrayList<>();
-        List<String> headingStack = new ArrayList<>();
+        List<Heading> headingStack = new ArrayList<>();
         StringBuilder sectionContent = new StringBuilder();
 
         for (String lineWithEnding : content.split("(?<=\\n)", -1)) {
@@ -44,14 +44,14 @@ public class HierarchicalDocumentChunker {
                 continue;
             }
 
-            addDraftIfPresent(result, headingStack, sectionContent, safeTags, safeMetadata);
+            addDraftIfPresent(result, headingStack, sectionContent, title, safeTags, safeMetadata);
             sectionContent.setLength(0);
-            while (headingStack.size() >= heading.level()) {
+            while (!headingStack.isEmpty() && headingStack.getLast().level() >= heading.level()) {
                 headingStack.removeLast();
             }
-            headingStack.add(heading.text());
+            headingStack.add(heading);
         }
-        addDraftIfPresent(result, headingStack, sectionContent, safeTags, safeMetadata);
+        addDraftIfPresent(result, headingStack, sectionContent, title, safeTags, safeMetadata);
 
         if (result.isEmpty()) {
             return List.of(new ParentDraft(0, List.of(title), content, safeTags, safeMetadata));
@@ -59,12 +59,15 @@ public class HierarchicalDocumentChunker {
         return result;
     }
 
-    private void addDraftIfPresent(List<ParentDraft> drafts, List<String> headingStack,
-                                   StringBuilder content, List<String> tags, Map<String, String> metadata) {
-        if (headingStack.isEmpty() || content.toString().isBlank()) {
+    private void addDraftIfPresent(List<ParentDraft> drafts, List<Heading> headingStack,
+                                   StringBuilder content, String documentTitle,
+                                   List<String> tags, Map<String, String> metadata) {
+        if (content.toString().isBlank()) {
             return;
         }
-        drafts.add(new ParentDraft(drafts.size(), List.copyOf(headingStack), content.toString().strip(), tags, metadata));
+        List<String> path = headingStack.isEmpty() ? List.of(documentTitle)
+                : headingStack.stream().map(Heading::text).toList();
+        drafts.add(new ParentDraft(drafts.size(), path, content.toString().strip(), tags, metadata));
     }
 
     private Heading headingOf(String line) {
@@ -82,10 +85,10 @@ public class HierarchicalDocumentChunker {
             return new Heading(3, line);
         }
         if (NUMBERED_HEADING.matcher(line).matches()) {
-            return new Heading(4, line);
+            return new Heading(1, line);
         }
         if (DECIMAL_HEADING.matcher(line).matches()) {
-            return new Heading(5, line);
+            return new Heading((int) line.chars().filter(character -> character == '.').count() + 1, line);
         }
         return null;
     }
