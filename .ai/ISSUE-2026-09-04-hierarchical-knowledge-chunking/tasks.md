@@ -306,11 +306,11 @@
 
 ### Task 9: 统一写入 Parent 与两套 Child 向量并支持回滚
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `mvn -q -Dtest=KnowledgeIngestionServiceTest,KnowledgeServiceTest test`（2026-09-04）：FAIL（testCompile）；`KnowledgeIngestionService` 及其 `IngestionResult` 尚不存在，符合统一层级入库尚未实现的预期。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `mvn -q -Dtest=KnowledgeIngestionServiceTest,KnowledgeServiceTest test`（2026-09-04）：PASS（10 tests）；验证每个 Child 仅嵌入一次、Embedding 输入使用 `embeddingText`、语义 `TextSegment` 保持干净正文与完整元数据、Parent/Hybrid/语义写入使用同一版本，以及中间失败按版本补偿。`mvn -q test`：PASS。`git diff --check`：PASS（无输出）。
 
 **涉及文件：**
 
