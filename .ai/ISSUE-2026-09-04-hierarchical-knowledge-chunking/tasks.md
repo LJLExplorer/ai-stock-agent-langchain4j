@@ -279,11 +279,11 @@
 
 ### Task 8: 将 Parent/版本元数据映射到 Hybrid Search 命中
 
-**状态：** pending
+**状态：** complete
 
-**Red Evidence：** 待填写
+**Red Evidence：** `mvn -q -Dtest=MilvusHybridSearchResultTest test` 失败：新增测试无法编译，`MilvusHybridSearchResult` 尚未暴露 ingestionVersion、parentSectionId、headingPath、chunkIndex/chunkCount、stockCode/year/tags 等层级元数据访问器。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `mvn -q -Dtest=MilvusHybridSearchResultTest test` 通过（3 tests）。验证 Hybrid Search 请求使用调用方提供的 candidateCount=15，并返回全部 Child 上下文字段；JSON 数组、Long 数字字段能够映射，缺失或畸形可选元数据安全降级为空值/空列表。
 
 **涉及文件：**
 
