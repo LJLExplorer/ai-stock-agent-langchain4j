@@ -137,9 +137,9 @@ flowchart TD
 
 ### 优化亮点
 
-1. 按“标题 → 段落 → 句子 → 字符”分层切片，Child 是唯一检索单元。
-2. Parent 保留完整章节语义，Child 继承标题路径等上下文，检索结果更容易理解和溯源。
-3. 命中 Child 后只扩展同一 Parent 的相邻块；短 Parent 返回全文，长 Parent 返回标题、摘要与命中窗口，并按原文顺序去重拼接。
+1. 先按 Markdown 或中文编号标题划分 Parent Section；再在 Parent 内按“段落 → 句子 → 字符”递归切出 Child。
+2. Child 目标为 600～800 字符、重叠 80～120 字符，并继承完整标题路径、股票代码、年份和标签；只有 Child 参与 Embedding 与检索。
+3. Parent 保留完整章节语义；命中 Child 后只扩展同一 Parent 的相邻块。短 Parent 返回全文，长 Parent 返回标题、摘要与命中窗口，并按原文顺序去重拼接。
 
 ## 分层记忆
 

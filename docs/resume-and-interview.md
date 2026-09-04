@@ -111,9 +111,11 @@ BM25 对股票代码、公司名、指标名等精确词更敏感；Dense 对同
 
 会，任何有损压缩都有风险。当前只压缩较早一半消息，保留最近原文，并限制摘要为空或超长时不能淘汰窗口；更新失败会尝试回滚。更严格场景可增加事实槽位、摘要版本和离线评测。
 
-### 9. 为什么不直接检索并返回整段章节？
+### 9. 文档如何进行 Parent/Child 分片？
 
-整段章节过长会稀释向量语义，且容易占满模型上下文；只返回命中 Child 又会丢失前后论据。项目先按“标题 → 段落 → 句子 → 字符”建立 Parent/Child 关系：Child 负责 Dense/BM25 召回，命中后只在同一 Parent 内扩展相邻 Child。短 Parent 直接返回全文；长 Parent 返回标题路径、抽取式摘要和合并后的命中窗口。这样能同时控制检索粒度与上下文完整性。
+入库先用 Markdown 或中文编号标题划分 Parent Section；再在每个 Parent 内优先按中文段落切分，超长时继续按句子、字符兜底，生成 600～800 字符、80～120 字符重叠的 Child。每个 Child 继承完整 `headingPath`、`stockCode`、`year`、`tags`，并保留 `parentSectionId` 与 `chunkIndex`；只有 Child 写入向量库并参与 Dense/BM25 召回。
+
+命中后只在同一 Parent 内补充前后相邻 Child，重叠窗口按 `chunkIndex` 去重、顺序拼接。短 Parent 直接返回全文；长 Parent 返回标题路径、抽取式摘要和命中窗口。这样避免整章向量被稀释，也避免单个命中块丢失前后论据。
 
 代码入口：`HierarchicalDocumentChunker`、`ParentContextAssembler`、`RetrievalService`。
 
