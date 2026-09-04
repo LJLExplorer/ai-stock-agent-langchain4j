@@ -8,6 +8,7 @@ import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.store.embedding.EmbeddingStore;
 import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.data.mongodb.core.MongoTemplate;
 
 import java.util.List;
@@ -168,9 +169,92 @@ class KnowledgeServiceTest {
         verify(ingestionService).rollback(result);
     }
 
+    @Test
+    void shouldCleanPreviousParentAndHybridVersionsAfterPublishingAndIgnoreCleanupFailure() {
+        FeishuClient feishu = mock(FeishuClient.class);
+        MongoTemplate mongoTemplate = mock(MongoTemplate.class);
+        KnowledgeIngestionService ingestionService = mock(KnowledgeIngestionService.class);
+        KnowledgeSectionStore sectionStore = mock(KnowledgeSectionStore.class);
+        MilvusHybridCollectionManager hybrid = mock(MilvusHybridCollectionManager.class);
+        KnowledgeService service = serviceWithLifecycle(feishu, mock(EmbeddingStore.class), mongoTemplate, ingestionService,
+                sectionStore, hybrid);
+        KnowledgeDocument existing = KnowledgeDocument.builder().documentId("doc-1").feishuDocToken("token-1")
+                .activeIngestionVersion("old-version").vectorIds(List.of("old-vector")).enabled(true).build();
+        JSONObject meta = new JSONObject();
+        meta.put("title", "更新后的文档");
+        when(feishu.getDocumentContent("token-1")).thenReturn("新正文");
+        when(feishu.getDocumentMeta("token-1")).thenReturn(meta);
+        when(mongoTemplate.findOne(any(), eq(KnowledgeDocument.class))).thenReturn(existing);
+        when(ingestionService.ingest(existing)).thenReturn(result("new-version", "new-vector", 1));
+        doThrow(new IllegalStateException("section cleanup unavailable"))
+                .when(sectionStore).deleteVersion("doc-1", "old-version");
+
+        KnowledgeDocument published = service.syncFeishuDocument("token-1", "REPORT", List.of());
+
+        assertEquals("new-version", published.getActiveIngestionVersion());
+        InOrder order = inOrder(mongoTemplate, sectionStore, hybrid);
+        order.verify(mongoTemplate).save(existing);
+        order.verify(sectionStore).deleteVersion("doc-1", "old-version");
+        order.verify(hybrid).deleteDocumentVersion("doc-1", "old-version");
+        verify(ingestionService, org.mockito.Mockito.never()).rollback(any());
+    }
+
+    @Test
+    void shouldCloseVisibilityBarrierBeforeClearingDisabledDocumentParentsAndHybridChildren() {
+        EmbeddingStore<TextSegment> embeddingStore = mock(EmbeddingStore.class);
+        MongoTemplate mongoTemplate = mock(MongoTemplate.class);
+        KnowledgeSectionStore sectionStore = mock(KnowledgeSectionStore.class);
+        MilvusHybridCollectionManager hybrid = mock(MilvusHybridCollectionManager.class);
+        KnowledgeService service = serviceWithLifecycle(mock(FeishuClient.class), embeddingStore, mongoTemplate,
+                mock(KnowledgeIngestionService.class), sectionStore, hybrid);
+        KnowledgeDocument document = KnowledgeDocument.builder().documentId("doc-disable").enabled(true)
+                .vectorIds(List.of("vector-1")).chunkCount(1).build();
+        when(mongoTemplate.findOne(any(), eq(KnowledgeDocument.class))).thenReturn(document);
+
+        service.disableDocument("doc-disable");
+
+        InOrder order = inOrder(mongoTemplate, embeddingStore, sectionStore, hybrid);
+        order.verify(mongoTemplate).save(document);
+        order.verify(embeddingStore).remove("vector-1");
+        order.verify(sectionStore).deleteDocument("doc-disable");
+        order.verify(hybrid).deleteDocument("doc-disable");
+    }
+
+    @Test
+    void shouldCloseVisibilityBarrierBeforeDeletingParentsAndHybridChildren() {
+        EmbeddingStore<TextSegment> embeddingStore = mock(EmbeddingStore.class);
+        MongoTemplate mongoTemplate = mock(MongoTemplate.class);
+        KnowledgeSectionStore sectionStore = mock(KnowledgeSectionStore.class);
+        MilvusHybridCollectionManager hybrid = mock(MilvusHybridCollectionManager.class);
+        KnowledgeService service = serviceWithLifecycle(mock(FeishuClient.class), embeddingStore, mongoTemplate,
+                mock(KnowledgeIngestionService.class), sectionStore, hybrid);
+        KnowledgeDocument document = KnowledgeDocument.builder().documentId("doc-delete").enabled(true)
+                .vectorIds(List.of("vector-1")).build();
+        when(mongoTemplate.findOne(any(), eq(KnowledgeDocument.class))).thenReturn(document);
+
+        service.deleteDocument("doc-delete");
+
+        InOrder order = inOrder(mongoTemplate, embeddingStore, sectionStore, hybrid);
+        order.verify(mongoTemplate).updateFirst(any(), any(), eq(KnowledgeDocument.class));
+        order.verify(embeddingStore).remove("vector-1");
+        order.verify(sectionStore).deleteDocument("doc-delete");
+        order.verify(hybrid).deleteDocument("doc-delete");
+        order.verify(mongoTemplate).remove(any(), eq(KnowledgeDocument.class));
+    }
+
     private KnowledgeService service(FeishuClient feishu, EmbeddingStore<TextSegment> embeddingStore,
                                      MongoTemplate mongoTemplate, KnowledgeIngestionService ingestionService) {
         return new KnowledgeService(feishu, embeddingStore, mongoTemplate, new KnowledgeConfig(), ingestionService);
+    }
+
+    private KnowledgeService serviceWithLifecycle(FeishuClient feishu, EmbeddingStore<TextSegment> embeddingStore,
+                                                  MongoTemplate mongoTemplate, KnowledgeIngestionService ingestionService,
+                                                  KnowledgeSectionStore sectionStore,
+                                                  MilvusHybridCollectionManager hybrid) {
+        KnowledgeService service = service(feishu, embeddingStore, mongoTemplate, ingestionService);
+        ReflectionTestUtils.setField(service, "sectionStore", sectionStore);
+        ReflectionTestUtils.setField(service, "hybridCollectionManager", hybrid);
+        return service;
     }
 
     private KnowledgeIngestionService.IngestionResult result(String version, String vectorId, int chunkCount) {

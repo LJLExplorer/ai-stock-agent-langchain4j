@@ -335,11 +335,11 @@
 
 ### Task 10: 统一回填、禁用、删除与旧版本清理
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `mvn -q -Dtest=HybridKnowledgeBackfillTest,KnowledgeServiceTest test`（2026-09-04）：FAIL（testCompile）；`HybridKnowledgeBackfill` 仍要求旧的 `EmbeddingModel` 构造依赖，且 `KnowledgeService.reingestForBackfill(KnowledgeDocument)` 尚不存在，符合“回填必须委托统一分层入库入口”的预期 RED。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `mvn -q -Dtest=HybridKnowledgeBackfillTest,KnowledgeServiceTest test`（2026-09-04）：PASS（12 tests, exit 0）；覆盖策略落后时统一分层入库、策略一致跳过、单篇失败继续、发布后旧版本 Parent/Hybrid 最佳努力清理，以及禁用/删除的可见性屏障和 Parent/Hybrid 清理顺序。`git diff --check`（2026-09-04）：PASS（无输出）。
 
 **涉及文件：**
 

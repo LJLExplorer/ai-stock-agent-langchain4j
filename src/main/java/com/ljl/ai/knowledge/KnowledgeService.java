@@ -37,6 +37,9 @@ public class KnowledgeService {
 
     @Autowired(required = false)
     private MilvusHybridCollectionManager hybridCollectionManager;
+
+    @Autowired(required = false)
+    private KnowledgeSectionStore sectionStore;
     
     /**
      * 同步飞书文档到知识库 - 使用乐观锁处理并发
@@ -65,6 +68,7 @@ public class KnowledgeService {
                 KnowledgeDocument document = existingDoc != null ? existingDoc : new KnowledgeDocument();
                 List<String> previousVectorIds = existingDoc != null && existingDoc.getVectorIds() != null
                         ? new ArrayList<>(existingDoc.getVectorIds()) : List.of();
+                String previousIngestionVersion = existingDoc == null ? null : existingDoc.getActiveIngestionVersion();
 
                 // 设置文档属性
                 document.setFeishuDocToken(docToken);
@@ -97,6 +101,8 @@ public class KnowledgeService {
                 if (!previousVectorIds.isEmpty()) {
                     removeVectorsBestEffort(previousVectorIds);
                 }
+                cleanupPreviousVersionBestEffort(document.getDocumentId(), previousIngestionVersion,
+                        ingestion.ingestionVersion());
 
                 log.info("飞书文档同步完成, documentId: {}, titleLength: {}, chunks: {}",
                         document.getDocumentId(), title == null ? 0 : title.length(), ingestion.chunkCount());
@@ -179,6 +185,30 @@ public class KnowledgeService {
         document.setActiveIngestionVersion(ingestion.ingestionVersion());
         document.setChunkingStrategyVersion(knowledgeConfig.getChunk().getStrategyVersion());
     }
+
+    /**
+     * 启动回填使用与新增、同步、重新启用相同的 Parent/Child 写入与发布顺序。
+     */
+    public void reingestForBackfill(KnowledgeDocument document) {
+        if (document == null || document.getDocumentId() == null || document.getDocumentId().isBlank()) {
+            throw new IllegalArgumentException("知识文档及 documentId 不能为空");
+        }
+        List<String> previousVectorIds = document.getVectorIds() == null ? List.of()
+                : new ArrayList<>(document.getVectorIds());
+        String previousIngestionVersion = document.getActiveIngestionVersion();
+        KnowledgeIngestionService.IngestionResult ingestion = ingestionService.ingest(document);
+        try {
+            applyIngestionResult(document, ingestion);
+            document.setUpdateTime(LocalDateTime.now());
+            mongoTemplate.save(document);
+            removeVectorsBestEffort(previousVectorIds);
+            cleanupPreviousVersionBestEffort(document.getDocumentId(), previousIngestionVersion,
+                    ingestion.ingestionVersion());
+        } catch (RuntimeException exception) {
+            ingestionService.rollback(ingestion);
+            throw exception;
+        }
+    }
     
     /**
      * 根据飞书文档Token查找
@@ -238,6 +268,7 @@ public class KnowledgeService {
             // 阶段1: 标记为删除中 - 防止重复删除
             Update markDelete = new Update()
                     .set("deleteStatus", "DELETING")
+                    .set("enabled", false)
                     .set("deleteTimestamp", LocalDateTime.now());
             mongoTemplate.updateFirst(query, markDelete, KnowledgeDocument.class);
             log.debug("已标记文档为删除中, id: {}", documentId);
@@ -246,6 +277,7 @@ public class KnowledgeService {
             if (document.getVectorIds() != null && !document.getVectorIds().isEmpty()) {
                 deleteVectorsWithRetry(document.getVectorIds(), documentId);
             }
+            deleteHierarchyData(documentId);
 
             // 阶段3: 删除MongoDB记录
             mongoTemplate.remove(query, KnowledgeDocument.class);
@@ -344,7 +376,7 @@ public class KnowledgeService {
         if (document.getVectorIds() != null && !document.getVectorIds().isEmpty()) {
             deleteVectorsWithRetry(document.getVectorIds(), documentId);
         }
-        if (hybridCollectionManager != null) hybridCollectionManager.deleteDocument(documentId);
+        deleteHierarchyData(documentId);
         document.setVectorIds(List.of());
         document.setChunkCount(0);
         document.setUpdateTime(LocalDateTime.now());
@@ -364,6 +396,7 @@ public class KnowledgeService {
 
         List<String> previousVectorIds = document.getVectorIds() == null ? List.of()
                 : new ArrayList<>(document.getVectorIds());
+        String previousIngestionVersion = document.getActiveIngestionVersion();
         KnowledgeIngestionService.IngestionResult ingestion = ingestionService.ingest(document);
         try {
             applyIngestionResult(document, ingestion);
@@ -372,10 +405,37 @@ public class KnowledgeService {
             document.setUpdateTime(LocalDateTime.now());
             mongoTemplate.save(document);
             removeVectorsBestEffort(previousVectorIds);
+            cleanupPreviousVersionBestEffort(documentId, previousIngestionVersion, ingestion.ingestionVersion());
             log.info("知识文档已重新启用, id: {}, chunks: {}", documentId, ingestion.chunkCount());
         } catch (RuntimeException exception) {
             ingestionService.rollback(ingestion);
             throw exception;
+        }
+    }
+
+    private void deleteHierarchyData(String documentId) {
+        if (sectionStore != null) sectionStore.deleteDocument(documentId);
+        if (hybridCollectionManager != null) hybridCollectionManager.deleteDocument(documentId);
+    }
+
+    /** 发布已完成后才清旧版本；失败不撤销新活动版本，后续可安全重试。 */
+    private void cleanupPreviousVersionBestEffort(String documentId, String previousVersion, String activeVersion) {
+        if (previousVersion == null || previousVersion.isBlank() || previousVersion.equals(activeVersion)) return;
+        if (sectionStore != null) {
+            try {
+                sectionStore.deleteVersion(documentId, previousVersion);
+            } catch (RuntimeException exception) {
+                log.error("旧 Parent Section 清理失败，可后续重试, documentId: {}, version: {}", documentId,
+                        previousVersion, exception);
+            }
+        }
+        if (hybridCollectionManager != null) {
+            try {
+                hybridCollectionManager.deleteDocumentVersion(documentId, previousVersion);
+            } catch (RuntimeException exception) {
+                log.error("旧 Hybrid Child 清理失败，可后续重试, documentId: {}, version: {}", documentId,
+                        previousVersion, exception);
+            }
         }
     }
 }
