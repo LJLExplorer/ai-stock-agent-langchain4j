@@ -391,15 +391,16 @@
 
 ### Task 12: 更新配置、文档并完成 API 回归验证
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `mvn -q -Dtest=RagControllerTest test`（2026-09-04）：FAIL（1 failure）；`applicationConfigurationExplicitlyEnablesHierarchicalRetrievalDefaults` 期望 `milvus.hybrid-collection-name=stock_analysis_knowledge_hybrid_v2`，实际为旧值 `stock_analysis_knowledge_hybrid`，证明活动配置尚未显式切换新版 collection，符合预期。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `mvn -q -Dtest=RagControllerTest test`（2026-09-04）：PASS（3 tests）；验证真实公开端点 `POST /api/rag/search` 保持 `content`、`similarity`、`documentId`、`title` 字段并序列化 Parent/窗口扩展字段，且 `EMPTY_QUERY`/`INVALID_TOP_K` 行为不变；同时验证安全 YAML 模板显式包含 v2 collection、层级分块阈值和 candidate multiplier 3。`mvn -q -Dtest=HierarchicalDocumentChunkerTest,KnowledgeSectionStoreTest,ParentContextAssemblerTest,MilvusHybridCollectionManagerTest,MilvusHybridSearchResultTest,KnowledgeIngestionServiceTest,HybridKnowledgeBackfillTest,KnowledgeServiceTest,RetrievalServiceTest,RagControllerTest test`：PASS。`mvn -q test`：PASS。`git diff --check`：PASS（无输出）。
 
 **涉及文件：**
 
 - Modify: `src/main/resources/application.yml`
+- Modify: `src/main/resources/application.example.yml`（安全的可提交配置模板；本地 `application.yml` 保持忽略，避免提交凭据）
 - Modify: `README.md`
 - Create: `src/test/java/com/ljl/ai/controller/RagControllerTest.java`
 

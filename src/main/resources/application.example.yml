@@ -28,7 +28,7 @@ milvus:
   host: ${MILVUS_HOST:localhost}
   port: ${MILVUS_PORT:19530}
   collection-name: ${MILVUS_COLLECTION_NAME:kefu_knowledge_base}
-  hybrid-collection-name: ${MILVUS_HYBRID_COLLECTION_NAME:stock_analysis_knowledge_hybrid}
+  hybrid-collection-name: stock_analysis_knowledge_hybrid_v2
   dimension: ${MILVUS_DIMENSION:1024}
   hybrid-search-fallback-enabled: ${MILVUS_HYBRID_SEARCH_FALLBACK_ENABLED:true}
 
@@ -50,11 +50,19 @@ prediction:
 
 knowledge:
   chunk:
-    size: ${KNOWLEDGE_CHUNK_SIZE:500}
-    overlap: ${KNOWLEDGE_CHUNK_OVERLAP:50}
+    min-size: 600
+    target-size: 700
+    max-size: 800
+    min-overlap: 80
+    max-overlap: 120
+    short-parent-threshold: 1200
+    summary-min-size: 400
+    summary-max-size: 600
+    strategy-version: hierarchical-v1
   retrieval:
     top-k: ${KNOWLEDGE_RETRIEVAL_TOP_K:5}
     min-score: ${KNOWLEDGE_RETRIEVAL_MIN_SCORE:0.7}
+    candidate-multiplier: 3
 
 memory:
   short-term:

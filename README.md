@@ -133,17 +133,18 @@ flowchart TD
 
 ## 混合 RAG
 
-知识文档写入时同时保存 MongoDB 元数据与 Milvus 向量：
+知识文档写入时先按标题层级构建 Parent Section，再同时保存 MongoDB Parent 元数据与 Milvus Child 向量：
 
-1. 文本分块并生成 Dense Embedding。
-2. Milvus Function 从 `content` 生成 BM25 Sparse Vector。
-3. 查询时构造 COSINE Dense ANN 与 BM25 两路请求。
-4. `RRFRanker` 融合两路排名。
-5. 使用带 `minScore` 的 Dense 检索再次校验融合候选，过滤“只有排名、语义不相关”的结果。
-6. 根据 MongoDB 状态过滤已禁用和删除中的文档。
-7. Hybrid 客户端失败且允许降级时，回退到单路 Dense 检索；关闭降级开关则直接暴露故障。
+1. 标题/章节、中文段落、中文句子、字符兜底四级切分；Child 目标 600～800 字符，Overlap 80～120 字符，且绝不跨 Parent。
+2. 每个 Child 继承完整 `headingPath`、`stockCode`、`year`、`tags` 和 ingestion version；仅 Child 生成 Dense Embedding，并由 Milvus Function 从 `content` 生成 BM25 Sparse Vector。
+3. Parent 全文、字符区间、摘要和 Child 索引持久化到 `knowledge_sections`；超过 1200 字符的 Parent 使用“标题路径 + 首个有效段落 + 财务关键句”的确定性抽取式摘要（400～600 字符），不调用 LLM，也不参与 Embedding。
+4. 查询时构造 COSINE Dense ANN 与 BM25 两路请求，`RRFRanker` 融合；Child 候选池默认是最终 Top-K 的 3 倍，再使用带 `minScore` 的 Dense 检索校验。
+5. 命中 Child 后仅在同一 Parent 内补充前后各一个 Child；重叠窗口按 `chunkIndex` 与原文区间合并去重。短 Parent（≤1200 字符）只返回一次全文，长 Parent 返回完整标题路径、Parent 摘要和合并后的 Child 窗口。
+6. 根据 MongoDB 当前活动 ingestion version 过滤已禁用、删除或旧版本 Child。新 Parent/Child 全部写入成功后才发布活动版本；发布后异步最佳努力清理旧版本。Hybrid 客户端失败且允许降级时，回退到单路 Dense 检索；关闭降级开关则直接暴露故障。
 
-`KnowledgeService` 对跨 MongoDB/Milvus 写入采用补偿思路：写元数据失败时清理已写向量；删除时先标记状态，再重试删除向量，最后移除元数据。它降低了双写不一致概率，但不是跨数据库 ACID 事务。
+`KnowledgeService` 对跨 MongoDB/Milvus 写入采用版本化补偿思路：新版本写入或发布失败时清理本版本 Parent 和向量；禁用/删除先关闭可见性，再清理 Parent 与两套 Child 向量。它降低了双写不一致概率，但不是跨数据库 ACID 事务。
+
+提交的默认配置模板使用 `stock_analysis_knowledge_hybrid_v2`，并在 `knowledge.chunk` 显式声明 `600/700/800`、`80/120`、短 Parent 阈值 `1200`、摘要预算 `400/600` 和 `hierarchical-v1`；`knowledge.retrieval.candidate-multiplier=3` 对应检索候选池规则。
 
 ## 分层记忆
 
@@ -321,11 +322,11 @@ src/main/java/com/ljl/ai/
 ├── client/         # 新闻、外部服务客户端
 ├── config/         # 模型、Redis、Milvus、记忆与工具配置
 ├── controller/     # REST API 与异常映射
-├── knowledge/      # 文档分块、双写、状态与补偿
+├── knowledge/      # 标题层级分块、Parent 持久化、版本发布与补偿
 ├── memory/         # Redis 消息窗口与递归摘要
 ├── observability/  # 模型调用 Trace 与隐私开关
 ├── planner/        # 候选计划解析、校验与任务枚举
-├── rag/            # Hybrid Search、语义复核与 RAG Pipeline
+├── rag/            # Child Hybrid Search、Parent 窗口组装、语义复核与 RAG Pipeline
 ├── service/        # 对话编排、长期记忆、业务消息
 ├── tools/          # 七个业务 Tool
 └── workflow/       # StateGraph、执行状态、Reflector/Critic
@@ -355,6 +356,8 @@ compose.yaml        # 本地基础设施
 - 会话锁是单 JVM 内锁，多实例部署需要分布式并发控制。
 - 执行状态不是节点级 Checkpoint，不保证 Exactly-once。
 - MongoDB 与 Milvus 间使用补偿而非 ACID 事务，极端失败仍需要后台对账/修复任务。
+- Parent/Child 的版本发布保证检索只读取活动版本，但旧版本清理是最佳努力操作；需要保留并监控可重试清理任务。
+- 抽取式 Parent 摘要不调用 LLM，成本与回填稳定性更可控，但不会替代人工对财务表格、扫描件或复杂版式的校验。
 - 长期记忆在应用层按用户过滤；严格多租户应增加认证主体与存储层过滤。
 - 外部模型、新闻、飞书和预测服务的可用性与配额不由本仓库保证。
 - Compose 面向本地开发，不是生产高可用部署方案。
