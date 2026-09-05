@@ -9,6 +9,7 @@ import java.time.LocalDate;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ExecutionTaskTest {
@@ -63,6 +64,17 @@ class ExecutionTaskTest {
         task.complete("第二次行情", List.of(first, second));
 
         assertEquals(List.of(first, second), task.getEvidence());
+    }
+
+    @Test
+    void restoredFailedAttemptShouldHonorRetryLimit() {
+        ExecutionTask task = ExecutionTask.pending("news", StockAnalysisTask.NEWS_ANALYSIS);
+
+        task.restoreFailure(2, "provider failed");
+
+        assertEquals(TaskStatus.FAILED, task.getStatus());
+        assertEquals(2, task.getAttempts());
+        assertFalse(new WorkflowRetryPolicy(2).canRetry(task));
     }
 
     private FinancialFact marketFact(String metric, String value) {

@@ -17,3 +17,4 @@
 - 新增确定性 `EvidencePackBuilder`，将行情数值、技术/财务文本与新闻来源映射为 `FinancialFact`，按稳定 evidenceId 分类去重并生成 evidenceHash；未来事实不可引用，未知时点和工具失败进入缺失说明，任务节点同步刷新执行状态证据包。
 - 工作流改为逐节点 CAS Checkpoint：每个节点成功后立即更新 lastCompletedNode 并保存，保存失败即停止推进，CRITIC 路由也在返回前落盘；恢复前校验固定 graphVersion 与规范化 planHash，不兼容时返回稳定 `INCOMPATIBLE_CHECKPOINT`。
 - 新增工具幂等记录与 Mongo 条件更新 Store，使用 `executionId:taskId:attempt` 唯一键，只允许 STARTED 进入 SUCCEEDED/FAILED；成功时原始结果和证据原子保存，重复相同完成可复用，冲突写入不会覆盖成功记录。
+- 任务节点接入工具幂等 Store：执行前查询 attempt，SUCCEEDED 直接恢复且不再次调用工具，四类显式只读工具可从遗留 STARTED 使用下一 attempt 重试，FAILED 遵循上限；只有成功记录持久化后任务才进入 COMPLETED。

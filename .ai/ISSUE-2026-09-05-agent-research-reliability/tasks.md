@@ -361,11 +361,11 @@
 
 ### Task 9: 将工具幂等接入任务节点
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=StockAnalysisTaskNodeTest,ExecutionTaskTest test'` 失败；测试编译阶段报告节点缺少 ToolExecutionStore 构造入口、ExecutionTask 缺少恢复 attempt 方法，与预期一致。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=StockAnalysisTaskNodeTest,ExecutionTaskTest test'` 通过（12 tests）；验证成功记录零调用恢复、STARTED 只读工具使用下一 attempt、失败重试上限、原始结果/证据一致恢复及完成记录失败不误标完成。
 
 **涉及文件：**
 - Modify: `src/main/java/com/ljl/ai/workflow/StockAnalysisTaskNode.java`

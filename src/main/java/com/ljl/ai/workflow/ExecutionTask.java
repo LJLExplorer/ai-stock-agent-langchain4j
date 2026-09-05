@@ -92,6 +92,38 @@ public class ExecutionTask {
         }
     }
 
+    public void restoreSuccess(int completedAttempt, String taskResult, List<FinancialFact> restoredEvidence) {
+        if (completedAttempt < 1) {
+            throw new IllegalArgumentException("恢复 attempt 必须大于0");
+        }
+        attempts = Math.max(attempts, completedAttempt);
+        status = TaskStatus.COMPLETED;
+        result = taskResult;
+        if (resultHistory == null) {
+            resultHistory = new ArrayList<>();
+        }
+        if (taskResult != null && !taskResult.isBlank() && !resultHistory.contains(taskResult)) {
+            resultHistory.add(taskResult);
+        }
+        appendEvidence(restoredEvidence);
+        completedAt = LocalDateTime.now();
+        errorMessage = null;
+    }
+
+    public void restoreFailure(int failedAttempt, String reason) {
+        if (failedAttempt < 1) {
+            throw new IllegalArgumentException("恢复 attempt 必须大于0");
+        }
+        attempts = Math.max(attempts, failedAttempt);
+        status = TaskStatus.FAILED;
+        errorMessage = reason;
+    }
+
+    public void prepareRetryAfterRecordedAttempt(int recordedAttempt, String reason) {
+        restoreFailure(recordedAttempt, reason);
+        retry(reason);
+    }
+
     public void fail(String reason) {
         if (status != TaskStatus.RUNNING && status != TaskStatus.RETRYING) {
             throw new IllegalStateException("任务无法失败: " + status);

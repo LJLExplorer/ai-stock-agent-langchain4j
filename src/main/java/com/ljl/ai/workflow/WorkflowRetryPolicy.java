@@ -22,6 +22,10 @@ public class WorkflowRetryPolicy {
         return task != null && task.getAttempts() < maxAttempts;
     }
 
+    public boolean canRetryAttempt(int attempts) {
+        return attempts < maxAttempts;
+    }
+
     public int maxAttempts() {
         return maxAttempts;
     }
