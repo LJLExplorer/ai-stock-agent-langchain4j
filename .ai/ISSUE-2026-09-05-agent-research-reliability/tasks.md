@@ -27,11 +27,11 @@
 
 ### Task 1: 建立 AnalysisContext 与请求兼容边界
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=AnalysisContextResolverTest test'` 失败；测试编译阶段报告 `AnalysisContextResolver` 不存在，与预期缺少新领域类型一致。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=AnalysisContextResolverTest test'` 通过（3 tests）；验证旧请求缺省值、显式日期/深度模式与未来日期拒绝。
 
 **涉及文件：**
 - Create: `src/main/java/com/ljl/ai/research/AnalysisContext.java`
@@ -68,11 +68,11 @@
 
 ### Task 2: 建立金融事实与证据包领域模型
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=FinancialFactTest,ExecutionTaskTest test'` 失败；测试编译阶段报告 `FinancialFact` 不存在，与预期缺少事实模型和任务证据接口一致。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=FinancialFactTest,ExecutionTaskTest test'` 通过（6 tests）；验证稳定 evidenceId、嵌套集合不可变及成功重试证据追加去重。
 
 **涉及文件：**
 - Create: `src/main/java/com/ljl/ai/research/FinancialFact.java`
@@ -110,11 +110,11 @@
 
 ### Task 3: 为数据客户端增加 point-in-time 过滤
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=PointInTimeDataContractTest,NewsSearchClientTest test'` 失败；报告缺少 `filterBarsAsOf`、`FinancialSnapshot/selectSnapshotAsOf` 和新闻时间过滤/状态接口，与预期一致。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=PointInTimeDataContractTest,NewsSearchClientTest test'` 通过（5 tests）；验证日 K 截止、财报按披露日选择、未来新闻剔除及未知时间显式标记。
 
 **涉及文件：**
 - Modify: `src/main/java/com/ljl/ai/client/MarketDataClient.java`
@@ -153,11 +153,11 @@
 
 ### Task 4: 让行情与技术工具消费 AnalysisContext
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** 修正测试中 `@Tool.value()` 为数组的断言后，`zsh -ic 'jdk21 && mvn -q -Dtest=MarketDataToolTest,StockAnalysisTaskExecutorTest test'` 失败；仅报告缺少 `getQuote(symbol, AnalysisContext)`、技术分析上下文重载及 Executor 上下文入口，与预期一致。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=MarketDataToolTest,StockAnalysisTaskExecutorTest test'` 通过（7 tests）；验证历史行情走截止日 K 线、上下文同实例传递、技术结果包含截止日且工具描述只声明真实计算指标。
 
 **涉及文件：**
 - Modify: `src/main/java/com/ljl/ai/tools/MarketDataTool.java`
@@ -195,11 +195,11 @@
 
 ### Task 5: 让财务与新闻工具消费 AnalysisContext
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=FinancialAnalysisToolTest,StockAnalysisTaskExecutorTest test'` 失败；测试编译阶段仅报告财务/新闻工具缺少 `AnalysisContext` 重载，与预期一致。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=FinancialAnalysisToolTest,StockAnalysisTaskExecutorTest test'` 通过（7 tests）；验证财报披露/来源/时点状态输出、无历史数据不回退，以及新闻保留 URL/source/publishedAt/temporalStatus。
 
 **涉及文件：**
 - Modify: `src/main/java/com/ljl/ai/tools/FinancialAnalysisTool.java`
@@ -237,11 +237,11 @@
 
 ### Task 6: 将工具结果映射并组装为 EvidencePack
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=EvidencePackBuilderTest,StockAnalysisTaskNodeTest test'` 失败；测试编译阶段报告 `EvidencePackBuilder` 不存在，与预期缺少映射器及执行状态证据包接口一致。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=EvidencePackBuilderTest,StockAnalysisTaskNodeTest test'` 通过（6 tests）；验证真实字段映射、分类、去重、未来事实排除、稳定 evidenceHash、缺失/失败记录及节点刷新 EvidencePack。
 
 **涉及文件：**
 - Create: `src/main/java/com/ljl/ai/research/EvidencePackBuilder.java`
@@ -279,11 +279,11 @@
 
 ### Task 7: 实现逐节点 Checkpoint 与图版本保护
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=StockAnalysisWorkflowTest,WorkflowRunnerTest test'` 失败；测试编译阶段报告缺少 CheckpointCallback、逐节点 run 重载、graphVersion/planHash/lastCompletedNode 和 checkpointCompleted，与预期一致。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=StockAnalysisWorkflowTest,WorkflowRunnerTest test'` 通过（10 tests）；验证 INIT 先保存再执行任务、逐节点与 CRITIC 路由检查点、CAS 冲突停止推进，以及 graphVersion/planHash 不兼容拒绝恢复。
 
 **涉及文件：**
 - Modify: `src/main/java/com/ljl/ai/workflow/ExecutionState.java`
@@ -321,11 +321,11 @@
 
 ### Task 8: 建立工具执行幂等存储
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=MongoToolExecutionStoreTest test'` 失败；测试编译阶段报告 `ToolExecutionRecord` 与 `MongoToolExecutionStore` 不存在，与预期一致。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=MongoToolExecutionStoreTest test'` 通过（4 tests）；验证复合幂等键、STARTED 条件迁移、结果/证据快照、重复成功幂等及成功记录冲突保护。
 
 **涉及文件：**
 - Create: `src/main/java/com/ljl/ai/workflow/ToolExecutionRecord.java`
@@ -361,11 +361,11 @@
 
 ### Task 9: 将工具幂等接入任务节点
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=StockAnalysisTaskNodeTest,ExecutionTaskTest test'` 失败；测试编译阶段报告节点缺少 ToolExecutionStore 构造入口、ExecutionTask 缺少恢复 attempt 方法，与预期一致。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=StockAnalysisTaskNodeTest,ExecutionTaskTest test'` 通过（12 tests）；验证成功记录零调用恢复、STARTED 只读工具使用下一 attempt、失败重试上限、原始结果/证据一致恢复及完成记录失败不误标完成。
 
 **涉及文件：**
 - Modify: `src/main/java/com/ljl/ai/workflow/StockAnalysisTaskNode.java`
@@ -403,11 +403,11 @@
 
 ### Task 10: 建立类型化 RunEvent 发布器
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=InMemoryRunEventPublisherTest test'` 失败；测试编译阶段报告 `RunEvent`、`RunEventPublisher` 与 `InMemoryRunEventPublisher` 不存在，与预期缺少类型化事件发布能力一致。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=InMemoryRunEventPublisherTest test'` 通过（3 tests）；验证 executionId 独立连续序号、每次执行的有界回放、取消订阅后继续发布，以及事件结构不暴露 Prompt/响应正文且摘要长度受限。
 
 **涉及文件：**
 - Create: `src/main/java/com/ljl/ai/observability/RunEvent.java`
@@ -444,11 +444,11 @@
 
 ### Task 11: 在工作流和工具节点发布 RunEvent
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=WorkflowRunnerTest,StockAnalysisTaskNodeTest test'` 失败；测试编译阶段报告 `WorkflowRunner`、`StockAnalysisWorkflow` 和 `StockAnalysisTaskNode` 均缺少发布器注入构造入口，与预期执行链尚未发布 RunEvent 一致。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=WorkflowRunnerTest,StockAnalysisTaskNodeTest test'` 通过（13 tests）；验证 PLAN/NODE/TOOL/终态事件及连续序号，检查点失败时不发布 NODE_COMPLETED 但保留 WORKFLOW_FAILED，工具成功、业务失败和异常事件均只含受控元数据且 eventSequence 回写执行状态。
 
 **涉及文件：**
 - Modify: `src/main/java/com/ljl/ai/workflow/WorkflowRunner.java`
@@ -486,11 +486,11 @@
 
 ### Task 12: 支持预分配 executionId 的异步深度研究
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=ResearchExecutionServiceTest,ChatServiceWorkflowTest test'` 失败；测试编译阶段报告 `ResearchExecutionResponse` 不存在，与预期缺少异步启动契约和服务一致。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=ResearchExecutionServiceTest,ChatServiceWorkflowTest test'` 通过（9 tests）；验证异步入口预分配 executionId/sessionId、仅接受 DEEP、ChatService 复用指定 executionId、有界队列稳定拒绝、线程池关闭，以及后台异常以脱敏终态事件和同步 eventSequence 的 FAILED 状态落盘。
 
 **涉及文件：**
 - Create: `src/main/java/com/ljl/ai/service/ResearchExecutionService.java`
@@ -528,11 +528,11 @@
 
 ### Task 13: 提供执行状态与 SSE 接口
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=ResearchExecutionControllerTest,InMemoryRunEventPublisherTest test'` 失败；测试编译阶段报告缺少 `ResearchExecutionController`、`findOwned` 和 `subscribeAfter`，与预期尚无状态/SSE 适配及所有权查询一致。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=ResearchExecutionControllerTest,InMemoryRunEventPublisherTest test'` 通过（8 tests）；验证 POST 返回 202 与预分配句柄、状态仅对 execution 所属 userId 可见、SSE 按序回放并在终态完成，以及基于 cursor 的原子补发、去重和取消订阅。
 
 **涉及文件：**
 - Create: `src/main/java/com/ljl/ai/controller/ResearchExecutionController.java`
@@ -570,11 +570,11 @@
 
 ### Task 14: 建立 Claim–Evidence 校验并接入答案生成
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=ClaimEvidenceGuardTest,WorkflowAnswerGeneratorTest test'` 失败；测试编译阶段报告 `ClaimEvidenceGuard` 不存在，与预期缺少证据门禁及生成链路接入一致。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=ClaimEvidenceGuardTest,WorkflowAnswerGeneratorTest test'` 通过（10 tests）；验证当前 EvidencePack 合法引用、未知/跨包 ID 拒绝、无引用数值拒绝、晚于 dataAsOf 日期拒绝，以及证据校验后独立执行 Markdown Guard、一次重写和确定性降级。
 
 **涉及文件：**
 - Create: `src/main/java/com/ljl/ai/research/ClaimEvidenceGuard.java`
@@ -612,11 +612,11 @@
 
 ### Task 15: 定义深度投研角色与结构化结论
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=DeepResearchServiceTest,DeepResearchAssistantContractTest test'` 失败；测试编译阶段报告 `DeepResearchAssistant` 不存在，与预期缺少固定角色契约、结构化结论和编排服务一致。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=DeepResearchServiceTest,DeepResearchAssistantContractTest test'` 通过（6 tests）；验证六角色固定顺序且各调用一次、共享同一预算证据、契约无工具/无 MemoryId、Judge JSON 解析、结论字段边界、跨包 evidenceId 拒绝、单角色失败继续及 Judge 失败确定性降级。
 
 **涉及文件：**
 - Create: `src/main/java/com/ljl/ai/research/ResearchConclusion.java`
@@ -654,14 +654,16 @@
 
 ### Task 16: 将深度投研分支接入工作流
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=StockAnalysisWorkflowTest,WorkflowAnswerGeneratorTest test'` 失败；测试编译阶段报告 `StockAnalysisWorkflow` 缺少深度投研服务构造入口，`ExecutionState` 缺少 `ResearchConclusion` 读写方法，与预期尚未接入深度投研分支和结构化结论状态一致。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=StockAnalysisWorkflowTest,WorkflowAnswerGeneratorTest test'` 通过（16 tests）；额外执行 `DeepResearchServiceTest,DeepResearchAssistantContractTest,AgentConfigToolSelectionTest` 通过，验证 STANDARD/DEEP 条件路由、深度节点 checkpoint 与事件、结构化结论确定性呈现、Judge 失败回退标准答案链路，以及深度 Assistant 不挂载工具和会话记忆。
 
 **涉及文件：**
 - Modify: `src/main/java/com/ljl/ai/agent/AgentConfig.java`
+- Modify: `src/main/java/com/ljl/ai/research/DeepResearchService.java`
+- Modify: `src/main/java/com/ljl/ai/workflow/ExecutionState.java`
 - Modify: `src/main/java/com/ljl/ai/workflow/StockAnalysisWorkflow.java`
 - Modify: `src/main/java/com/ljl/ai/workflow/WorkflowAnswerGenerator.java`
 - Test: `src/test/java/com/ljl/ai/workflow/StockAnalysisWorkflowTest.java`
@@ -696,11 +698,11 @@
 
 ### Task 17: 建立研究决策与后验复盘服务
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=ResearchDecisionServiceTest,DecisionReviewServiceTest test'` 失败；测试编译阶段报告 `ResearchDecision`（以及依赖它的决策保存、复盘服务）不存在，与预期尚无独立投研决策模型和后验收益闭环一致。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=ResearchDecisionServiceTest,DecisionReviewServiceTest test'` 通过（7 tests）；验证 executionId 幂等保存、userId/symbol/状态/可见时间联合隔离、1/5/20 交易日 BigDecimal 收益、相对沪深 300 ETF 基准收益、未到期跳过、基准缺失降级、重复复盘不重写，以及历史 analysisDate 不召回未来 outcome。
 
 **涉及文件：**
 - Create: `src/main/java/com/ljl/ai/research/ResearchDecision.java`
@@ -738,16 +740,17 @@
 
 ### Task 18: 将决策复盘接入对话与深度研究
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=ChatServiceWorkflowTest,DeepResearchServiceTest test'` 失败；测试编译阶段报告缺少带 ChatRequest 的执行状态构建入口、ExecutionState 决策复盘字段、业务消息后决策保存入口，以及 DeepResearchService 的复盘输入重载，与预期主链路尚未接入一致。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=ChatServiceWorkflowTest,DeepResearchServiceTest test'` 通过（14 tests）；验证请求的 DEEP/analysisDate 进入 ExecutionState、复盘刷新失败不阻断主链路、只注入同用户同标的且在分析时点已可见的完成复盘、STANDARD 不保存评级、助手业务消息未保存时不写决策，以及决策持久化失败 best-effort 降级。整库 `zsh -ic 'jdk21 && mvn -q test'` 通过（247 tests，0 failures/errors/skipped）。
 
 **涉及文件：**
 - Modify: `src/main/java/com/ljl/ai/service/ChatService.java`
 - Modify: `src/main/java/com/ljl/ai/research/DeepResearchService.java`
 - Modify: `src/main/java/com/ljl/ai/workflow/ExecutionState.java`
+- Modify: `src/main/java/com/ljl/ai/workflow/StockAnalysisWorkflow.java`
 - Test: `src/test/java/com/ljl/ai/service/ChatServiceWorkflowTest.java`
 - Test: `src/test/java/com/ljl/ai/research/DeepResearchServiceTest.java`
 
@@ -780,11 +783,11 @@
 
 ### Task 19: 建立离线 Agent Eval 与基线报告
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=AgentEvalRunnerTest test'` 失败；测试编译阶段报告 `AgentEvalRunner` 不存在，与预期缺少离线样本加载、统一指标计算及稳定报告能力一致。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=AgentEvalRunnerTest test'` 通过（3 tests）；固定 5 样本基线为 accuracy=1.0、Recall@3=1.0、nDCG@3=0.9197207891481876、引用覆盖=1.0、数字一致性=1.0、平均延迟=30.0ms、总调用数=3，并验证零样本、重复 caseId、非法期望与非法观测显式失败，默认评测零网络/模型调用。
 
 **涉及文件：**
 - Create: `src/test/java/com/ljl/ai/eval/AgentEvalRunner.java`
@@ -821,11 +824,11 @@
 
 ### Task 20: 建立前端深度投研 API 与事件客户端
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `cd frontend && npm test` 失败并报告 `Missing script: "test"`；同时新增测试导入尚不存在的 `researchExecution.js`，与预期缺少 Node 测试入口和深度投研事件客户端一致。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `cd frontend && npm test && npm run build` 通过；Node 内置 runner 共 5 tests 全部通过，Vite 生产构建成功（2063 modules transformed）。验证 POST 异步启动与 executionId 校验、owner-filtered 状态读取、受控 RunEvent 解析、命名 SSE 终态关闭，以及断线关闭旧 EventSource 后的一次状态补偿。
 
 **涉及文件：**
 - Modify: `frontend/package.json`
@@ -861,15 +864,16 @@
 
 ### Task 21: 在前端突出深度投研模式与运行进度
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `cd frontend && npm test` 失败；Node ESM 报告 `researchExecution.js` 未导出 `applyStatusCompensation`（同组 UI 状态映射函数亦尚不存在），与预期缺少模式分流、阶段时间线、断线补偿和终态映射一致。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `cd frontend && npm test && npm run build` 通过；Node 内置 runner 共 9 tests 全部通过，Vite 生产构建成功（2064 modules transformed）。验证标准/深度模式请求分流、四阶段 RunEvent 时间线、受控重试与数据缺失提示、断线状态补偿、手动重连、终态结果映射，以及 SSE 在终态后断开不被误判为连接失败。
 
 **涉及文件：**
 - Modify: `frontend/src/App.jsx`
 - Modify: `frontend/src/styles.css`
+- Modify: `frontend/src/researchExecution.js`
 - Modify: `frontend/src/researchExecution.test.js`
 
 **步骤 0：开始任务前更新状态**
@@ -901,11 +905,11 @@
 
 ### Task 22: 更新 README、面试材料并完成全量验证
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `rg -n '^## 可靠 Agent 运行时与金融证据闭环$' README.md` 退出码为 1 且无匹配；当前 README 尚缺少用一级独立章节系统展示节点恢复、EvidencePack、point-in-time、Claim–Evidence、事件流、决策复盘、双模式与 Agent Eval，与预期 RED 一致。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `rg -n '^## 可靠 Agent 运行时与金融证据闭环$' README.md` 唯一命中第 31 行；`zsh -ic 'jdk21 && mvn -q test'` 通过（250 tests，0 failures/errors/skipped），`ResearchExecutionControllerTest` 单独通过（4 tests）；`cd frontend && npm test && npm run build` 通过（9 tests，2064 modules transformed）；`git diff --check` 通过，`git diff -- src/main/resources/application.yml` 无输出。
 
 **涉及文件：**
 - Modify: `README.md`

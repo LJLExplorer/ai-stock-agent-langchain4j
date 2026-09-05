@@ -19,6 +19,11 @@ import com.ljl.ai.model.entity.*;
 import com.ljl.ai.planner.AgentPlan;
 import com.ljl.ai.planner.PlanValidator;
 import com.ljl.ai.planner.PlannerTextParser;
+import com.ljl.ai.research.AnalysisContext;
+import com.ljl.ai.research.AnalysisContextResolver;
+import com.ljl.ai.research.DecisionReviewService;
+import com.ljl.ai.research.ResearchConclusion;
+import com.ljl.ai.research.ResearchDecisionService;
 import com.ljl.ai.workflow.ExecutionState;
 import com.ljl.ai.workflow.ExecutionTask;
 import com.ljl.ai.workflow.WorkflowRunner;
@@ -119,7 +124,20 @@ public class ChatService {
     @Resource
     private RagTraceService ragTraceService;
 
+    @Resource
+    private AnalysisContextResolver analysisContextResolver;
+
+    @Resource
+    private DecisionReviewService decisionReviewService;
+
+    @Resource
+    private ResearchDecisionService researchDecisionService;
+
     public ChatResponse chat(ChatRequest request) {
+        return chat(request, null);
+    }
+
+    ChatResponse chat(ChatRequest request, String preallocatedExecutionId) {
         String previousTraceId = MDC.get("traceId");
         String traceId = UUID.randomUUID().toString();
         MDC.put("traceId", traceId);
@@ -128,13 +146,13 @@ public class ChatService {
                 request.getMessage() == null ? 0 : request.getMessage().length());
         try {
             if (StringUtils.isBlank(request.getSessionId())) {
-                return chatInternal(request);
+                return chatInternal(request, preallocatedExecutionId);
             }
             String lockKey = request.getSessionId();
             SessionLock lock = acquireSessionLock(lockKey);
             try {
                 synchronized (lock) {
-                    return chatInternal(request);
+                    return chatInternal(request, preallocatedExecutionId);
                 }
             } finally {
                 releaseSessionLock(lockKey, lock);
@@ -177,7 +195,7 @@ public class ChatService {
         return chatMemoryService.createSession(userId.trim(), StringUtils.trimToNull(orderId));
     }
 
-    private ChatResponse chatInternal(ChatRequest request) {
+    private ChatResponse chatInternal(ChatRequest request, String preallocatedExecutionId) {
         log.info("处理对话请求, userId: {}, sessionId: {}", request.getUserId(), request.getSessionId());
         String activeSessionId = request.getSessionId();
         String activeModelMemoryId = null;
@@ -247,6 +265,7 @@ public class ChatService {
 
             String aiResponse;
             String workflowAnswer = null;
+            ExecutionState completedExecution = null;
             StockAnalysisAssistant assistant = stockAnalysisAssistantWithoutTools;
             List<ToolInvocation> workflowToolInvocations = Collections.emptyList();
             if (Boolean.TRUE.equals(request.getEnableTools())) {
@@ -255,8 +274,10 @@ public class ChatService {
                     PlanValidator.ValidatedPlan validatedPlan = planned.get();
                     if (workflowRunner != null) {
                         ExecutionState executionState = createExecutionState(
-                                request.getUserId(), sessionId, userMessage, validatedPlan);
+                                request, sessionId, userMessage, validatedPlan,
+                                preallocatedExecutionId);
                         executionState = workflowRunner.run(executionState);
+                        completedExecution = executionState;
                         workflowToolInvocations = workflowToolInvocations(executionState);
                         workflowAnswer = executionState.getFinalAnswer();
                         log.info("plan_execution_summary traceId={}, sessionId={}, executionId={}, status={}, taskCount={}",
@@ -303,6 +324,7 @@ public class ChatService {
             if (assistantMessage == null) {
                 log.warn("保存助手消息失败, sessionId: {}", sessionId);
             }
+            persistResearchDecisionAfterMessage(completedExecution, assistantMessage);
             // 只有本轮成功生成并保存业务消息后才推进当前话题，失败重试不会污染路由状态。
             activateTopic(baseMemoryId, resolvedQuery.topicKey());
             try {
@@ -535,11 +557,18 @@ public class ChatService {
 
     ExecutionState createExecutionState(String userId, String sessionId, String question,
                                         PlanValidator.ValidatedPlan validatedPlan) {
+        return createExecutionState(userId, sessionId, question, validatedPlan, null);
+    }
+
+    ExecutionState createExecutionState(String userId, String sessionId, String question,
+                                        PlanValidator.ValidatedPlan validatedPlan,
+                                        String preallocatedExecutionId) {
         List<ExecutionTask> tasks = validatedPlan.plan().getTasks().stream()
                 .map(task -> ExecutionTask.pending(task.name().toLowerCase(), task))
                 .toList();
         ExecutionState state = ExecutionState.planned(
-                UUID.randomUUID().toString(), sessionId, question, tasks);
+                StringUtils.defaultIfBlank(preallocatedExecutionId, UUID.randomUUID().toString()),
+                sessionId, question, tasks);
         state.setTraceId(MDC.get("traceId"));
         state.setUserId(userId);
         state.setPlan(validatedPlan.plan());
@@ -547,6 +576,64 @@ public class ChatService {
                 state.getTraceId(), sessionId, state.getExecutionId(), state.getPlan().getSymbol(),
                 state.getPlan().getTasks());
         return state;
+    }
+
+    ExecutionState createExecutionState(ChatRequest request, String sessionId, String question,
+                                        PlanValidator.ValidatedPlan validatedPlan,
+                                        String preallocatedExecutionId) {
+        ExecutionState state = createExecutionState(request.getUserId(), sessionId, question,
+                validatedPlan, preallocatedExecutionId);
+        if (analysisContextResolver == null) {
+            return state;
+        }
+        AnalysisContext resolved = analysisContextResolver.resolve(
+                request, sessionId, state.getExecutionId(), state.getTraceId());
+        AnalysisContext context = new AnalysisContext(validatedPlan.plan().getSymbol(), resolved.analysisDate(),
+                resolved.researchMode(), state.getExecutionId(), state.getTraceId(), state.getUserId(), sessionId);
+        state.setAnalysisContext(context);
+        prepareDecisionReviews(state);
+        return state;
+    }
+
+    private void prepareDecisionReviews(ExecutionState state) {
+        AnalysisContext context = state.getAnalysisContext();
+        if (context == null || context.researchMode() != AnalysisContext.ResearchMode.DEEP) {
+            return;
+        }
+        if (decisionReviewService != null) {
+            try {
+                decisionReviewService.reviewDue(state.getUserId(), context.symbol(), context.analysisDate());
+            } catch (RuntimeException exception) {
+                log.warn("decision_review_refresh_failed executionId={}, errorType={}", state.getExecutionId(),
+                        exception.getClass().getSimpleName());
+            }
+        }
+        if (researchDecisionService != null) {
+            try {
+                state.setDecisionReviews(researchDecisionService.findCompletedReviews(
+                        state.getUserId(), context.symbol(), context.analysisDate()));
+            } catch (RuntimeException exception) {
+                state.setDecisionReviews(List.of());
+                log.warn("decision_review_recall_failed executionId={}, errorType={}", state.getExecutionId(),
+                        exception.getClass().getSimpleName());
+            }
+        }
+    }
+
+    void persistResearchDecisionAfterMessage(ExecutionState state, ChatMessage assistantMessage) {
+        if (state == null || assistantMessage == null || researchDecisionService == null
+                || state.getAnalysisContext() == null
+                || state.getAnalysisContext().researchMode() != AnalysisContext.ResearchMode.DEEP
+                || state.getResearchConclusion() == null
+                || state.getResearchConclusion().rating() == ResearchConclusion.Rating.INSUFFICIENT_DATA) {
+            return;
+        }
+        try {
+            researchDecisionService.save(state);
+        } catch (RuntimeException exception) {
+            log.warn("research_decision_save_failed executionId={}, errorType={}", state.getExecutionId(),
+                    exception.getClass().getSimpleName());
+        }
     }
 
     private String executionResults(ExecutionState state) {

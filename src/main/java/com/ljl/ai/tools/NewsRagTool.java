@@ -2,6 +2,7 @@ package com.ljl.ai.tools;
 
 import com.ljl.ai.client.NewsSearchClient;
 import com.ljl.ai.model.dto.ToolResult;
+import com.ljl.ai.research.AnalysisContext;
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
 import lombok.extern.slf4j.Slf4j;
@@ -27,5 +28,17 @@ public class NewsRagTool {
                 query == null ? 0 : query.length(), days);
         return ToolResultExecutor.execute("NEWS_SEARCH_ERROR",
                 () -> newsSearchClient.search(stock, query, days, 5));
+    }
+
+    /** 工作流专用入口，按发布时间限制新闻可见范围。 */
+    public ToolResult<List<NewsSearchClient.NewsItem>> searchStockNewsAndAnnouncements(
+            String stock, String query, int days, AnalysisContext context) {
+        if (context == null) {
+            throw new IllegalArgumentException("AnalysisContext 不能为空");
+        }
+        log.info("按分析时点检索股票资讯, stock: {}, analysisDate: {}, queryLength: {}, days: {}",
+                stock, context.analysisDate(), query == null ? 0 : query.length(), days);
+        return ToolResultExecutor.execute("NEWS_SEARCH_ERROR",
+                () -> newsSearchClient.search(stock, query, days, 5, context.analysisDate()));
     }
 }

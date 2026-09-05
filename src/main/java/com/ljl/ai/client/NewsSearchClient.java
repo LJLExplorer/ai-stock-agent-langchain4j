@@ -3,6 +3,7 @@ package com.ljl.ai.client;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
+import com.ljl.ai.research.FinancialFact;
 import dev.langchain4j.data.embedding.Embedding;
 import dev.langchain4j.model.embedding.EmbeddingModel;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -15,10 +16,18 @@ import okhttp3.Response;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 
 @Slf4j
@@ -47,21 +56,26 @@ public class NewsSearchClient {
     private EmbeddingModel embeddingModel;
 
     public List<NewsItem> search(String stock, String query, int days, int maxResults) throws Exception {
+        return search(stock, query, days, maxResults, LocalDate.now());
+    }
+
+    public List<NewsItem> search(String stock, String query, int days, int maxResults,
+                                 LocalDate analysisDate) throws Exception {
         String tavilyKey = firstConfiguredKey(configuredTavilyKey, "TAVILY_API_KEYS", "TAVILY_API_KEY");
         if (!tavilyKey.isBlank()) {
             return searchWithRetries((searchQuery, resultLimit) -> searchTavily(tavilyKey, stock, searchQuery,
-                    days, resultLimit), stock, query, maxResults);
+                    days, resultLimit), stock, query, maxResults, analysisDate);
         }
         String serpKey = firstConfiguredKey(configuredSerpApiKey, "SERPAPI_API_KEYS", "SERPAPI_API_KEY");
         if (!serpKey.isBlank()) {
             return searchWithRetries((searchQuery, resultLimit) -> searchSerpApi(serpKey, stock, searchQuery,
-                    resultLimit), stock, query, maxResults);
+                    resultLimit), stock, query, maxResults, analysisDate);
         }
         throw new IllegalStateException("未配置 Tavily 或 SerpAPI 任一新闻搜索 API Key");
     }
 
     private List<NewsItem> searchWithRetries(NewsSearcher searcher, String stock, String query,
-                                             int maxResults) throws Exception {
+                                             int maxResults, LocalDate analysisDate) throws Exception {
         Map<String, NewsItem> collected = new LinkedHashMap<>();
         int retryCount = Math.max(0, maxRetries);
         int resultLimit = Math.max(maxResults, minRelevantResults);
@@ -71,7 +85,8 @@ public class NewsSearchClient {
                 log.info("新闻相关结果不足，执行第 {} 次扩展关键词重查, stock: {}, queryLength: {}", attempt,
                         stock, searchQuery.length());
             }
-            List<NewsItem> filtered = filterByRelevance(searcher.search(searchQuery, resultLimit), stock, query);
+            List<NewsItem> asOfItems = filterByPublishedAt(searcher.search(searchQuery, resultLimit), analysisDate);
+            List<NewsItem> filtered = filterByRelevance(asOfItems, stock, query);
             filtered.forEach(item -> collected.putIfAbsent(resultKey(item), item));
         }
         log.info("新闻多轮检索完成, attempts: {}, relevantResults: {}, requiredResults: {}",
@@ -167,6 +182,51 @@ public class NewsSearchClient {
         }
     }
 
+    List<NewsItem> filterByPublishedAt(List<NewsItem> items, LocalDate analysisDate) {
+        if (items == null || items.isEmpty()) {
+            return List.of();
+        }
+        Instant exclusiveCutoff = analysisDate.plusDays(1)
+                .atStartOfDay(ZoneId.of("Asia/Shanghai")).toInstant();
+        List<NewsItem> filtered = new ArrayList<>();
+        for (NewsItem item : items) {
+            Optional<Instant> publishedAt = parsePublishedAt(item.publishedAt());
+            if (publishedAt.isEmpty()) {
+                filtered.add(item.withTemporalStatus(FinancialFact.TemporalStatus.UNKNOWN));
+            } else if (publishedAt.get().isBefore(exclusiveCutoff)) {
+                filtered.add(item.withTemporalStatus(FinancialFact.TemporalStatus.VERIFIED));
+            }
+        }
+        return List.copyOf(filtered);
+    }
+
+    private Optional<Instant> parsePublishedAt(String value) {
+        if (value == null || value.isBlank()) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.of(Instant.parse(value));
+        } catch (RuntimeException ignored) {
+            // 继续尝试供应商常见格式。
+        }
+        try {
+            return Optional.of(OffsetDateTime.parse(value).toInstant());
+        } catch (RuntimeException ignored) {
+            // 继续尝试无时区日期格式。
+        }
+        try {
+            return Optional.of(LocalDateTime.parse(value,
+                    DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")).toInstant(ZoneOffset.ofHours(8)));
+        } catch (RuntimeException ignored) {
+            // 继续尝试纯日期。
+        }
+        try {
+            return Optional.of(LocalDate.parse(value).atStartOfDay(ZoneId.of("Asia/Shanghai")).toInstant());
+        } catch (RuntimeException ignored) {
+            return Optional.empty();
+        }
+    }
+
     private double cosine(float[] left, float[] right) {
         if (left == null || right == null || left.length != right.length || left.length == 0) {
             return 0D;
@@ -204,13 +264,22 @@ public class NewsSearchClient {
     }
 
     public record NewsItem(String title, String summary, String url, String source, String publishedAt,
-                           Double relevanceScore) {
+                           Double relevanceScore, FinancialFact.TemporalStatus temporalStatus) {
         public NewsItem(String title, String summary, String url, String source, String publishedAt) {
-            this(title, summary, url, source, publishedAt, null);
+            this(title, summary, url, source, publishedAt, null, FinancialFact.TemporalStatus.UNKNOWN);
+        }
+
+        public NewsItem(String title, String summary, String url, String source, String publishedAt,
+                        Double relevanceScore) {
+            this(title, summary, url, source, publishedAt, relevanceScore, FinancialFact.TemporalStatus.UNKNOWN);
         }
 
         private NewsItem withRelevanceScore(double score) {
-            return new NewsItem(title, summary, url, source, publishedAt, score);
+            return new NewsItem(title, summary, url, source, publishedAt, score, temporalStatus);
+        }
+
+        private NewsItem withTemporalStatus(FinancialFact.TemporalStatus status) {
+            return new NewsItem(title, summary, url, source, publishedAt, relevanceScore, status);
         }
     }
 }

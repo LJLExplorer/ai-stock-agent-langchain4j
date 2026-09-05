@@ -1,6 +1,10 @@
 package com.ljl.ai.workflow;
 
 import com.ljl.ai.planner.AgentPlan;
+import com.ljl.ai.research.AnalysisContext;
+import com.ljl.ai.research.EvidencePack;
+import com.ljl.ai.research.ResearchConclusion;
+import com.ljl.ai.research.ResearchDecision;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import org.springframework.data.annotation.Id;
@@ -22,9 +26,17 @@ public class ExecutionState {
     private String userId;
     private String originalQuestion;
     private AgentPlan plan;
+    private AnalysisContext analysisContext;
+    private EvidencePack evidencePack;
+    private ResearchConclusion researchConclusion;
+    private List<ResearchDecision> decisionReviews = new ArrayList<>();
     private List<ExecutionTask> tasks = new ArrayList<>();
     private WorkflowStatus workflowStatus = WorkflowStatus.PLANNED;
     private String currentNode;
+    private String graphVersion;
+    private String planHash;
+    private String lastCompletedNode;
+    private long eventSequence;
     private long version;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
@@ -76,6 +88,19 @@ public class ExecutionState {
         workflowStatus = WorkflowStatus.FAILED;
         errorMessage = reason;
         touch();
+    }
+
+    public void checkpointCompleted(String node) {
+        checkpointCompleted(node, version);
+    }
+
+    void checkpointCompleted(String node, long expectedVersion) {
+        currentNode = node;
+        lastCompletedNode = node;
+        if (version <= expectedVersion) {
+            version = expectedVersion + 1;
+        }
+        updatedAt = LocalDateTime.now();
     }
 
     private void touch() {

@@ -17,18 +17,18 @@ Stock Insight Agent｜Java AI 股票研究与知识检索系统
 
 ### 一句话描述
 
-基于 Java 21、Spring Boot、MongoDB、Redis 和 Milvus 构建的股票研究后端，通过状态机、乐观锁、补偿机制和测试分层约束 LLM 与外部服务的不确定性。
+基于 Java 21、Spring Boot、MongoDB、Redis 和 Milvus 构建的股票研究后端，通过逐节点 Checkpoint、工具幂等、金融时点约束和证据门禁管理 LLM 与外部数据的不确定性。
 
 ### 简历要点
 
-- 设计 Planner 提议、Java 白名单校验、StateGraph 执行的 Plan-and-Execute 链路，将行情、技术、财务、新闻任务映射为确定性 Tool 调用，并通过 Reflector/Critic 规则完成失败重试和有限路由。
-- 以 MongoDB 保存会话、知识元数据和执行快照，使用 `executionId + version` 条件更新拒绝陈旧写入；对 MongoDB/Milvus 双写采用状态标记、重试和失败补偿，显式处理跨存储一致性。
+- 设计 Planner 提议、Java 白名单校验、StateGraph 执行的 Plan-and-Execute 链路；图节点成功后以 `executionId + version` CAS 落库，并以 `graphVersion + planHash` 拒绝不兼容恢复。
+- 为只读投研工具设计 `executionId:taskId:attempt` 幂等记录，原子保存成功结果与证据快照；恢复时直接复用已成功记录，避免重复调用外部工具。
+- 建立 `AnalysisContext -> FinancialFact -> EvidencePack -> ClaimEvidenceGuard` 金融证据链，按分析日截断 K 线、披露日和新闻，并拒绝跨包引用、无引用数字及晚于数据截止日的结论。
 - 以 MongoDB 保留完整业务历史，在 Redis 中维护活动/最近话题及按 `userId + sessionId + topicKey` 隔离的模型窗口；通过结构化查询改写识别继续、切换和返回话题，并以“旧摘要 + 较早消息”递归压缩窗口，失败时恢复原始消息。
-- 面向长篇研究资料设计 Parent/Child 层级分片：按标题、段落、句子逐级切分，以 Child 完成检索；命中后回到 Parent 扩展相邻片段，兼顾召回粒度和章节上下文。
 
 ### 适合追问的关键词
 
-乐观锁、状态机、幂等边界、补偿事务、话题级缓存、TTL、进程内锁、测试分层、配置安全。
+CAS Checkpoint、状态机、工具幂等、At-least-once、时点一致性、证据溯源、有界线程池、SSE 回放、话题级缓存。
 
 ## AI Agent / LLM 应用岗位版本
 
@@ -38,18 +38,18 @@ Stock Insight Agent｜可控 Plan-and-Execute 与 Hybrid RAG
 
 ### 一句话描述
 
-基于 LangChain4j 与 LangGraph4j 构建的股票研究 Agent，通过受限计划、确定性工具执行、混合检索和分层记忆降低 LLM 幻觉与工具失控风险。
+基于 LangChain4j 与 LangGraph4j 构建的可恢复股票研究 Agent，以金融时点、证据引用、受控事件和可选多角色审议降低数据穿越、无依据结论与工具失控风险。
 
 ### 简历要点
 
-- 将 LLM 限制为候选计划生成器，使用 `PlanValidator` 校验意图、股票代码和任务枚举；合法计划进入 LangGraph4j 状态图，回答节点使用无工具 Assistant，避免绕过结果校验重新调用工具。
+- 将 LLM 限制为候选计划生成器，使用 `PlanValidator` 校验意图、股票代码和任务枚举；工作流以逐节点 Checkpoint 和工具幂等恢复，答案节点不注册工具。
+- 将工作流中的行情、技术、财务和新闻结果映射为带稳定 `evidenceId`、时点和来源的 `EvidencePack`；用 Claim–Evidence Guard 确定性拒绝未知 ID、无引用数字和超过数据截止日的日期。
 - 在 Milvus 2.5 中构建 Dense COSINE 与 BM25 Sparse 双路检索，以 RRF 融合并用带阈值的 Dense 结果复核候选；结合 Parent/Child 分片让 Child 负责召回，命中后恢复同章节全文或相关窗口。
-- 设计“查询改写 + 话题路由 + 上下文筛选”链路：模型基于近期业务消息、当前话题摘要和最近话题输出独立查询及 `NEW/CONTINUE/SWITCH/RETURN`，后端用显式股票代码校正边界，并将同一查询复用于 RAG、长期记忆和 Planner。
-- 将完整业务历史、话题级近轮原文、递归摘要和用户长期记忆分层存储；切换股票时进入独立 Redis 模型窗口，返回旧话题时复用稳定话题 ID，并为模型、工作流和工具日志关联 `traceId/sessionId/executionId`。
+- 提供默认 `STANDARD` 和可选 `DEEP` 双模式：深度模式固定编排基本面、技术面、新闻、看多、看空、风险与 Judge，通过不含 Prompt/思维链正文的 RunEvent SSE 展示进度；建立 5 样本离线 Agent Eval 回归基线。
 
 ### 适合追问的关键词
 
-Agent 可控性、Prompt 与代码边界、RRF、语义复核、指代消解、话题路由、上下文预算、记忆污染、Tool Calling 上限。
+Agent 可控性、Evidence Grounding、Point-in-time、多角色审议、结构化输出校验、RunEvent/SSE、Agent Eval、RRF、话题路由、记忆污染。
 
 ## 校招通用版本
 
@@ -63,10 +63,10 @@ Stock Insight Agent｜Java 全栈 AI 研究助手
 
 ### 简历要点
 
-- 使用 Spring Boot + LangChain4j 实现股票研究对话，接入 7 类业务工具，并通过计划校验、失败重试和无工具回答阶段约束模型行为。
+- 使用 Spring Boot + LangChain4j/LangGraph4j 实现股票研究 Agent，接入 7 类业务工具，通过计划白名单、逐节点 Checkpoint、工具幂等和受控重试约束执行。
 - 使用 Milvus Dense + BM25 + RRF 构建混合知识检索；将长文按章节构建 Parent/Child 分片，由 Child 负责精确召回，命中后补充同章节相邻内容与 Parent 摘要。
-- 使用 MongoDB 保存完整对话，使用 Redis 管理最近话题、话题级模型窗口和递归摘要；将指代消解后的独立查询统一用于检索、长期记忆和任务规划，并对显式股票代码提供确定性边界保护。
-- 使用 React/Vite 完成会话、知识来源和工具结果展示；补齐 Docker Compose、配置模板、JUnit 测试分层和 GitHub Actions。
+- 使用 MongoDB 保存完整对话与决策复盘，使用 Redis 管理话题级原文窗口和递归摘要；将查询改写结果统一用于检索、长期记忆和任务规划。
+- 实现标准/深度双模式 React 界面，通过 SSE 展示计划、证据、多角色审议和结论阶段，支持断线状态补偿与手动重连；配套后端离线测试和前端生产构建。
 
 ## 高频追问与回答边界
 
@@ -88,9 +88,11 @@ Stock Insight Agent｜Java 全栈 AI 研究助手
 
 ### 4. Checkpoint 能从任意节点恢复吗？
 
-不能这样宣称。当前在工作流运行前保存初始快照，运行结束后保存最终快照；`resume` 从最近成功持久化的状态重跑，完成任务会跳过。它没有实现每个节点后的持久化，因此进程中途退出可能重做未保存任务。
+现在每个节点动作成功后都会先更新 `lastCompletedNode`，再用 `executionId + version` CAS 保存，成功后才发布 `NODE_COMPLETED`；`CRITIC` 路由也在返回前落库。`resume` 会先校验 `graphVersion` 和 `planHash`，然后从最近 Checkpoint 重新进入图，已成功工具通过幂等记录零调用恢复。
 
-进一步改进：在节点完成回调中持久化状态，引入幂等键/Outbox，并针对外部副作用定义 Exactly-once 或 At-least-once 语义。
+但它不是 LangGraph 原生的任意节点游标续跑，也不保证任意外部副作用 Exactly-once；当前只对四类明确只读的投研工具开放遗留 `STARTED` 的下一 attempt 重试。
+
+代码入口：`WorkflowRunner`、`StockAnalysisWorkflow.stateNode`、`MongoExecutionStateStore`、`MongoToolExecutionStore`。
 
 ### 5. 乐观锁冲突为什么不自动重试覆盖？
 
@@ -159,14 +161,51 @@ BM25 对股票代码、公司名、指标名等精确词更敏感；Dense 对同
 
 ### 14. 项目有什么测试证据？
 
-默认 `mvn test` 运行离线单元/组件测试；真实 MongoDB 和 Milvus 连接测试使用 `*IT` 命名并由 Maven Profile 显式执行。CI 独立运行 JDK 21 后端测试与 Node 前端生产构建。没有发布覆盖率数字就不要口头编一个。
+默认 `mvn test` 运行离线单元/组件测试；真实 MongoDB 和 Milvus 连接测试使用 `*IT` 命名并由 Maven Profile 显式执行。仓库当前有 74 个 `*Test.java` 测试类和 2 个 `*IT.java`，前端使用 Node 内置 runner 覆盖深度投研请求、SSE 和进度映射。CI 独立运行 JDK 21 后端测试与前端生产构建。没有发布覆盖率数字就不要口头编一个。
+
+### 15. 历史时点分析如何防止“偷看未来”？
+
+`AnalysisContext` 把标的和 `analysisDate` 作为整条工作流共享的不可变边界。日 K 线只保留截止日之前数据，财务数据按当时已披露的报告选择，新闻过滤未来发布时间。历史数据缺失时不回退为当前值；时点无法确定的事实会标记 `UNKNOWN`。
+
+代码入口：`AnalysisContextResolver`、`MarketDataClient`、`TechnicalAnalysisTool`、`FinancialAnalysisTool`、`NewsRagTool`。
+
+### 16. EvidencePack 和普通把工具结果拼进 Prompt 有什么区别？
+
+EvidencePack 先把工具结果规范化为 `FinancialFact`，每条事实有稳定 `evidenceId`、指标/数值/单位、期间、来源、发布时间和时点状态，同时显式记录数据缺失和工具失败。回答中的数字行必须引用当前证据 ID，跨包 ID 和未来日期会被 Java Guard 拒绝。这不证明证据源本身绝对正确，但能检查“结论是否指向本轮允许的证据”。
+
+代码入口：`FinancialFact`、`EvidencePackBuilder`、`ClaimEvidenceGuard`、`WorkflowAnswerGenerator`。
+
+### 17. 深度投研是自由协作的 Multi-Agent 吗？
+
+不是。它刻意采用固定、有界的编排：基本面、技术面、新闻、看多、看空、风险各最多一次，最后由 Judge 输出结构化 JSON。所有角色共享同一 EvidencePack，不挂载工具或会话记忆。Judge 结果还要经过评级、置信度、日期和证据 ID 校验；角色失败可降级继续，Judge 失效则返回 `INSUFFICIENT_DATA`。这牺牲自由度换取调用上限和权限边界。
+
+代码入口：`DeepResearchAssistant`、`DeepResearchService`、`ResearchConclusion`。
+
+### 18. SSE 事件流如何同时做到可观测和不泄露推理正文？
+
+`RunEvent` 只有固定事件枚举、节点、递增 sequence、时间和最多 500 字符的受控摘要，没有 Prompt、模型响应或工具正文字段。SSE 先回放每个 execution 最近 200 条事件，再从 sequence 游标订阅，终态自动关闭。前端断线后会关闭旧 EventSource，用状态接口补偿一次，由用户手动重连。
+
+代码入口：`RunEvent`、`InMemoryRunEventPublisher`、`ResearchExecutionController`、`frontend/src/researchExecution.js`。
+
+### 19. 决策复盘为什么不放进聊天记忆？
+
+聊天记忆保存用户语境和偏好，决策复盘保存可审计的当时判断与后验结果。`ResearchDecision` 绑定执行 ID、标的、分析日、评级、证据哈希和图版本；`DecisionReviewService` 不调用 LLM，而是计算 1/5/20 个交易日后收益和相对基准。只有在本次分析日已经可见的复盘才能作为校准参考，并且不能充当本轮证据。
+
+代码入口：`ResearchDecisionService`、`DecisionReviewService`、`ChatService.prepareDecisionReviews`。
+
+### 20. Agent Eval 的 1.0 代表模型准确率吗？
+
+不代表。当前 5 个样本与函数式适配器都是固定、离线的，用来保护 Planner、话题路由、RAG、证据和恢复契约不被代码改动破坏。它的 accuracy 1.0、Recall@3 1.0、nDCG@3 0.9197、引用覆盖 1.0 和数字一致性 1.0 只是 fixture 基线。真正的线上质量还需要标注数据集、模型/提示版本、多次采样、成本和延迟统计，因此必须使用显式 Profile，不进入默认 CI。
+
+代码入口：`AgentEvalRunner`、`AgentEvalRunnerTest`、`src/test/resources/eval/agent-eval-cases.json`。
 
 ## 不要写进简历的表述
 
 - “生产级高可用 Agent 平台”
 - “四任务并行，性能提升 XX%”
-- “任意节点断点续跑、Exactly-once”
-- “RAG 准确率 XX%”或“预测收益率 XX%”
+- “LangGraph 原生任意节点游标续跑、所有外部副作用 Exactly-once”
+- “离线 fixture accuracy 就是线上模型准确率”或“预测收益率 XX%”
+- “多角色可自由创建 Agent、任意调工具和相互通信”
 - “完成用户鉴权和严格多租户隔离”
 - “查询改写能够 100% 准确识别话题，彻底解决上下文污染”
 - “实现 MongoDB 与 Milvus 强一致事务”
@@ -181,5 +220,8 @@ BM25 对股票代码、公司名、指标名等精确词更敏感；Dense 对同
 3. 展示 `RetrievalServiceTest`，解释 RRF 分数为何还需语义复核。
 4. 展示 `ConversationContextServiceTest` 与 `ChatServiceQueryRewriteTest`，演示继续话题、切换股票、非 JSON 降级和显式代码保护。
 5. 展示 `ShortTermSummaryServiceTest`，解释消息数/字符双预算、摘要 TTL 和失败时如何保护原始消息。
-6. 展示 `WorkflowRunnerTest`，解释为什么乐观锁冲突不能拿旧状态强行覆盖。
-7. 执行 `docker compose config --quiet` 和前端 `npm run build`，证明仓库具备可复现入口。
+6. 展示 `WorkflowRunnerTest` 和 `MongoToolExecutionStoreTest`，解释节点 Checkpoint、版本/计划校验与工具幂等恢复。
+7. 展示 `ClaimEvidenceGuardTest`，演示跨包引用、无证据数字和未来日期被确定性拒绝。
+8. 在前端切换到深度投研，讲解 executionId、四阶段 RunEvent 时间线、断线补偿和终态收口。
+9. 运行 `AgentEvalRunnerTest`，说明 fixture 基线与真实模型评测的边界。
+10. 执行 `docker compose config --quiet` 和前端 `npm test && npm run build`，证明仓库具备可复现入口。

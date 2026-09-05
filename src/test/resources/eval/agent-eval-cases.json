@@ -1,0 +1,46 @@
+[
+  {
+    "caseId": "planner-stock",
+    "category": "PLANNER",
+    "input": "分析贵州茅台的行情和新闻",
+    "expectedLabel": "STOCK_ANALYSIS:MARKET_DATA,NEWS_ANALYSIS",
+    "relevantIds": [],
+    "expectedClaimCount": 0,
+    "expectedNumericClaimCount": 0
+  },
+  {
+    "caseId": "topic-switch",
+    "category": "TOPIC_ROUTING",
+    "input": "改看300750的技术面",
+    "expectedLabel": "SWITCH:300750",
+    "relevantIds": [],
+    "expectedClaimCount": 0,
+    "expectedNumericClaimCount": 0
+  },
+  {
+    "caseId": "rag-financial",
+    "category": "RAG",
+    "input": "贵州茅台盈利能力与近期公告",
+    "relevantIds": ["doc-financial", "doc-news"],
+    "expectedClaimCount": 0,
+    "expectedNumericClaimCount": 0
+  },
+  {
+    "caseId": "evidence-grounded",
+    "category": "EVIDENCE",
+    "input": "检查回答中的事实与数值是否引用当前证据包",
+    "expectedLabel": "PASS",
+    "relevantIds": [],
+    "expectedClaimCount": 2,
+    "expectedNumericClaimCount": 1
+  },
+  {
+    "caseId": "recovery-compatible",
+    "category": "RECOVERY",
+    "input": "从相同 graphVersion 与 planHash 的检查点恢复",
+    "expectedLabel": "RESUMED",
+    "relevantIds": [],
+    "expectedClaimCount": 0,
+    "expectedNumericClaimCount": 0
+  }
+]

@@ -9,3 +9,55 @@
 - 确认逐节点 Checkpoint、point-in-time、Claim–Evidence 校验、SSE、决策复盘及深度模式降级策略。
 - 明确不实现自动下单、任意代码执行、分布式 A2A、整体框架迁移，也不修改或提交 `application.yml`。
 - 计划审查补充深度投研异步启动接口，使客户端可以在任务完成前获得 executionId 并订阅 SSE；旧同步接口保持兼容。
+- 新增不可变 `AnalysisContext` 与统一解析入口；聊天请求兼容可选分析日期和研究模式，并拒绝未来分析日期。
+- 新增不可变 `FinancialFact` 和 `EvidencePack`，以稳定 evidenceId、来源时间及 temporalStatus 表达可核验证据；工作流任务在重试时保留并去重历史证据。
+- 行情、财务和新闻客户端增加 analysisDate 感知契约：日 K 先按日期截断，财务数据按披露日选择，新闻过滤未来发布时间，未知日期保留 `UNKNOWN`；旧方法继续委托当前日期。
+- 行情与技术工具增加 `AnalysisContext` 工作流入口：历史行情由截止日 K 线构造，技术分析只读取截止日之前数据并输出数据截止日；修正技术工具描述，不再宣称尚未计算的 MACD/RSI/KDJ/布林带。
+- 财务与新闻工具增加 `AnalysisContext` 工作流入口：财务结果显式输出请求期间、报告期、披露日期、来源和时点状态，新闻结果保留 URL、来源、发布时间和 temporalStatus；历史数据缺失时不回退当前内容。
+- 新增确定性 `EvidencePackBuilder`，将行情数值、技术/财务文本与新闻来源映射为 `FinancialFact`，按稳定 evidenceId 分类去重并生成 evidenceHash；未来事实不可引用，未知时点和工具失败进入缺失说明，任务节点同步刷新执行状态证据包。
+- 工作流改为逐节点 CAS Checkpoint：每个节点成功后立即更新 lastCompletedNode 并保存，保存失败即停止推进，CRITIC 路由也在返回前落盘；恢复前校验固定 graphVersion 与规范化 planHash，不兼容时返回稳定 `INCOMPATIBLE_CHECKPOINT`。
+- 新增工具幂等记录与 Mongo 条件更新 Store，使用 `executionId:taskId:attempt` 唯一键，只允许 STARTED 进入 SUCCEEDED/FAILED；成功时原始结果和证据原子保存，重复相同完成可复用，冲突写入不会覆盖成功记录。
+- 任务节点接入工具幂等 Store：执行前查询 attempt，SUCCEEDED 直接恢复且不再次调用工具，四类显式只读工具可从遗留 STARTED 使用下一 attempt 重试，FAILED 遵循上限；只有成功记录持久化后任务才进入 COMPLETED。
+- 新增类型化 `RunEvent` 与进程内发布器：不同 executionId 独立生成连续序号，每次执行只保留最近 200 条事件，支持快照回放及可取消订阅；事件仅允许固定类型和 500 字符以内摘要，不提供 Prompt、响应或工具正文载荷字段。
+- 工作流入口、节点包装器及工具节点接入统一 RunEvent：初始状态持久化后发布 PLAN，节点完成事件严格晚于成功 Checkpoint，重试与正常/异常终态均可观察；工具事件仅含固定工具名、截断任务标识、状态、attempt、耗时及受控 errorCode，事件序号同步回写 ExecutionState。
+- 新增异步深度研究执行服务：仅接受 DEEP 请求，必要时先创建会话并预分配 executionId，再通过代码内固定大小、有界队列的线程池执行；队列满返回稳定错误码，关闭服务会释放线程池，后台异常保存 FAILED 检查点并发布不含异常正文的终态事件。ChatService 新增包内预分配 ID 入口，原同步 `chat(request)` 行为保持不变。
+- 新增 `/api/research/executions` 异步启动、所有者状态查询和 SSE 事件流接口；未授权与不存在的执行统一不可见。SSE 先回放有界快照，再通过 sequence 游标原子补发订阅间隙事件并去重，终态自动完成，断连/超时/发送失败只注销监听器而不取消后台研究。
+- 新增确定性 Claim–Evidence Guard，以 `[evidence:ev-…]` 显式语法校验回答只引用当前 EvidencePack；拒绝未知/跨包 ID、无证据引用的数值以及晚于 dataAsOf 的日期。工作流回答改为先证据校验、再 Markdown 校验，只允许一次受原因约束的重写，仍失败则确定性降级；旧 `factCheck` 兼容代码未被当作事实验证接入。
+- 新增无工具、无 MemoryId 的深度研究 Assistant 契约，以及基本面→技术面→新闻→看多→看空→风险→Judge 的固定有界编排；所有角色共享同一 EvidencePack 文本且每个最多调用一次。Judge JSON 映射为不可变 ResearchConclusion，校验 rating、confidence、evidenceIds 和 dataAsOf；单角色失败继续但标记降级，Judge 解析或证据越界时返回确定性 `INSUFFICIENT_DATA`。
+- 将可选深度投研正式接入工作流：可信任务经 EVIDENCE_PACK checkpoint 后按 AnalysisContext 选择 STANDARD 直达回答或 DEEP_RESEARCH 分支，节点状态和事件可恢复、可观察。深度 Assistant Bean 明确不挂载工具与会话记忆；通过校验的 ResearchConclusion 由确定性 Presenter 输出带证据引用的 Markdown，证据不足或结论越界时沿用标准答案链路。
+- 新增独立 Mongo `ResearchDecision` 与后验复盘服务：按 executionId 幂等保存用户、标的、分析日期、评级、置信度、证据哈希和图版本；只查询同用户、同标的、已到期且未完成的记录，以历史日 K 确定性计算 1/5/20 个交易日收益及相对沪深 300 ETF 收益。基准缺失不会丢弃标的收益，复盘结果按 outcome 可用日期控制历史可见性，且不调用 LLM、不读取聊天或偏好记忆。
+- 将决策复盘接入真实对话与深度投研链路：ChatRequest 的 researchMode/analysisDate 经统一解析写入 ExecutionState，工作流启动前 best-effort 刷新并召回当时可见的同用户同标的复盘；DeepResearchService 将其置于带日期、不可充当 evidenceId 的独立参考区。本轮只有在有效深度结论和助手业务消息均成功后才幂等保存决策，复盘/保存失败均不阻断回答，STANDARD 模式不强制产生评级记录。
+- 建立覆盖 Planner、话题路由、RAG、证据门禁和工作流恢复的离线 Agent Eval；Runner 通过函数式适配器接收固定观测，输出字段顺序稳定的 JSON，并校验空样本、重复 ID 和非法计数。5 个确定性样本基线：accuracy 1.0、Recall@3 1.0、nDCG@3 0.9197207891481876、引用覆盖 1.0、数字一致性 1.0、平均延迟 30.0ms、总调用 3；默认 CI 不访问网络或模型，在线评测必须使用显式 Profile。
+- 新增前端深度投研 API/SSE 客户端，并使用 Node 内置 test runner 覆盖契约：异步启动强制 DEEP、executionId 与 RunEvent 字段白名单校验、所有者状态补偿、全部命名事件监听及终态关闭。事件流错误会立即关闭浏览器自动重连源，执行一次状态查询并把是否重连交还 UI；不把 Prompt、模型正文或工具结果作为事件数据暴露。
+- 前端新增首屏醒目的“标准分析 / 深度投研”模式选择：标准模式保持同步请求，深度模式通过异步执行接口和 SSE 展示计划与上下文、数据与证据、多角色审议、结论生成四阶段进度，并显示 executionId、受控重试和数据缺失。断线后执行一次状态补偿并提供手动重连；终态补偿直接收口，避免将已完成任务误报为断线失败。
+
+## 2026-09-06 最终验证与提交索引
+
+- README 新增首屏独立章节“可靠 Agent 运行时与金融证据闭环”，系统展示 point-in-time、EvidencePack、Claim–Evidence、逐节点 Checkpoint、工具幂等、RunEvent/SSE、双模式、决策复盘和 Agent Eval；同步更新架构图、工作流图、API、项目结构、测试命令与已知边界。
+- 简历材料更新 Java 后端、AI Agent 和校招三个版本，并新增时点一致性、证据包、深度投研、SSE、决策复盘和评测边界的高频追问。
+- 最终验证：后端 250 tests 全部通过（0 failures/errors/skipped）；`ResearchExecutionControllerTest` 4 tests 单独通过；前端 9 tests 全部通过，Vite 生产构建成功（2064 modules transformed）；`git diff --check` 通过；`application.yml` 无差异。
+
+| Task | Commit | RED 摘要 | GREEN 摘要 |
+| ---: | --- | --- | --- |
+| 1 | `939206b` | 缺少 AnalysisContext resolver | 3 tests：缺省/显式模式与未来日期拒绝 |
+| 2 | `b0198a6` | 缺少 FinancialFact | 6 tests：稳定 ID、不可变集合与证据去重 |
+| 3 | `c130007` | 缺少时点过滤契约 | 5 tests：K 线/财报/新闻 point-in-time |
+| 4 | `4ba0f2e` | 行情/技术工具缺少上下文入口 | 7 tests：截止日行情与真实指标说明 |
+| 5 | `565eccd` | 财务/新闻工具缺少上下文入口 | 7 tests：披露日、来源和时点状态 |
+| 6 | `c65c200` | 缺少 EvidencePackBuilder | 6 tests：映射、去重、Hash 与缺失记录 |
+| 7 | `8d2cd69` | 缺少节点 Checkpoint 元数据 | 10 tests：逐节点 CAS 与版本/计划保护 |
+| 8 | `b66c10d` | 缺少工具幂等存储 | 4 tests：状态迁移、快照与冲突保护 |
+| 9 | `df40aea` | 任务节点未接入幂等存储 | 12 tests：零调用恢复与受控 attempt |
+| 10 | `bd2fe12` | 缺少类型化 RunEvent | 3 tests：连续序号、有界回放与隐私边界 |
+| 11 | `0c9b718` | 工作流未注入事件发布器 | 13 tests：PLAN/NODE/TOOL/终态事件顺序 |
+| 12 | `8d7b7bc` | 缺少异步执行句柄 | 9 tests：预分配 ID、有界队列与失败落库 |
+| 13 | `00c5d08` | 缺少状态/SSE Controller | 8 tests：所有权、回放、补发与终态 |
+| 14 | `6ffea99` | 缺少 ClaimEvidenceGuard | 10 tests：引用、数字、日期、重写与降级 |
+| 15 | `7d2c271` | 缺少深度角色契约 | 6 tests：固定顺序、Judge 校验与降级 |
+| 16 | `cb86cb2` | 工作流缺少深度分支 | 16 tests + 契约补测：双模式与结论呈现 |
+| 17 | `bc9b78b` | 缺少 ResearchDecision 与复盘 | 7 tests：1/5/20 日收益与历史可见性 |
+| 18 | `51edb86` | 对话主链未接入复盘 | 14 tests：刷新/召回/保存 best-effort；整库 247 tests |
+| 19 | `19d17c1` | 缺少离线 Agent Eval | 3 tests：5 样本稳定指标报告 |
+| 20 | `817164b` | 缺少前端测试入口与事件客户端 | 5 tests + Vite build：API/SSE 契约 |
+| 21 | `5e5611c` | 缺少模式分流与进度映射 | 9 tests + Vite build：时间线/补偿/重连 |
+| 22 | `docs: 突出可靠 Agent 与金融证据闭环` | README 无独立闭环章节 | 文档检查 + 后端 250 tests + 前端 9 tests/build |
