@@ -23,13 +23,12 @@ Stock Insight Agent｜Java AI 股票研究与知识检索系统
 
 - 设计 Planner 提议、Java 白名单校验、StateGraph 执行的 Plan-and-Execute 链路，将行情、技术、财务、新闻任务映射为确定性 Tool 调用，并通过 Reflector/Critic 规则完成失败重试和有限路由。
 - 以 MongoDB 保存会话、知识元数据和执行快照，使用 `executionId + version` 条件更新拒绝陈旧写入；对 MongoDB/Milvus 双写采用状态标记、重试和失败补偿，显式处理跨存储一致性。
-- 使用 Redis 实现按用户与会话隔离的短期消息窗口，并通过“旧摘要 + 淘汰消息”递归压缩控制上下文；摘要写入失败时恢复原始窗口，避免静默丢失。
+- 以 MongoDB 保留完整业务历史，在 Redis 中维护活动/最近话题及按 `userId + sessionId + topicKey` 隔离的模型窗口；通过结构化查询改写识别继续、切换和返回话题，并以“旧摘要 + 较早消息”递归压缩窗口，失败时恢复原始消息。
 - 面向长篇研究资料设计 Parent/Child 层级分片：按标题、段落、句子逐级切分，以 Child 完成检索；命中后回到 Parent 扩展相邻片段，兼顾召回粒度和章节上下文。
-- 将默认 Maven 测试与真实 MongoDB/Milvus 集成测试分层，建立 JDK 21 后端测试和 Node 前端构建 CI，并提供固定版本 Docker Compose 与脱敏配置模板。
 
 ### 适合追问的关键词
 
-乐观锁、状态机、幂等边界、补偿事务、进程内锁、测试分层、配置安全。
+乐观锁、状态机、幂等边界、补偿事务、话题级缓存、TTL、进程内锁、测试分层、配置安全。
 
 ## AI Agent / LLM 应用岗位版本
 
@@ -44,14 +43,13 @@ Stock Insight Agent｜可控 Plan-and-Execute 与 Hybrid RAG
 ### 简历要点
 
 - 将 LLM 限制为候选计划生成器，使用 `PlanValidator` 校验意图、股票代码和任务枚举；合法计划进入 LangGraph4j 状态图，回答节点使用无工具 Assistant，避免绕过结果校验重新调用工具。
-- 在 Milvus 2.5 中构建 Dense COSINE 与 BM25 Sparse 双路检索，通过 RRF 融合排序，并用带阈值的 Dense 结果复核候选；Hybrid 异常时支持可配置的单路语义降级。
-- 实现中文 Parent/Child 层级分片：Child 携带标题路径和金融上下文参与向量检索；命中后合并同章节相邻片段，短章节返回全文，长章节返回摘要与相关窗口，减少孤立片段造成的上下文缺失。
-- 构建近轮原文、递归摘要、用户长期记忆三层上下文；查询重写只服务检索，长期记忆扩大候选池后按 `userId` 和启用状态过滤。
-- 为模型调用、工作流路由和工具执行关联 `traceId/sessionId/executionId`；模型请求与响应默认脱敏，显式开启诊断时仍受长度限制。
+- 在 Milvus 2.5 中构建 Dense COSINE 与 BM25 Sparse 双路检索，以 RRF 融合并用带阈值的 Dense 结果复核候选；结合 Parent/Child 分片让 Child 负责召回，命中后恢复同章节全文或相关窗口。
+- 设计“查询改写 + 话题路由 + 上下文筛选”链路：模型基于近期业务消息、当前话题摘要和最近话题输出独立查询及 `NEW/CONTINUE/SWITCH/RETURN`，后端用显式股票代码校正边界，并将同一查询复用于 RAG、长期记忆和 Planner。
+- 将完整业务历史、话题级近轮原文、递归摘要和用户长期记忆分层存储；切换股票时进入独立 Redis 模型窗口，返回旧话题时复用稳定话题 ID，并为模型、工作流和工具日志关联 `traceId/sessionId/executionId`。
 
 ### 适合追问的关键词
 
-Agent 可控性、Prompt 与代码边界、RRF、语义复核、查询重写、记忆污染、Tool Calling 上限。
+Agent 可控性、Prompt 与代码边界、RRF、语义复核、指代消解、话题路由、上下文预算、记忆污染、Tool Calling 上限。
 
 ## 校招通用版本
 
@@ -66,9 +64,8 @@ Stock Insight Agent｜Java 全栈 AI 研究助手
 ### 简历要点
 
 - 使用 Spring Boot + LangChain4j 实现股票研究对话，接入 7 类业务工具，并通过计划校验、失败重试和无工具回答阶段约束模型行为。
-- 使用 Milvus Dense + BM25 + RRF 构建混合知识检索，结合 MongoDB 文档状态过滤和失败降级返回可追溯知识来源。
-- 将长文按章节构建 Parent/Child 分片，Child 负责精确召回，命中后补充同章节相邻内容与 Parent 摘要，使回答既能定位细节又保留上下文。
-- 使用 Redis 管理短期窗口和递归摘要，使用 MongoDB/Milvus 保存用户主动录入的长期记忆，实现多轮查询重写和按用户过滤。
+- 使用 Milvus Dense + BM25 + RRF 构建混合知识检索；将长文按章节构建 Parent/Child 分片，由 Child 负责精确召回，命中后补充同章节相邻内容与 Parent 摘要。
+- 使用 MongoDB 保存完整对话，使用 Redis 管理最近话题、话题级模型窗口和递归摘要；将指代消解后的独立查询统一用于检索、长期记忆和任务规划，并对显式股票代码提供确定性边界保护。
 - 使用 React/Vite 完成会话、知识来源和工具结果展示；补齐 Docker Compose、配置模板、JUnit 测试分层和 GitHub Actions。
 
 ## 高频追问与回答边界
@@ -109,29 +106,58 @@ BM25 对股票代码、公司名、指标名等精确词更敏感；Dense 对同
 
 ### 8. 短期摘要会不会丢信息？
 
-会，任何有损压缩都有风险。当前只压缩较早一半消息，保留最近原文，并限制摘要为空或超长时不能淘汰窗口；更新失败会尝试回滚。更严格场景可增加事实槽位、摘要版本和离线评测。
+会，任何有损压缩都有风险。当前按话题维护原文窗口，只压缩较早一半并保留最近原文；消息数或字符预算任一到达就触发摘要，避免窗口先淘汰旧消息。摘要为空、超过长度限制或 Redis 更新失败时不提交淘汰结果，并尝试恢复原始窗口；摘要和消息使用相同 TTL。
 
-### 9. 文档如何进行 Parent/Child 分片？
+更严格的场景还可以增加结构化事实槽位、摘要版本和离线忠实度评测。当前没有摘要准确率数据，所以不能说完全无损。
+
+代码入口：`ShortTermSummaryService`、`RedisChatMemoryStore`、`ConversationSummaryAssistant`。
+
+### 9. 多轮追问和话题切换是怎么处理的？为什么不直接拼接完整历史？
+
+完整历史直接拼接会把旧股票、过期时间范围和寒暄一起带入 RAG 与 Planner；单纯截取最近 N 条又无法支持“回到刚才的茅台”。因此项目把业务历史与模型上下文分开：MongoDB 保存完整消息，Redis 保存当前/最近话题以及每个话题独立的 LangChain4j 消息窗口。
+
+每轮先读取最近 30 条业务消息，其中最后 12 条按 6,000 字符预算交给 `QueryRewriteAssistant`。模型结合当前问题、当前话题摘要和最近话题，输出：
+
+```json
+{
+  "standaloneQuery": "贵州茅台2025年现金流情况",
+  "topicKey": "600519",
+  "topicRelation": "CONTINUE",
+  "confidence": 0.96
+}
+```
+
+后端不会把这段输出直接当成可信状态：调用失败或空输出时退回原问题，非 JSON 输出按普通改写文本兼容；原问题或改写结果出现明确六位股票代码时，用代码覆盖模型给出的 topicKey 和关系。归一化后的 topicKey 生成稳定 UUID，与 `userId:sessionId` 组合成话题级 memoryId，因此切换股票会进入新窗口，`RETURN` 可以回到旧窗口。
+
+同一个 standaloneQuery 同时交给 RAG、长期记忆召回和 Planner，避免三个模块分别解析出不同标的。最终 Assistant 仍收到用户原话；显式上下文最多选择 8 条与当前话题相关的消息，并过滤“好的、谢谢、收到”等低信息内容。本轮成功保存业务消息后才更新活动话题，失败不会提前改变状态。
+
+这个设计仍有边界：自然语言 topicKey 部分依赖模型，确定性保护目前主要覆盖六位股票代码；消息相关性使用词面匹配，不是单独的语义分类器。面试中应把它描述为“模型识别 + Java 校验 + 话题级隔离”，不要说成完全消除了记忆污染。
+
+代码入口：`QueryRewriteAssistant`、`ConversationQuery`、`ConversationContextService`、`ConversationTopicStore`、`ChatService.resolveRetrievalQuery`。
+
+### 10. 文档如何进行 Parent/Child 分片？
 
 入库先用 Markdown 或中文编号标题划分 Parent Section；再在每个 Parent 内优先按中文段落切分，超长时继续按句子、字符兜底，生成 600～800 字符、80～120 字符重叠的 Child。每个 Child 继承完整 `headingPath`、`stockCode`、`year`、`tags`，并保留 `parentSectionId` 与 `chunkIndex`；只有 Child 写入向量库并参与 Dense/BM25 召回。
 
-命中后只在同一 Parent 内补充前后相邻 Child，重叠窗口按 `chunkIndex` 去重、顺序拼接。短 Parent 直接返回全文；长 Parent 返回标题路径、抽取式摘要和命中窗口。这样避免整章向量被稀释，也避免单个命中块丢失前后论据。
+命中后只在同一 Parent 内补充前后相邻 Child，并按入库时保存的原始 offset 合并重叠区间、恢复正文顺序。短 Parent 直接返回全文；长 Parent 返回标题路径、抽取式摘要和命中窗口。这样避免整章向量被稀释，也避免单个命中块丢失前后论据。
+
+长 Parent 摘要不调用模型，而是从首段和带有财务关键词、数字、百分比或金额单位的句子中抽取，上限 600 字符。Child 的 Embedding 文本额外拼入完整标题路径；窗口恢复使用入库时保存的原文 offset 合并重叠区间，不依赖字符串去重。
 
 代码入口：`HierarchicalDocumentChunker`、`ParentContextAssembler`、`RetrievalService`。
 
-### 10. 长期记忆如何避免用户串数据？
+### 11. 长期记忆如何避免用户串数据？
 
 向量写入携带 `userId/memoryId`，召回先扩大共享候选池，再按用户过滤，并到 MongoDB 校验记录是否启用。但这仍是应用层隔离；没有认证的 `userId` 不能作为生产安全边界。
 
-### 11. MongoDB 与 Milvus 如何保证一致性？
+### 12. MongoDB 与 Milvus 如何保证一致性？
 
 当前不是分布式事务，而是状态标记、重试和补偿。新增元数据失败会清理向量；文档删除先标记、再删除向量、最后删除元数据。极端故障仍需对账任务，所以不能表述为强一致。
 
-### 12. 如何防止模型泄露用户内容到日志？
+### 13. 如何防止模型泄露用户内容到日志？
 
 `TracingChatLanguageModel` 默认用 `<redacted>` 代替模型请求和响应正文；显式开启时仍应用最大长度。核心业务日志已收敛为长度、数量、状态和错误类型；但第三方 SDK、异常链以及显式开启的模型正文仍需要集中脱敏、访问控制和保留周期，不能只依赖一个开关。
 
-### 13. 项目有什么测试证据？
+### 14. 项目有什么测试证据？
 
 默认 `mvn test` 运行离线单元/组件测试；真实 MongoDB 和 Milvus 连接测试使用 `*IT` 命名并由 Maven Profile 显式执行。CI 独立运行 JDK 21 后端测试与 Node 前端生产构建。没有发布覆盖率数字就不要口头编一个。
 
@@ -142,6 +168,7 @@ BM25 对股票代码、公司名、指标名等精确词更敏感；Dense 对同
 - “任意节点断点续跑、Exactly-once”
 - “RAG 准确率 XX%”或“预测收益率 XX%”
 - “完成用户鉴权和严格多租户隔离”
+- “查询改写能够 100% 准确识别话题，彻底解决上下文污染”
 - “实现 MongoDB 与 Milvus 强一致事务”
 - “打开模型正文日志也绝对不会包含用户内容”
 
@@ -152,6 +179,7 @@ BM25 对股票代码、公司名、指标名等精确词更敏感；Dense 对同
 1. 执行 `mvn test`，说明默认测试为什么不连接基础设施。
 2. 展示 `PlanValidatorTest` 和 `StockAnalysisWorkflowTest`，讲清模型提议与代码决策边界。
 3. 展示 `RetrievalServiceTest`，解释 RRF 分数为何还需语义复核。
-4. 展示 `ShortTermSummaryServiceTest`，解释摘要失败如何保护原始消息。
-5. 展示 `WorkflowRunnerTest`，解释为什么乐观锁冲突不能拿旧状态强行覆盖。
-6. 执行 `docker compose config --quiet` 和前端 `npm run build`，证明仓库具备可复现入口。
+4. 展示 `ConversationContextServiceTest` 与 `ChatServiceQueryRewriteTest`，演示继续话题、切换股票、非 JSON 降级和显式代码保护。
+5. 展示 `ShortTermSummaryServiceTest`，解释消息数/字符双预算、摘要 TTL 和失败时如何保护原始消息。
+6. 展示 `WorkflowRunnerTest`，解释为什么乐观锁冲突不能拿旧状态强行覆盖。
+7. 执行 `docker compose config --quiet` 和前端 `npm run build`，证明仓库具备可复现入口。

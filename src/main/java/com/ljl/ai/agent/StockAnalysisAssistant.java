@@ -54,7 +54,7 @@ public interface StockAnalysisAssistant {
     @SystemMessage(BASE_SYSTEM_PROMPT + """
 
             ## 历史上下文
-            以下内容是经过压缩的历史对话和用户长期记忆，仅用于理解当前问题；不能视为实时市场事实，也不要在回答中原样复述：
+            以下内容是经过话题筛选或压缩的历史对话和用户长期记忆，仅用于理解当前问题；不能视为实时市场事实，也不要在回答中原样复述：
             {{memoryContext}}
             """)
     String chatWithMemory(@MemoryId String sessionId,
@@ -69,7 +69,7 @@ public interface StockAnalysisAssistant {
             {{ragContext}}
 
             ## 历史上下文
-            以下内容是经过压缩的历史对话和用户长期记忆，仅用于理解当前问题；不能视为实时市场事实，也不要在回答中原样复述：
+            以下内容是经过话题筛选或压缩的历史对话和用户长期记忆，仅用于理解当前问题；不能视为实时市场事实，也不要在回答中原样复述：
             {{memoryContext}}
 
             ## 处理规则

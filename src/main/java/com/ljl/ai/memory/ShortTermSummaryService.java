@@ -8,6 +8,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.function.BiFunction;
 import java.util.stream.Collectors;
@@ -57,8 +58,9 @@ public class ShortTermSummaryService {
             log.warn("ShortTerm配置为空, memoryId: {}", memoryId);
             return;
         }
+        // 任一预算到达就压缩，避免消息窗口先按 maxMessages 淘汰、旧内容却尚未进入摘要。
         if (messages.size() < config.getShortTerm().getSummaryTriggerMessages()
-                || characterCount(messages) <= config.getShortTerm().getMaxChars()) {
+                && characterCount(messages) <= config.getShortTerm().getMaxChars()) {
             return;
         }
 
@@ -78,8 +80,9 @@ public class ShortTermSummaryService {
 
         try {
             memoryStore.updateMessages(memoryId, messages.subList(split, messages.size()));
-            redis.opsForValue().set(summaryKey(memoryId), summary);
-            redis.opsForValue().set(INDEX_PREFIX + memoryId, Integer.toString(split));
+            Duration ttl = Duration.ofSeconds(config.getShortTerm().getTtl());
+            redis.opsForValue().set(summaryKey(memoryId), summary, ttl);
+            redis.opsForValue().set(INDEX_PREFIX + memoryId, Integer.toString(split), ttl);
         } catch (Exception e) {
             try {
                 memoryStore.updateMessages(memoryId, messages);

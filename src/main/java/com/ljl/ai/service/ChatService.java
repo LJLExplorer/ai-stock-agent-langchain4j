@@ -8,6 +8,9 @@ import com.ljl.ai.agent.AgentConfig;
 import com.ljl.ai.agent.StockAnalysisAssistant;
 import com.ljl.ai.agent.QueryRewriteAssistant;
 import com.ljl.ai.memory.ChatMemoryService;
+import com.ljl.ai.memory.ConversationContextService;
+import com.ljl.ai.memory.ConversationQuery;
+import com.ljl.ai.memory.ConversationTopicStore;
 import com.ljl.ai.memory.RedisChatMemoryProvider;
 import com.ljl.ai.memory.ShortTermSummaryService;
 import com.ljl.ai.model.dto.ChatRequest;
@@ -43,15 +46,21 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.Set;
 import java.util.UUID;
 import java.util.Optional;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
  * 对话服务 - 核心业务逻辑
- * 消息的持久化由 LangChain4j 通过 ChatMemoryStore 自动处理
+ * MongoDB 保存完整业务消息；LangChain4j 通过 ChatMemoryStore 保存按话题隔离的模型窗口。
  */
 @Slf4j
 @Service
 public class ChatService {
+
+    private static final int ROUTING_HISTORY_LIMIT = 30;
+    private static final Pattern STOCK_CODE = Pattern.compile("(?<!\\d)(\\d{6})(?:\\.(?:SH|SZ|BJ|HK))?(?!\\d)",
+            Pattern.CASE_INSENSITIVE);
 
     private static final Map<String, String> TOOL_DISPLAY_NAMES = Map.ofEntries(
             Map.entry("getRealtimeQuote", "查询实时行情"),
@@ -97,6 +106,12 @@ public class ChatService {
 
     @Resource
     private ShortTermSummaryService shortTermSummaryService;
+
+    @Resource
+    private ConversationContextService conversationContextService;
+
+    @Resource
+    private ConversationTopicStore conversationTopicStore;
 
     @Resource
     private LongTermMemoryService longTermMemoryService;
@@ -165,6 +180,7 @@ public class ChatService {
     private ChatResponse chatInternal(ChatRequest request) {
         log.info("处理对话请求, userId: {}, sessionId: {}", request.getUserId(), request.getSessionId());
         String activeSessionId = request.getSessionId();
+        String activeModelMemoryId = null;
 
         try {
             // 1. 获取或创建会话
@@ -178,17 +194,29 @@ public class ChatService {
             activeSessionId = sessionId;
             log.info("chat_session_ready traceId={}, sessionId={}, userId={}", MDC.get("traceId"), sessionId,
                     request.getUserId());
-            String memoryId = memoryId(request.getUserId(), sessionId);
+            String baseMemoryId = memoryId(request.getUserId(), sessionId);
             String originalUserMessage = request.getMessage();
             String userMessage = originalUserMessage;
-            Set<String> previousToolInvocationIds = collectToolInvocationIds(memoryId);
 
             if (StringUtils.isNotBlank(request.getOrderId())) {
                 userMessage = userMessage + "\n当前用户正在咨询股票：" + request.getOrderId();
             }
-            String retrievalQuery = rewriteRetrievalQuery(userMessage, shortTermSummaryService.get(memoryId));
-            log.info("chat_retrieval_query_ready traceId={}, sessionId={}, queryLength={}", MDC.get("traceId"),
-                    sessionId, retrievalQuery == null ? 0 : retrievalQuery.length());
+            ConversationTopicStore.TopicState topicState = currentTopicState(baseMemoryId);
+            String activeTopicMemoryId = ConversationTopicStore.topicMemoryId(
+                    baseMemoryId, topicState.activeTopicKey());
+            String currentSummary = shortTermSummaryService.get(activeTopicMemoryId);
+            List<ChatMessage> recentHistory = recentHistory(sessionId);
+            String recentConversation = conversationContextService == null ? ""
+                    : conversationContextService.buildRewriteContext(recentHistory);
+            ConversationQuery resolvedQuery = resolveRetrievalQuery(
+                    userMessage, recentConversation, currentSummary, topicState);
+            String retrievalQuery = resolvedQuery.standaloneQuery();
+            String modelMemoryId = ConversationTopicStore.topicMemoryId(baseMemoryId, resolvedQuery.topicKey());
+            activeModelMemoryId = modelMemoryId;
+            Set<String> previousToolInvocationIds = collectToolInvocationIds(modelMemoryId);
+            log.info("chat_retrieval_query_ready traceId={}, sessionId={}, topicKey={}, topicRelation={}, confidence={}, queryLength={}",
+                    MDC.get("traceId"), sessionId, resolvedQuery.topicKey(), resolvedQuery.topicRelation(),
+                    resolvedQuery.confidence(), retrievalQuery.length());
 
             // 2. 执行RAG检索（如果启用）
             List<KnowledgeSource> knowledgeSources = null;
@@ -212,14 +240,17 @@ public class ChatService {
             // 3. 调用智能体生成回复
             // LangChain4j 近轮消息窗口使用 Redis；业务会话与展示消息使用 MongoDB。
 
-            String memoryContext = buildMemoryContext(request.getUserId(), sessionId, retrievalQuery);
+            String focusedContext = conversationContextService == null ? ""
+                    : conversationContextService.buildFocusedContext(recentHistory, resolvedQuery);
+            String memoryContext = buildMemoryContext(
+                    request.getUserId(), modelMemoryId, retrievalQuery, focusedContext);
 
             String aiResponse;
             String workflowAnswer = null;
             StockAnalysisAssistant assistant = stockAnalysisAssistantWithoutTools;
             List<ToolInvocation> workflowToolInvocations = Collections.emptyList();
             if (Boolean.TRUE.equals(request.getEnableTools())) {
-                Optional<PlanValidator.ValidatedPlan> planned = planForExecution(userMessage);
+                Optional<PlanValidator.ValidatedPlan> planned = planForExecution(retrievalQuery);
                 if (planned.isPresent()) {
                     PlanValidator.ValidatedPlan validatedPlan = planned.get();
                     if (workflowRunner != null) {
@@ -247,14 +278,14 @@ public class ChatService {
                 aiResponse = workflowAnswer;
             } else if (ragContext != null) {
                 // 有RAG上下文
-                aiResponse = assistant.chatWithRag(memoryId, userMessage, ragContext, memoryContext);
+                aiResponse = assistant.chatWithRag(modelMemoryId, userMessage, ragContext, memoryContext);
             } else {
                 // 普通对话
-                aiResponse = assistant.chatWithMemory(memoryId, userMessage, memoryContext);
+                aiResponse = assistant.chatWithMemory(modelMemoryId, userMessage, memoryContext);
             }
 
             if (StringUtils.isBlank(aiResponse)) {
-                log.warn("AI响应为空, memoryId: {}", memoryId);
+                log.warn("AI响应为空, memoryId: {}", modelMemoryId);
                 aiResponse = "系统暂未生成有效回复，请稍后重试。";
             }
             aiResponse = AnswerTextFormatter.format(aiResponse);
@@ -262,7 +293,7 @@ public class ChatService {
                     sessionId, aiResponse.length());
 
             List<ToolInvocation> toolInvocations = new ArrayList<>(
-                    collectToolInvocations(memoryId, previousToolInvocationIds));
+                    collectToolInvocations(modelMemoryId, previousToolInvocationIds));
             toolInvocations.addAll(workflowToolInvocations);
             knowledgeSources = mergeKnowledgeSources(knowledgeSources, extractWebSources(workflowToolInvocations));
 
@@ -272,10 +303,12 @@ public class ChatService {
             if (assistantMessage == null) {
                 log.warn("保存助手消息失败, sessionId: {}", sessionId);
             }
+            // 只有本轮成功生成并保存业务消息后才推进当前话题，失败重试不会污染路由状态。
+            activateTopic(baseMemoryId, resolvedQuery.topicKey());
             try {
-                shortTermSummaryService.refresh(memoryId);
+                shortTermSummaryService.refresh(modelMemoryId);
             } catch (Exception e) {
-                log.warn("短期记忆刷新失败，本次跳过, memoryId: {}", memoryId, e);
+                log.warn("短期记忆刷新失败，本次跳过, memoryId: {}", modelMemoryId, e);
             }
             if (ragTrace != null) {
                 ragTrace.setMessageId(assistantMessage == null ? null : assistantMessage.getMessageId());
@@ -313,7 +346,9 @@ public class ChatService {
             // 模型在工具调用中断（连接异常）或反复调用工具未收敛（超出循环上限）时，
             // 都可能把不完整/发散的消息序列持久化下来，清掉 LangChain4j 记忆，避免下一次请求重复提交坏消息。
             if (StringUtils.isNotBlank(activeSessionId) && (hasMessage(e, "url error") || toolLoopExceeded)) {
-                chatMemoryProvider.clearMemory(memoryId(request.getUserId(), activeSessionId));
+                String memoryToClear = StringUtils.defaultIfBlank(activeModelMemoryId,
+                        memoryId(request.getUserId(), activeSessionId));
+                chatMemoryProvider.clearMemory(memoryToClear);
                 log.warn("已清理异常会话的模型记忆，可使用同一会话重试, sessionId: {}", activeSessionId);
             }
 
@@ -526,28 +561,48 @@ public class ChatService {
     }
 
     String rewriteRetrievalQuery(String query, String shortTermSummary) {
+        return resolveRetrievalQuery(query, "", shortTermSummary,
+                ConversationTopicStore.TopicState.empty()).standaloneQuery();
+    }
+
+    ConversationQuery resolveRetrievalQuery(String query,
+                                             String recentConversation,
+                                             String shortTermSummary,
+                                             ConversationTopicStore.TopicState topicState) {
         if (query == null || query.isBlank()) {
-            return query;
+            return new ConversationQuery(query, topicState.activeTopicKey(),
+                    ConversationQuery.TopicRelation.CONTINUE, 0D);
         }
         try {
-            String rewritten = queryRewriteAssistant.rewrite(query,
-                    StringUtils.defaultString(shortTermSummary));
+            String rewritten = queryRewriteAssistant.rewrite(
+                    query,
+                    StringUtils.defaultString(recentConversation),
+                    StringUtils.defaultString(shortTermSummary),
+                    topicState.promptContext());
             if (StringUtils.isBlank(rewritten)) {
-                return query;
+                return fallbackQuery(query, topicState);
             }
-            return rewritten.trim();
+            ConversationQuery result = parseResolvedQuery(rewritten, query, topicState);
+            return enforceExplicitStockCode(result, query, topicState);
         } catch (Exception exception) {
             log.warn("查询重写失败，使用原始问题检索, errorType={}",
                     exception.getClass().getSimpleName());
-            return query;
+            return fallbackQuery(query, topicState);
         }
     }
 
     String buildMemoryContext(String userId, String sessionId, String query) {
+        return buildMemoryContext(userId, memoryId(userId, sessionId), query, "");
+    }
+
+    String buildMemoryContext(String userId, String modelMemoryId, String query, String focusedContext) {
         List<String> sections = new ArrayList<>();
-        String summary = shortTermSummaryService.get(memoryId(userId, sessionId));
+        if (StringUtils.isNotBlank(focusedContext)) {
+            sections.add("【当前话题相关近轮对话】\n" + focusedContext);
+        }
+        String summary = shortTermSummaryService.get(modelMemoryId);
         if (StringUtils.isNotBlank(summary)) {
-            sections.add("【历史对话摘要】\n" + summary);
+            sections.add("【当前话题历史摘要】\n" + summary);
         }
         try {
             List<UserLongTermMemory> memories =
@@ -567,6 +622,77 @@ public class ChatService {
                     e.getClass().getSimpleName());
         }
         return String.join("\n\n", sections);
+    }
+
+    private ConversationQuery parseResolvedQuery(String raw,
+                                                  String originalQuery,
+                                                  ConversationTopicStore.TopicState topicState) {
+        try {
+            JSONObject json = JSON.parseObject(extractJsonObject(raw));
+            String standalone = StringUtils.defaultIfBlank(json.getString("standaloneQuery"), originalQuery);
+            String topicKey = StringUtils.defaultIfBlank(json.getString("topicKey"), topicState.activeTopicKey());
+            ConversationQuery.TopicRelation relation = ConversationQuery.TopicRelation.from(
+                    json.getString("topicRelation"));
+            double confidence = json.getDoubleValue("confidence");
+            return new ConversationQuery(standalone, topicKey, relation, confidence);
+        } catch (RuntimeException invalidJson) {
+            // 兼容模型偶发只返回改写问句的情况，不让格式问题阻断主链路。
+            return new ConversationQuery(raw.trim(), topicState.activeTopicKey(),
+                    ConversationQuery.TopicRelation.CONTINUE, 0.5D);
+        }
+    }
+
+    private ConversationQuery enforceExplicitStockCode(ConversationQuery resolved,
+                                                        String originalQuery,
+                                                        ConversationTopicStore.TopicState topicState) {
+        // 原问题中的代码最可信；若原问题是公司名，也接受改写结果补出的明确代码。
+        Matcher matcher = STOCK_CODE.matcher(originalQuery + "\n" + resolved.standaloneQuery());
+        if (!matcher.find()) {
+            return resolved;
+        }
+        String explicitTopic = matcher.group(1);
+        String active = topicState.activeTopicKey();
+        ConversationQuery.TopicRelation relation;
+        if (ConversationTopicStore.GENERAL_TOPIC.equals(active)) {
+            relation = ConversationQuery.TopicRelation.NEW;
+        } else if (active.contains(explicitTopic)) {
+            relation = ConversationQuery.TopicRelation.CONTINUE;
+        } else if (topicState.topicKeys().stream().anyMatch(topic -> topic.contains(explicitTopic))) {
+            relation = ConversationQuery.TopicRelation.RETURN;
+        } else {
+            relation = ConversationQuery.TopicRelation.SWITCH;
+        }
+        return new ConversationQuery(resolved.standaloneQuery(), explicitTopic, relation,
+                Math.max(resolved.confidence(), 0.9D));
+    }
+
+    private ConversationQuery fallbackQuery(String query, ConversationTopicStore.TopicState topicState) {
+        ConversationQuery fallback = new ConversationQuery(query, topicState.activeTopicKey(),
+                ConversationQuery.TopicRelation.CONTINUE, 0D);
+        return enforceExplicitStockCode(fallback, query, topicState);
+    }
+
+    private List<ChatMessage> recentHistory(String sessionId) {
+        try {
+            List<ChatMessage> history = chatMemoryService.getRecentSessionMessages(sessionId, ROUTING_HISTORY_LIMIT);
+            return history == null ? List.of() : history;
+        } catch (RuntimeException exception) {
+            log.warn("读取近期会话用于查询改写失败，本轮仅使用摘要, sessionId={}, errorType={}",
+                    sessionId, exception.getClass().getSimpleName());
+            return List.of();
+        }
+    }
+
+    private ConversationTopicStore.TopicState currentTopicState(String baseMemoryId) {
+        return conversationTopicStore == null
+                ? ConversationTopicStore.TopicState.empty()
+                : conversationTopicStore.get(baseMemoryId);
+    }
+
+    private void activateTopic(String baseMemoryId, String topicKey) {
+        if (conversationTopicStore != null) {
+            conversationTopicStore.activate(baseMemoryId, topicKey);
+        }
     }
 
     private Set<String> collectToolInvocationIds(String memoryId) {
@@ -713,8 +839,15 @@ public class ChatService {
             throw new SecurityException("无权访问该会话");
         }
         String memoryId = memoryId(userId, sessionId);
-        chatMemoryProvider.clearMemory(memoryId);
-        shortTermSummaryService.delete(memoryId);
+        List<String> modelMemoryIds = conversationTopicStore == null
+                ? List.of(memoryId) : conversationTopicStore.modelMemoryIds(memoryId);
+        for (String modelMemoryId : modelMemoryIds) {
+            chatMemoryProvider.clearMemory(modelMemoryId);
+            shortTermSummaryService.delete(modelMemoryId);
+        }
+        if (conversationTopicStore != null) {
+            conversationTopicStore.delete(memoryId);
+        }
         chatMemoryService.deleteSession(sessionId);
     }
 

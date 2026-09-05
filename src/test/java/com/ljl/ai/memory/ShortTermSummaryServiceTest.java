@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 
+import java.time.Duration;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -23,7 +24,7 @@ class ShortTermSummaryServiceTest {
         RedisChatMemoryStore store = mock(RedisChatMemoryStore.class);
         MemoryConfig config = new MemoryConfig();
         config.getShortTerm().setMaxChars(100);
-        config.getShortTerm().setSummaryTriggerMessages(1);
+        config.getShortTerm().setSummaryTriggerMessages(2);
         when(store.getMessages("user-1:session-1")).thenReturn(List.of(UserMessage.from("short")));
 
         ShortTermSummaryService service = new ShortTermSummaryService(redis, store, config,
@@ -32,6 +33,26 @@ class ShortTermSummaryServiceTest {
 
         verifyNoInteractions(redis);
         verify(store, never()).updateMessages(any(), anyList());
+    }
+
+    @Test
+    void shouldSummarizeWhenMessageLimitIsReachedBeforeCharacterLimit() {
+        StringRedisTemplate redis = mock(StringRedisTemplate.class);
+        ValueOperations<String, String> values = mock(ValueOperations.class);
+        when(redis.opsForValue()).thenReturn(values);
+        RedisChatMemoryStore store = mock(RedisChatMemoryStore.class);
+        MemoryConfig config = new MemoryConfig();
+        config.getShortTerm().setMaxChars(10_000);
+        config.getShortTerm().setSummaryTriggerMessages(2);
+        List<ChatMessage> messages = List.of(UserMessage.from("old"), UserMessage.from("new"));
+        when(store.getMessages("user-1:session-1")).thenReturn(messages);
+
+        ShortTermSummaryService service = new ShortTermSummaryService(redis, store, config,
+                (oldSummary, source) -> "summary");
+        service.refresh("user-1:session-1");
+
+        verify(store).updateMessages("user-1:session-1", messages.subList(1, 2));
+        verify(values).set("ai:memory:summary:user-1:session-1", "summary", Duration.ofSeconds(86_400));
     }
 
     @Test
@@ -78,7 +99,8 @@ class ShortTermSummaryServiceTest {
                 });
         service.refresh("user-1:session-1");
 
-        verify(values).set("ai:memory:summary:user-1:session-1", "recursive-summary");
+        verify(values).set("ai:memory:summary:user-1:session-1", "recursive-summary",
+                Duration.ofSeconds(86_400));
     }
 
     @Test
@@ -100,6 +122,6 @@ class ShortTermSummaryServiceTest {
         assertThrows(IllegalStateException.class, () -> service.refresh("user-1:session-1"));
 
         verify(store, never()).updateMessages(any(), anyList());
-        verify(values, never()).set(eq("ai:memory:summary:user-1:session-1"), anyString());
+        verify(values, never()).set(eq("ai:memory:summary:user-1:session-1"), anyString(), any(Duration.class));
     }
 }

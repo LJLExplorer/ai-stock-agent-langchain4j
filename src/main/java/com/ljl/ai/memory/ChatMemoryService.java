@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
 
@@ -89,6 +90,22 @@ public class ChatMemoryService {
             throw new SecurityException("无权访问该会话");
         }
         return getSessionMessages(sessionId);
+    }
+
+    /**
+     * 获取会话最近若干条业务消息，并恢复成从旧到新的顺序。
+     * 查询改写只需要一个受限窗口，避免把完整会话历史交给模型。
+     */
+    public List<ChatMessage> getRecentSessionMessages(String sessionId, int limit) {
+        if (limit <= 0) {
+            return List.of();
+        }
+        Query query = new Query(Criteria.where("sessionId").is(sessionId))
+                .with(Sort.by(Sort.Direction.DESC, "createTime"))
+                .limit(limit);
+        List<ChatMessage> messages = new ArrayList<>(mongoTemplate.find(query, ChatMessage.class));
+        Collections.reverse(messages);
+        return messages;
     }
 
     /**
