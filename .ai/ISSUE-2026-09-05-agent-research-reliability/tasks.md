@@ -195,11 +195,11 @@
 
 ### Task 5: 让财务与新闻工具消费 AnalysisContext
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=FinancialAnalysisToolTest,StockAnalysisTaskExecutorTest test'` 失败；测试编译阶段仅报告财务/新闻工具缺少 `AnalysisContext` 重载，与预期一致。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=FinancialAnalysisToolTest,StockAnalysisTaskExecutorTest test'` 通过（7 tests）；验证财报披露/来源/时点状态输出、无历史数据不回退，以及新闻保留 URL/source/publishedAt/temporalStatus。
 
 **涉及文件：**
 - Modify: `src/main/java/com/ljl/ai/tools/FinancialAnalysisTool.java`

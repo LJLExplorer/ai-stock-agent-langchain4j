@@ -53,8 +53,8 @@ public class StockAnalysisTaskExecutor {
         return switch (task) {
             case MARKET_DATA -> marketDataTool.getQuote(symbol, context);
             case TECHNICAL_ANALYSIS -> technicalAnalysisTool.analyzeTechnicalIndicators(symbol, "1d", context);
-            case FINANCIAL_ANALYSIS -> financialAnalysisTool.analyzeFinancialReport(symbol, period);
-            case NEWS_ANALYSIS -> newsRagTool.searchStockNewsAndAnnouncements(symbol, query, 30);
+            case FINANCIAL_ANALYSIS -> financialAnalysisTool.analyzeFinancialReport(symbol, period, context);
+            case NEWS_ANALYSIS -> newsRagTool.searchStockNewsAndAnnouncements(symbol, query, 30, context);
         };
     }
 }
