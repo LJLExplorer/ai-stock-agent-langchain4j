@@ -12,3 +12,4 @@
 - 新增不可变 `AnalysisContext` 与统一解析入口；聊天请求兼容可选分析日期和研究模式，并拒绝未来分析日期。
 - 新增不可变 `FinancialFact` 和 `EvidencePack`，以稳定 evidenceId、来源时间及 temporalStatus 表达可核验证据；工作流任务在重试时保留并去重历史证据。
 - 行情、财务和新闻客户端增加 analysisDate 感知契约：日 K 先按日期截断，财务数据按披露日选择，新闻过滤未来发布时间，未知日期保留 `UNKNOWN`；旧方法继续委托当前日期。
+- 行情与技术工具增加 `AnalysisContext` 工作流入口：历史行情由截止日 K 线构造，技术分析只读取截止日之前数据并输出数据截止日；修正技术工具描述，不再宣称尚未计算的 MACD/RSI/KDJ/布林带。

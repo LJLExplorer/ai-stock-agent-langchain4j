@@ -153,11 +153,11 @@
 
 ### Task 4: 让行情与技术工具消费 AnalysisContext
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** 修正测试中 `@Tool.value()` 为数组的断言后，`zsh -ic 'jdk21 && mvn -q -Dtest=MarketDataToolTest,StockAnalysisTaskExecutorTest test'` 失败；仅报告缺少 `getQuote(symbol, AnalysisContext)`、技术分析上下文重载及 Executor 上下文入口，与预期一致。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=MarketDataToolTest,StockAnalysisTaskExecutorTest test'` 通过（7 tests）；验证历史行情走截止日 K 线、上下文同实例传递、技术结果包含截止日且工具描述只声明真实计算指标。
 
 **涉及文件：**
 - Modify: `src/main/java/com/ljl/ai/tools/MarketDataTool.java`
