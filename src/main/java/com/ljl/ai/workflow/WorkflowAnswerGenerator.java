@@ -2,6 +2,7 @@ package com.ljl.ai.workflow;
 
 import com.ljl.ai.agent.WorkflowAnswerAssistant;
 import com.ljl.ai.research.ClaimEvidenceGuard;
+import com.ljl.ai.research.ResearchConclusion;
 import com.ljl.ai.service.AnswerTextFormatter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -43,6 +44,9 @@ public class WorkflowAnswerGenerator {
             return;
         }
         AnswerContextBuilder.Context context = contextBuilder.build(state);
+        if (presentResearchConclusion(state, context)) {
+            return;
+        }
         String trustedContext = trustedContext(state, context);
         GenerationAttempt first = firstAttempt(state, context, trustedContext);
         if (first.valid()) {
@@ -59,6 +63,47 @@ public class WorkflowAnswerGenerator {
         log.warn("workflow_answer_fallback executionId={}, firstReason={}, retryReason={}, contextLength={}",
                 state.getExecutionId(), first.reason(), rewritten.reason(), context.content().length());
         state.setFinalAnswer(fallback(state));
+    }
+
+    private boolean presentResearchConclusion(ExecutionState state, AnswerContextBuilder.Context context) {
+        ResearchConclusion conclusion = state.getResearchConclusion();
+        if (conclusion == null || conclusion.rating() == ResearchConclusion.Rating.INSUFFICIENT_DATA) {
+            return false;
+        }
+        String answer = render(conclusion);
+        GenerationAttempt validation = validate(state, context, 0, answer);
+        if (!validation.valid()) {
+            log.warn("deep_research_answer_rejected executionId={}, reason={}",
+                    state.getExecutionId(), validation.reason());
+            return false;
+        }
+        state.setFinalAnswer(AnswerTextFormatter.format(answer));
+        return true;
+    }
+
+    private String render(ResearchConclusion conclusion) {
+        String citations = conclusion.evidenceIds().stream()
+                .map(id -> "[evidence:" + id + "]")
+                .reduce((left, right) -> left + " " + right)
+                .map(value -> " " + value)
+                .orElse("");
+        StringBuilder answer = new StringBuilder("## 深度投研结论\n\n")
+                .append("- 评级：").append(conclusion.rating()).append(citations).append('\n')
+                .append("- 置信度：").append(Math.round(conclusion.confidence() * 100))
+                .append('%').append(citations).append('\n')
+                .append("- 数据截止日：").append(conclusion.dataAsOf()).append(citations)
+                .append("\n\n### 综合判断\n\n")
+                .append(conclusion.summary()).append(citations);
+        if (!conclusion.risks().isEmpty()) {
+            answer.append("\n\n### 主要风险\n");
+            conclusion.risks().forEach(risk -> answer.append("\n- ").append(risk).append(citations));
+        }
+        if (conclusion.degraded() || !conclusion.limitations().isEmpty()) {
+            answer.append("\n\n### 研究限制\n");
+            conclusion.limitations().forEach(limitation ->
+                    answer.append("\n- ").append(limitation).append(citations));
+        }
+        return answer.toString();
     }
 
     private GenerationAttempt firstAttempt(ExecutionState state, AnswerContextBuilder.Context context,

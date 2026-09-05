@@ -15,7 +15,7 @@ import java.util.Set;
 
 /** 固定顺序、固定调用上限的深度研究编排器。 */
 @Slf4j
-public final class DeepResearchService {
+public class DeepResearchService {
     private static final int EVIDENCE_BUDGET = 12_000;
     private static final int ROLE_OUTPUT_BUDGET = 2_000;
     private static final int UPSTREAM_BUDGET = 10_000;

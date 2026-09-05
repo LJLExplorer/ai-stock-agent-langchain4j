@@ -24,3 +24,4 @@
 - 新增 `/api/research/executions` 异步启动、所有者状态查询和 SSE 事件流接口；未授权与不存在的执行统一不可见。SSE 先回放有界快照，再通过 sequence 游标原子补发订阅间隙事件并去重，终态自动完成，断连/超时/发送失败只注销监听器而不取消后台研究。
 - 新增确定性 Claim–Evidence Guard，以 `[evidence:ev-…]` 显式语法校验回答只引用当前 EvidencePack；拒绝未知/跨包 ID、无证据引用的数值以及晚于 dataAsOf 的日期。工作流回答改为先证据校验、再 Markdown 校验，只允许一次受原因约束的重写，仍失败则确定性降级；旧 `factCheck` 兼容代码未被当作事实验证接入。
 - 新增无工具、无 MemoryId 的深度研究 Assistant 契约，以及基本面→技术面→新闻→看多→看空→风险→Judge 的固定有界编排；所有角色共享同一 EvidencePack 文本且每个最多调用一次。Judge JSON 映射为不可变 ResearchConclusion，校验 rating、confidence、evidenceIds 和 dataAsOf；单角色失败继续但标记降级，Judge 解析或证据越界时返回确定性 `INSUFFICIENT_DATA`。
+- 将可选深度投研正式接入工作流：可信任务经 EVIDENCE_PACK checkpoint 后按 AnalysisContext 选择 STANDARD 直达回答或 DEEP_RESEARCH 分支，节点状态和事件可恢复、可观察。深度 Assistant Bean 明确不挂载工具与会话记忆；通过校验的 ResearchConclusion 由确定性 Presenter 输出带证据引用的 Markdown，证据不足或结论越界时沿用标准答案链路。

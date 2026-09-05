@@ -5,6 +5,7 @@ import com.ljl.ai.planner.StockAnalysisTask;
 import com.ljl.ai.research.ClaimEvidenceGuard;
 import com.ljl.ai.research.EvidencePack;
 import com.ljl.ai.research.FinancialFact;
+import com.ljl.ai.research.ResearchConclusion;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
@@ -114,6 +115,38 @@ class WorkflowAnswerGeneratorTest {
 
         assertThat(state.getFinalAnswer()).contains("1500", "ev-price");
         verify(assistant, never()).rewrite(anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void shouldPresentValidatedStructuredResearchConclusionWithoutCallingModel() {
+        WorkflowAnswerAssistant assistant = mock(WorkflowAnswerAssistant.class);
+        WorkflowAnswerGenerator generator = generator(assistant);
+        ExecutionState state = completedStateWithEvidence();
+        state.setResearchConclusion(new ResearchConclusion(ResearchConclusion.Rating.NEUTRAL, 0.72,
+                "多空证据交织", List.of("ev-price"), List.of("注意波动"),
+                LocalDate.of(2025, 12, 31), false, List.of()));
+
+        generator.generate(state);
+
+        assertThat(state.getFinalAnswer()).contains("NEUTRAL", "72%", "2025-12-31", "evidence:ev-price");
+        verify(assistant, never()).generate(anyString(), anyString());
+        verify(assistant, never()).rewrite(anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void shouldFallBackToStandardAnswerWhenJudgeConclusionIsInsufficient() {
+        WorkflowAnswerAssistant assistant = mock(WorkflowAnswerAssistant.class);
+        when(assistant.generate(anyString(), anyString())).thenReturn("## 结论\n\n- 当前证据不足。");
+        WorkflowAnswerGenerator generator = generator(assistant);
+        ExecutionState state = completedStateWithEvidence();
+        state.setResearchConclusion(new ResearchConclusion(ResearchConclusion.Rating.INSUFFICIENT_DATA, 0,
+                "裁决失败", List.of(), List.of(), LocalDate.of(2025, 12, 31), true,
+                List.of("JUDGE_FAILED")));
+
+        generator.generate(state);
+
+        assertThat(state.getFinalAnswer()).contains("当前证据不足");
+        verify(assistant).generate(anyString(), anyString());
     }
 
     private WorkflowAnswerGenerator generator(WorkflowAnswerAssistant assistant) {

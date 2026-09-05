@@ -4,6 +4,7 @@ import com.ljl.ai.config.AgentToolConfig;
 import com.ljl.ai.memory.RedisChatMemoryProvider;
 import com.ljl.ai.observability.TraceLoggingConfig;
 import com.ljl.ai.observability.TracingChatLanguageModel;
+import com.ljl.ai.research.DeepResearchService;
 import com.ljl.ai.tools.FinancialAnalysisTool;
 import com.ljl.ai.tools.MarketDataTool;
 import com.ljl.ai.tools.NewsRagTool;
@@ -147,6 +148,21 @@ public class AgentConfig {
         return AiServices.builder(WorkflowAnswerAssistant.class)
                 .chatLanguageModel(tracingChatLanguageModel())
                 .build();
+    }
+
+    /**
+     * 深度投研角色只读取已冻结证据包，不挂载工具和会话记忆。
+     */
+    @Bean
+    public DeepResearchAssistant deepResearchAssistant() {
+        return AiServices.builder(DeepResearchAssistant.class)
+                .chatLanguageModel(tracingChatLanguageModel())
+                .build();
+    }
+
+    @Bean
+    public DeepResearchService deepResearchService(DeepResearchAssistant assistant) {
+        return new DeepResearchService(assistant);
     }
 
     /**

@@ -654,14 +654,16 @@
 
 ### Task 16: 将深度投研分支接入工作流
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=StockAnalysisWorkflowTest,WorkflowAnswerGeneratorTest test'` 失败；测试编译阶段报告 `StockAnalysisWorkflow` 缺少深度投研服务构造入口，`ExecutionState` 缺少 `ResearchConclusion` 读写方法，与预期尚未接入深度投研分支和结构化结论状态一致。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=StockAnalysisWorkflowTest,WorkflowAnswerGeneratorTest test'` 通过（16 tests）；额外执行 `DeepResearchServiceTest,DeepResearchAssistantContractTest,AgentConfigToolSelectionTest` 通过，验证 STANDARD/DEEP 条件路由、深度节点 checkpoint 与事件、结构化结论确定性呈现、Judge 失败回退标准答案链路，以及深度 Assistant 不挂载工具和会话记忆。
 
 **涉及文件：**
 - Modify: `src/main/java/com/ljl/ai/agent/AgentConfig.java`
+- Modify: `src/main/java/com/ljl/ai/research/DeepResearchService.java`
+- Modify: `src/main/java/com/ljl/ai/workflow/ExecutionState.java`
 - Modify: `src/main/java/com/ljl/ai/workflow/StockAnalysisWorkflow.java`
 - Modify: `src/main/java/com/ljl/ai/workflow/WorkflowAnswerGenerator.java`
 - Test: `src/test/java/com/ljl/ai/workflow/StockAnalysisWorkflowTest.java`

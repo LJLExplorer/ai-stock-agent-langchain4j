@@ -3,6 +3,9 @@ package com.ljl.ai.workflow;
 import com.ljl.ai.observability.RunEvent;
 import com.ljl.ai.observability.RunEventPublisher;
 import com.ljl.ai.planner.StockAnalysisTask;
+import com.ljl.ai.research.AnalysisContext;
+import com.ljl.ai.research.DeepResearchService;
+import com.ljl.ai.research.ResearchConclusion;
 import org.bsc.langgraph4j.CompiledGraph;
 import org.bsc.langgraph4j.GraphStateException;
 import org.bsc.langgraph4j.StateGraph;
@@ -28,25 +31,33 @@ public class StockAnalysisWorkflow {
     private final WorkflowCritic critic;
     private final WorkflowAnswerGenerator answerGenerator;
     private final RunEventPublisher eventPublisher;
+    private final DeepResearchService deepResearchService;
 
     public StockAnalysisWorkflow() {
-        this(null, new WorkflowReflector(), new WorkflowCritic(), null, null);
+        this(null, new WorkflowReflector(), new WorkflowCritic(), null, null, null);
     }
 
     public StockAnalysisWorkflow(StockAnalysisTaskNode taskNode, WorkflowReflector reflector,
                                  WorkflowCritic critic, WorkflowAnswerGenerator answerGenerator) {
-        this(taskNode, reflector, critic, answerGenerator, null);
+        this(taskNode, reflector, critic, answerGenerator, null, null);
+    }
+
+    public StockAnalysisWorkflow(StockAnalysisTaskNode taskNode, WorkflowReflector reflector,
+                                 WorkflowCritic critic, WorkflowAnswerGenerator answerGenerator,
+                                 RunEventPublisher eventPublisher) {
+        this(taskNode, reflector, critic, answerGenerator, eventPublisher, null);
     }
 
     @Autowired
     public StockAnalysisWorkflow(StockAnalysisTaskNode taskNode, WorkflowReflector reflector,
                                  WorkflowCritic critic, WorkflowAnswerGenerator answerGenerator,
-                                 RunEventPublisher eventPublisher) {
+                                 RunEventPublisher eventPublisher, DeepResearchService deepResearchService) {
         this.taskNode = taskNode;
         this.reflector = reflector;
         this.critic = critic;
         this.answerGenerator = answerGenerator;
         this.eventPublisher = eventPublisher;
+        this.deepResearchService = deepResearchService;
     }
 
     public CompiledGraph<AgentState> compile() {
@@ -90,11 +101,15 @@ public class StockAnalysisWorkflow {
                             return new Command(next.route().name(), Map.of("currentNode", "CRITIC"));
                         }
                     }), Map.of("RETRY", "RETRY", "ADD_NEWS", "ADD_NEWS",
-                            "ANSWER", "ANSWER", "FAILED", "FAILED"))
+                            "ANSWER", "EVIDENCE_PACK", "FAILED", "FAILED"))
                     .addNode("RETRY", stateNode("RETRY", executionState,
                             ignored -> retry(executionState, reflection.get()), checkpointCallback))
                     .addNode("ADD_NEWS", stateNode("ADD_NEWS", executionState,
                             ignored -> addNews(executionState, reflection.get()), checkpointCallback))
+                    .addNode("EVIDENCE_PACK", evidencePackNode(executionState, checkpointCallback),
+                            Map.of("DEEP_RESEARCH", "DEEP_RESEARCH", "ANSWER", "ANSWER"))
+                    .addNode("DEEP_RESEARCH", stateNode("DEEP_RESEARCH", executionState,
+                            this::deepResearch, checkpointCallback))
                     .addNode("ANSWER", stateNode("ANSWER", executionState, this::answer, checkpointCallback))
                     .addNode("FAILED", stateNode("FAILED", executionState,
                             ignored -> fail(executionState, decision.get()), checkpointCallback));
@@ -111,6 +126,7 @@ public class StockAnalysisWorkflow {
             graph.addEdge("REFLECTOR", "CRITIC");
             graph.addEdge("RETRY", "INIT");
             graph.addEdge("ADD_NEWS", "INIT");
+            graph.addEdge("DEEP_RESEARCH", "ANSWER");
             graph.addEdge("ANSWER", StateGraph.END);
             graph.addEdge("FAILED", StateGraph.END);
             return graph.compile();
@@ -168,6 +184,51 @@ public class StockAnalysisWorkflow {
         }, checkpointCallback);
     }
 
+    private AsyncCommandAction<AgentState> evidencePackNode(ExecutionState executionState,
+                                                             CheckpointCallback checkpointCallback) {
+        return AsyncCommandAction.node_async((state, config) -> {
+            if (executionState == null) {
+                return new Command("ANSWER", Map.of("currentNode", "EVIDENCE_PACK"));
+            }
+            publish(executionState, RunEvent.EventType.NODE_STARTED, "EVIDENCE_PACK", "status=started");
+            synchronized (executionState) {
+                long expectedVersion = executionState.getVersion();
+                String route = shouldRunDeepResearch(executionState) ? "DEEP_RESEARCH" : "ANSWER";
+                executionState.checkpointCompleted("EVIDENCE_PACK", expectedVersion);
+                checkpointCallback.save(executionState, expectedVersion);
+                publish(executionState, RunEvent.EventType.NODE_COMPLETED, "EVIDENCE_PACK", "status=completed");
+                if (executionState.getEvidencePack() != null) {
+                    publish(executionState, RunEvent.EventType.EVIDENCE_PACK_READY, "EVIDENCE_PACK",
+                            "evidenceHash=" + value(executionState.getEvidencePack().evidenceHash()));
+                }
+                return new Command(route, Map.of("currentNode", "EVIDENCE_PACK"));
+            }
+        });
+    }
+
+    private boolean shouldRunDeepResearch(ExecutionState state) {
+        return deepResearchService != null
+                && state.getEvidencePack() != null
+                && state.getAnalysisContext() != null
+                && state.getAnalysisContext().researchMode() == AnalysisContext.ResearchMode.DEEP;
+    }
+
+    private void deepResearch(ExecutionState state) {
+        if (!shouldRunDeepResearch(state)) {
+            return;
+        }
+        publish(state, RunEvent.EventType.DEEP_RESEARCH_STARTED, "DEEP_RESEARCH", "status=started");
+        try {
+            ResearchConclusion conclusion = deepResearchService.research(state.getEvidencePack());
+            state.setResearchConclusion(conclusion);
+            log.info("deep_research_finished executionId={}, rating={}, degraded={}", state.getExecutionId(),
+                    conclusion.rating(), conclusion.degraded());
+        } catch (RuntimeException exception) {
+            log.warn("deep_research_failed executionId={}, errorType={}", state.getExecutionId(),
+                    exception.getClass().getSimpleName());
+        }
+    }
+
     private void start(ExecutionState state) {
         if (state.getWorkflowStatus() != WorkflowStatus.RUNNING) {
             state.start();
@@ -210,6 +271,10 @@ public class StockAnalysisWorkflow {
         }
         RunEvent event = eventPublisher.publish(state.getExecutionId(), state.getTraceId(), eventType, node, summary);
         state.setEventSequence(event.sequence());
+    }
+
+    private String value(String value) {
+        return value == null ? "" : value;
     }
 
     @FunctionalInterface
