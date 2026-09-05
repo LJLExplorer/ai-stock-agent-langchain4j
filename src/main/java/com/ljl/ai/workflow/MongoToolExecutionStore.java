@@ -1,6 +1,7 @@
 package com.ljl.ai.workflow;
 
 import com.ljl.ai.research.FinancialFact;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.mongodb.core.FindAndModifyOptions;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;
@@ -21,6 +22,7 @@ public class MongoToolExecutionStore implements ToolExecutionStore {
     private final MongoTemplate mongoTemplate;
     private final Clock clock;
 
+    @Autowired
     public MongoToolExecutionStore(MongoTemplate mongoTemplate) {
         this(mongoTemplate, Clock.systemUTC());
     }

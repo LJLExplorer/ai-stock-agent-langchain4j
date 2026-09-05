@@ -2,6 +2,7 @@ package com.ljl.ai.workflow;
 
 import com.ljl.ai.research.FinancialFact;
 import org.junit.jupiter.api.Test;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 import org.springframework.data.mongodb.core.FindAndModifyOptions;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.query.Query;
@@ -12,6 +13,7 @@ import java.time.LocalDate;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -19,6 +21,19 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 class MongoToolExecutionStoreTest {
+
+    @Test
+    void shouldCreateStoreThroughSpringConstructorInjection() {
+        MongoTemplate mongoTemplate = mock(MongoTemplate.class);
+
+        try (AnnotationConfigApplicationContext context = new AnnotationConfigApplicationContext()) {
+            context.registerBean(MongoTemplate.class, () -> mongoTemplate);
+            context.register(MongoToolExecutionStore.class);
+            context.refresh();
+
+            assertNotNull(context.getBean(MongoToolExecutionStore.class));
+        }
+    }
 
     @Test
     void shouldUseStableCompositeIdAndBeginIdempotently() {

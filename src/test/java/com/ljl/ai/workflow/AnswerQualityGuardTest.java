@@ -1,10 +1,16 @@
 package com.ljl.ai.workflow;
 
 import org.junit.jupiter.api.Test;
+import org.springframework.stereotype.Component;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 class AnswerQualityGuardTest {
+
+    @Test
+    void shouldBeRegisteredAsSpringComponent() {
+        assertThat(AnswerQualityGuard.class).hasAnnotation(Component.class);
+    }
 
     @Test
     void shouldRejectRealDegeneratedMarkdownSample() {

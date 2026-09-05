@@ -1,9 +1,12 @@
 package com.ljl.ai.workflow;
 
+import org.springframework.stereotype.Component;
+
 import java.util.ArrayList;
 import java.util.List;
 
 /** Rejects high-confidence malformed Markdown before a workflow answer is persisted. */
+@Component
 public final class AnswerQualityGuard {
 
     private static final int EXCESSIVE_MARKDOWN_PUNCTUATION = 24;
