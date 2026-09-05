@@ -4,18 +4,25 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import com.ljl.ai.model.dto.ToolResult;
+import com.ljl.ai.model.entity.StockQuote;
 import com.ljl.ai.planner.AgentPlan;
 import com.ljl.ai.planner.StockAnalysisTask;
+import com.ljl.ai.research.AnalysisContext;
+import com.ljl.ai.research.EvidencePackBuilder;
 import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
 
 import java.util.List;
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 
 class StockAnalysisTaskNodeTest {
 
@@ -58,6 +65,27 @@ class StockAnalysisTaskNodeTest {
         assertThat(logs).anySatisfy(message -> assertThat(message)
                 .contains("tool_execution_failed").contains("IllegalStateException")
                 .doesNotContain("连接超时"));
+    }
+
+    @Test
+    void shouldPersistMappedEvidenceAndRefreshEvidencePack() {
+        StockAnalysisTaskExecutor executor = mock(StockAnalysisTaskExecutor.class);
+        AnalysisContext context = new AnalysisContext("600519.SH", LocalDate.of(2025, 12, 31),
+                AnalysisContext.ResearchMode.STANDARD, "execution-tool", "trace-tool", "user-1", "session-tool");
+        StockQuote quote = StockQuote.builder().symbol("600519.SH").price(new BigDecimal("1500"))
+                .timestamp(LocalDateTime.of(2025, 12, 31, 15, 0)).build();
+        doReturn(ToolResult.success(quote)).when(executor)
+                .executeWithContext(any(), any(), any(), any());
+        ExecutionTask task = pendingTask();
+        ExecutionState state = state(task);
+        state.setAnalysisContext(context);
+
+        new StockAnalysisTaskNode(executor, new EvidencePackBuilder()).execute(state, task);
+
+        assertThat(task.getEvidence()).isNotEmpty();
+        assertThat(state.getEvidencePack()).isNotNull();
+        assertThat(state.getEvidencePack().context()).isSameAs(context);
+        verify(executor).executeWithContext(any(), any(), any(), any());
     }
 
     private List<String> executeAndCapture(StockAnalysisTaskNode node, ExecutionState state, ExecutionTask task) {

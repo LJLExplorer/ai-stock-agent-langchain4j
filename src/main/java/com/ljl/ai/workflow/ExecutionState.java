@@ -1,6 +1,8 @@
 package com.ljl.ai.workflow;
 
 import com.ljl.ai.planner.AgentPlan;
+import com.ljl.ai.research.AnalysisContext;
+import com.ljl.ai.research.EvidencePack;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import org.springframework.data.annotation.Id;
@@ -22,6 +24,8 @@ public class ExecutionState {
     private String userId;
     private String originalQuestion;
     private AgentPlan plan;
+    private AnalysisContext analysisContext;
+    private EvidencePack evidencePack;
     private List<ExecutionTask> tasks = new ArrayList<>();
     private WorkflowStatus workflowStatus = WorkflowStatus.PLANNED;
     private String currentNode;

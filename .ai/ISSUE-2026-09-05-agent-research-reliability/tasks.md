@@ -237,11 +237,11 @@
 
 ### Task 6: 将工具结果映射并组装为 EvidencePack
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=EvidencePackBuilderTest,StockAnalysisTaskNodeTest test'` 失败；测试编译阶段报告 `EvidencePackBuilder` 不存在，与预期缺少映射器及执行状态证据包接口一致。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=EvidencePackBuilderTest,StockAnalysisTaskNodeTest test'` 通过（6 tests）；验证真实字段映射、分类、去重、未来事实排除、稳定 evidenceHash、缺失/失败记录及节点刷新 EvidencePack。
 
 **涉及文件：**
 - Create: `src/main/java/com/ljl/ai/research/EvidencePackBuilder.java`
