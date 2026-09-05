@@ -28,3 +28,4 @@
 - 新增独立 Mongo `ResearchDecision` 与后验复盘服务：按 executionId 幂等保存用户、标的、分析日期、评级、置信度、证据哈希和图版本；只查询同用户、同标的、已到期且未完成的记录，以历史日 K 确定性计算 1/5/20 个交易日收益及相对沪深 300 ETF 收益。基准缺失不会丢弃标的收益，复盘结果按 outcome 可用日期控制历史可见性，且不调用 LLM、不读取聊天或偏好记忆。
 - 将决策复盘接入真实对话与深度投研链路：ChatRequest 的 researchMode/analysisDate 经统一解析写入 ExecutionState，工作流启动前 best-effort 刷新并召回当时可见的同用户同标的复盘；DeepResearchService 将其置于带日期、不可充当 evidenceId 的独立参考区。本轮只有在有效深度结论和助手业务消息均成功后才幂等保存决策，复盘/保存失败均不阻断回答，STANDARD 模式不强制产生评级记录。
 - 建立覆盖 Planner、话题路由、RAG、证据门禁和工作流恢复的离线 Agent Eval；Runner 通过函数式适配器接收固定观测，输出字段顺序稳定的 JSON，并校验空样本、重复 ID 和非法计数。5 个确定性样本基线：accuracy 1.0、Recall@3 1.0、nDCG@3 0.9197207891481876、引用覆盖 1.0、数字一致性 1.0、平均延迟 30.0ms、总调用 3；默认 CI 不访问网络或模型，在线评测必须使用显式 Profile。
+- 新增前端深度投研 API/SSE 客户端，并使用 Node 内置 test runner 覆盖契约：异步启动强制 DEEP、executionId 与 RunEvent 字段白名单校验、所有者状态补偿、全部命名事件监听及终态关闭。事件流错误会立即关闭浏览器自动重连源，执行一次状态查询并把是否重连交还 UI；不把 Prompt、模型正文或工具结果作为事件数据暴露。

@@ -824,11 +824,11 @@
 
 ### Task 20: 建立前端深度投研 API 与事件客户端
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `cd frontend && npm test` 失败并报告 `Missing script: "test"`；同时新增测试导入尚不存在的 `researchExecution.js`，与预期缺少 Node 测试入口和深度投研事件客户端一致。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `cd frontend && npm test && npm run build` 通过；Node 内置 runner 共 5 tests 全部通过，Vite 生产构建成功（2063 modules transformed）。验证 POST 异步启动与 executionId 校验、owner-filtered 状态读取、受控 RunEvent 解析、命名 SSE 终态关闭，以及断线关闭旧 EventSource 后的一次状态补偿。
 
 **涉及文件：**
 - Modify: `frontend/package.json`
