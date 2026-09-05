@@ -27,11 +27,11 @@
 
 ### Task 1: 建立 AnalysisContext 与请求兼容边界
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=AnalysisContextResolverTest test'` 失败；测试编译阶段报告 `AnalysisContextResolver` 不存在，与预期缺少新领域类型一致。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=AnalysisContextResolverTest test'` 通过（3 tests）；验证旧请求缺省值、显式日期/深度模式与未来日期拒绝。
 
 **涉及文件：**
 - Create: `src/main/java/com/ljl/ai/research/AnalysisContext.java`

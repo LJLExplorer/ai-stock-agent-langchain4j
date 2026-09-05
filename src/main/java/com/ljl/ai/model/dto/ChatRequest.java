@@ -1,10 +1,13 @@
 package com.ljl.ai.model.dto;
 
+import com.ljl.ai.research.AnalysisContext;
 import jakarta.validation.constraints.NotBlank;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+
+import java.time.LocalDate;
 
 /**
  * 对话请求DTO
@@ -35,6 +38,16 @@ public class ChatRequest {
      * 关联订单ID（可选）
      */
     private String orderId;
+
+    /**
+     * 分析时点（可选，缺省为当前日期）
+     */
+    private LocalDate analysisDate;
+
+    /**
+     * 投研模式（可选，缺省为标准模式）
+     */
+    private AnalysisContext.ResearchMode researchMode;
 
     /**
      * 是否启用RAG

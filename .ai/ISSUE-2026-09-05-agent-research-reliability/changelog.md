@@ -9,3 +9,4 @@
 - 确认逐节点 Checkpoint、point-in-time、Claim–Evidence 校验、SSE、决策复盘及深度模式降级策略。
 - 明确不实现自动下单、任意代码执行、分布式 A2A、整体框架迁移，也不修改或提交 `application.yml`。
 - 计划审查补充深度投研异步启动接口，使客户端可以在任务完成前获得 executionId 并订阅 SSE；旧同步接口保持兼容。
+- 新增不可变 `AnalysisContext` 与统一解析入口；聊天请求兼容可选分析日期和研究模式，并拒绝未来分析日期。
