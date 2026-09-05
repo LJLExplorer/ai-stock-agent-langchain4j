@@ -12,6 +12,7 @@ import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
 import java.nio.charset.Charset;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -61,8 +62,20 @@ public class MarketDataClient {
     }
 
     public List<DailyBar> getDailyBars(String rawSymbol, int days) throws Exception {
+        return getDailyBars(rawSymbol, days, LocalDate.now());
+    }
+
+    public List<DailyBar> getDailyBars(String rawSymbol, int days, LocalDate analysisDate) throws Exception {
+        if (analysisDate == null) {
+            throw new IllegalArgumentException("analysisDate 不能为空");
+        }
+        if (analysisDate.isAfter(LocalDate.now())) {
+            throw new IllegalArgumentException("analysisDate 不能晚于当前日期");
+        }
         String symbol = normalizeSymbol(rawSymbol);
-        int lookback = Math.max(30, Math.min(800, days * 2 + 20));
+        int lookback = analysisDate.isBefore(LocalDate.now())
+                ? 800
+                : Math.max(30, Math.min(800, days * 2 + 20));
         String url = KLINE_URL + "?param=" + symbol + ",day,,," + lookback + ",qfq";
         JSONObject payload = JSON.parseObject(get(url));
         JSONObject data = payload.getJSONObject("data");
@@ -74,8 +87,7 @@ public class MarketDataClient {
         }
 
         List<DailyBar> result = new ArrayList<>();
-        int from = Math.max(0, rows.size() - days);
-        for (int i = from; i < rows.size(); i++) {
+        for (int i = 0; i < rows.size(); i++) {
             JSONArray row = rows.getJSONArray(i);
             if (row == null || row.size() < 6) {
                 continue;
@@ -84,7 +96,32 @@ public class MarketDataClient {
                     row.getString(0), decimal(row, 1), decimal(row, 2),
                     decimal(row, 3), decimal(row, 4), longValue(row, 5) * 100L));
         }
-        return result;
+        List<DailyBar> filtered = filterBarsAsOf(result, analysisDate, days);
+        if (filtered.isEmpty()) {
+            throw new IllegalStateException("分析日期前没有可用日K数据: " + rawSymbol + " " + analysisDate);
+        }
+        return filtered;
+    }
+
+    static List<DailyBar> filterBarsAsOf(List<DailyBar> bars, LocalDate analysisDate, int days) {
+        if (bars == null || bars.isEmpty() || days <= 0) {
+            return List.of();
+        }
+        List<DailyBar> eligible = bars.stream()
+                .filter(bar -> bar != null && parseBarDate(bar.date()) != null)
+                .filter(bar -> !parseBarDate(bar.date()).isAfter(analysisDate))
+                .sorted((left, right) -> parseBarDate(left.date()).compareTo(parseBarDate(right.date())))
+                .toList();
+        int from = Math.max(0, eligible.size() - days);
+        return List.copyOf(eligible.subList(from, eligible.size()));
+    }
+
+    private static LocalDate parseBarDate(String value) {
+        try {
+            return LocalDate.parse(value);
+        } catch (Exception ignored) {
+            return null;
+        }
     }
 
     private String get(String url) throws Exception {

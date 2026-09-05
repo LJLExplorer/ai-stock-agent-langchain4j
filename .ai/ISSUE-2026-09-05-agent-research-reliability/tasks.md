@@ -110,11 +110,11 @@
 
 ### Task 3: 为数据客户端增加 point-in-time 过滤
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=PointInTimeDataContractTest,NewsSearchClientTest test'` 失败；报告缺少 `filterBarsAsOf`、`FinancialSnapshot/selectSnapshotAsOf` 和新闻时间过滤/状态接口，与预期一致。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=PointInTimeDataContractTest,NewsSearchClientTest test'` 通过（5 tests）；验证日 K 截止、财报按披露日选择、未来新闻剔除及未知时间显式标记。
 
 **涉及文件：**
 - Modify: `src/main/java/com/ljl/ai/client/MarketDataClient.java`
