@@ -1,0 +1,10 @@
+# Agent 投研可靠性与深度研究模式变更记录
+
+## 2026-09-05
+
+- 完成当前项目与 LangGraph、TradingAgents、FinRobot、RD-Agent、AgentScope Java、Spring AI Alibaba、OpenAI Agents SDK 和 CrewAI 的方法对比。
+- 确认采用保留 LangChain4j/LangGraph4j 的渐进式增强方案，不整体迁移框架。
+- 确认多角色审议仅作为可选深度投研模式，默认请求继续使用现有受控流程。
+- 确认统一 AnalysisContext、FinancialFact、EvidencePack、ResearchConclusion、ToolExecutionRecord、RunEvent、ResearchDecision 和 Agent Eval 的数据边界。
+- 确认逐节点 Checkpoint、point-in-time、Claim–Evidence 校验、SSE、决策复盘及深度模式降级策略。
+- 明确不实现自动下单、任意代码执行、分布式 A2A、整体框架迁移，也不修改或提交 `application.yml`。
