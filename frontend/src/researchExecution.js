@@ -19,6 +19,114 @@ export const RUN_EVENT_TYPES = Object.freeze([
 const TERMINAL_EVENT_TYPES = new Set(['WORKFLOW_COMPLETED', 'WORKFLOW_FAILED'])
 const RUN_EVENT_TYPE_SET = new Set(RUN_EVENT_TYPES)
 const EXECUTION_ID = /^[A-Za-z0-9._:-]{1,128}$/
+const PHASES = Object.freeze([
+  ['PLAN', '计划与上下文'],
+  ['DATA', '数据与证据'],
+  ['RESEARCH', '多角色审议'],
+  ['ANSWER', '结论生成']
+])
+
+export function buildResearchRequest(mode, payload) {
+  const normalizedMode = mode === 'DEEP' ? 'DEEP' : 'STANDARD'
+  const deep = normalizedMode === 'DEEP'
+  return Object.freeze({
+    mode: normalizedMode,
+    asynchronous: deep,
+    endpoint: deep ? EXECUTION_BASE : '/api/chat/send',
+    payload: {
+      ...payload,
+      ...(deep ? { enableTools: true } : {}),
+      researchMode: normalizedMode
+    }
+  })
+}
+
+export function createResearchProgress(executionId) {
+  return {
+    executionId: requireExecutionId(executionId),
+    phases: PHASES.map(([id, label]) => ({ id, label, status: 'pending' })),
+    lastSequence: 0,
+    retryCount: 0,
+    missingItems: [],
+    connection: 'connecting',
+    canReconnect: false,
+    lastEvent: null,
+    error: ''
+  }
+}
+
+export function reduceResearchProgress(progress, rawEvent) {
+  const event = parseRunEvent(rawEvent)
+  if (!progress || progress.executionId !== event.executionId) {
+    throw new Error('进度状态与 RunEvent executionId 不匹配')
+  }
+  if (event.sequence <= progress.lastSequence) return progress
+  let phases = progress.phases.map((phase) => ({ ...phase }))
+  const completeThrough = (phaseId) => {
+    const target = phases.findIndex((phase) => phase.id === phaseId)
+    phases = phases.map((phase, index) => index <= target ? { ...phase, status: 'completed' } : phase)
+  }
+  const activate = (phaseId) => {
+    const target = phases.findIndex((phase) => phase.id === phaseId)
+    phases = phases.map((phase, index) => index < target
+      ? { ...phase, status: 'completed' }
+      : index === target ? { ...phase, status: 'active' } : phase)
+  }
+
+  if (event.eventType === 'PLAN_CREATED') activate('PLAN')
+  if (['NODE_STARTED', 'TOOL_STARTED', 'TOOL_COMPLETED', 'TOOL_FAILED'].includes(event.eventType)) {
+    if (event.node === 'DEEP_RESEARCH') activate('RESEARCH')
+    else if (event.node === 'ANSWER') activate('ANSWER')
+    else if (!['PLAN', 'INIT', 'CRITIC', 'REFLECTOR'].includes(event.node)) activate('DATA')
+  }
+  if (event.eventType === 'EVIDENCE_PACK_READY') completeThrough('DATA')
+  if (event.eventType === 'DEEP_RESEARCH_STARTED' || event.eventType === 'ROLE_COMPLETED') activate('RESEARCH')
+  if (event.eventType === 'ANSWER_READY') completeThrough('ANSWER')
+  if (event.eventType === 'WORKFLOW_COMPLETED') completeThrough('ANSWER')
+  if (event.eventType === 'WORKFLOW_FAILED') {
+    phases = phases.map((phase) => phase.status === 'active' ? { ...phase, status: 'failed' } : phase)
+  }
+  return {
+    ...progress,
+    phases,
+    lastSequence: event.sequence,
+    retryCount: progress.retryCount + (event.eventType === 'WORKFLOW_RETRYING' ? 1 : 0),
+    connection: isTerminalRunEvent(event) ? 'terminal' : 'connected',
+    canReconnect: false,
+    lastEvent: { eventType: event.eventType, node: event.node, summary: event.summary },
+    error: event.eventType === 'WORKFLOW_FAILED' ? '研究任务执行失败' : progress.error
+  }
+}
+
+export function applyStatusCompensation(progress, status) {
+  if (!progress || !status || status.executionId !== progress.executionId) {
+    throw new Error('状态补偿 executionId 不匹配')
+  }
+  const terminal = ['COMPLETED', 'FAILED'].includes(status.workflowStatus)
+  return {
+    ...progress,
+    missingItems: Array.isArray(status.evidencePack?.missingItems)
+      ? status.evidencePack.missingItems.map(String) : [],
+    connection: terminal ? 'terminal' : 'disconnected',
+    canReconnect: !terminal,
+    error: status.workflowStatus === 'FAILED'
+      ? String(status.errorMessage || '研究任务执行失败') : progress.error
+  }
+}
+
+export function mapTerminalResearchResult(status) {
+  const workflowStatus = status?.workflowStatus
+  const terminal = workflowStatus === 'COMPLETED' || workflowStatus === 'FAILED'
+  const success = workflowStatus === 'COMPLETED'
+  return {
+    terminal,
+    success,
+    answer: success ? String(status.finalAnswer || '') : '',
+    error: workflowStatus === 'FAILED' ? String(status.errorMessage || '研究任务执行失败') : '',
+    missingItems: Array.isArray(status?.evidencePack?.missingItems)
+      ? status.evidencePack.missingItems.map(String) : []
+  }
+}
 
 export async function startResearch(request, { fetchImpl = globalThis.fetch } = {}) {
   if (!request || typeof request !== 'object') throw new Error('深度投研请求不能为空')
@@ -105,6 +213,7 @@ export function subscribeResearch({
     try {
       const status = await getResearchStatus(id, owner, { fetchImpl })
       onStatus(status)
+      if (['COMPLETED', 'FAILED'].includes(status.workflowStatus)) return
     } catch (statusError) {
       error.statusError = statusError
     }

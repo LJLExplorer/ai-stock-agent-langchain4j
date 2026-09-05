@@ -864,15 +864,16 @@
 
 ### Task 21: 在前端突出深度投研模式与运行进度
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `cd frontend && npm test` 失败；Node ESM 报告 `researchExecution.js` 未导出 `applyStatusCompensation`（同组 UI 状态映射函数亦尚不存在），与预期缺少模式分流、阶段时间线、断线补偿和终态映射一致。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `cd frontend && npm test && npm run build` 通过；Node 内置 runner 共 9 tests 全部通过，Vite 生产构建成功（2064 modules transformed）。验证标准/深度模式请求分流、四阶段 RunEvent 时间线、受控重试与数据缺失提示、断线状态补偿、手动重连、终态结果映射，以及 SSE 在终态后断开不被误判为连接失败。
 
 **涉及文件：**
 - Modify: `frontend/src/App.jsx`
 - Modify: `frontend/src/styles.css`
+- Modify: `frontend/src/researchExecution.js`
 - Modify: `frontend/src/researchExecution.test.js`
 
 **步骤 0：开始任务前更新状态**

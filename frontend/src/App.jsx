@@ -5,6 +5,16 @@ import KnowledgeDocumentDetailPage from './pages/KnowledgeDocumentDetailPage.jsx
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
+  applyStatusCompensation,
+  buildResearchRequest,
+  createResearchProgress,
+  getResearchStatus,
+  mapTerminalResearchResult,
+  reduceResearchProgress,
+  startResearch,
+  subscribeResearch
+} from './researchExecution.js'
+import {
   Activity, Bot, CheckCircle2, Clipboard, Database, FileText, History,
   LoaderCircle, MessageSquare, PanelRight, Pin, Plus, Search, Send, Settings2,
   Sparkles, Trash2, UserRound, Wrench, XCircle
@@ -62,6 +72,8 @@ function ChatPage() {
   const [message, setMessage] = useState('')
   const [rag, setRag] = useState(true)
   const [tools, setTools] = useState(true)
+  const [researchMode, setResearchMode] = useState('STANDARD')
+  const [researchRun, setResearchRun] = useState(null)
   const [messages, setMessages] = useState([])
   const [details, setDetails] = useState({ tools: [], sources: [], duration: null })
   const [busy, setBusy] = useState(false)
@@ -75,8 +87,15 @@ function ChatPage() {
   const [memoryBusy, setMemoryBusy] = useState(false)
   const inputRef = useRef(null)
   const sessionsRequestRef = useRef(0)
+  const researchSubscriptionRef = useRef(null)
 
-  const resetConversation = () => { setMessages([]); setDetails({ tools: [], sources: [], duration: null }) }
+  const resetConversation = () => {
+    researchSubscriptionRef.current?.close()
+    researchSubscriptionRef.current = null
+    setResearchRun(null)
+    setMessages([])
+    setDetails({ tools: [], sources: [], duration: null })
+  }
 
   const loadSessions = async (requestedUserId = userId) => {
     const normalizedUserId = requestedUserId.trim()
@@ -129,6 +148,8 @@ function ChatPage() {
     const timer = window.setInterval(checkHealth, 15000)
     return () => { disposed = true; window.clearInterval(timer) }
   }, [])
+
+  useEffect(() => () => researchSubscriptionRef.current?.close(), [])
 
   const createSession = async () => {
     const normalizedUserId = userId.trim()
@@ -187,6 +208,78 @@ function ChatPage() {
       ? ids.filter((id) => id !== sessionIdToToggle)
       : [sessionIdToToggle, ...ids])
   }
+
+  const finishDeepResearch = async (status, started) => {
+    const result = mapTerminalResearchResult(status)
+    setResearchRun((current) => current ? {
+      ...applyStatusCompensation(current, status), missingItems: result.missingItems
+    } : current)
+    if (!result.terminal) return
+    const content = result.success
+      ? result.answer || '深度投研已完成，但没有可展示的结论。'
+      : `深度投研失败：${result.error}`
+    setMessages((items) => [...items.slice(0, -1), {
+      role: 'assistant', content, error: !result.success
+    }])
+    const taskTools = Array.isArray(status.tasks) ? status.tasks.map((task) => ({
+      toolName: task.taskType || task.taskId || '工作流任务',
+      success: task.status === 'COMPLETED',
+      errorMessage: task.errorMessage || null,
+      executionTime: 0
+    })) : []
+    setDetails({ tools: taskTools, sources: [], duration: Math.round(performance.now() - started) })
+    setConnection(result.success ? 'ready' : 'error')
+    setBusy(false)
+    await loadSessions(userId)
+  }
+
+  const connectResearch = (executionId, owner, started) => {
+    researchSubscriptionRef.current?.close()
+    setResearchRun((current) => current ? {
+      ...current, connection: 'connecting', canReconnect: false, error: ''
+    } : { ...createResearchProgress(executionId), startedAt: started })
+    const subscription = subscribeResearch({
+      executionId,
+      userId: owner,
+      onEvent: (runEvent) => setResearchRun((current) =>
+        reduceResearchProgress(current || createResearchProgress(executionId), runEvent)),
+      onTerminal: async () => {
+        try {
+          await finishDeepResearch(await getResearchStatus(executionId, owner), started)
+        } catch (error) {
+          setResearchRun((current) => current ? {
+            ...current, connection: 'disconnected', canReconnect: true, error: error.message
+          } : current)
+          setConnection('error'); setBusy(false)
+        }
+      },
+      onStatus: (status) => {
+        setResearchRun((current) => current ? applyStatusCompensation(current, status) : current)
+        if (['COMPLETED', 'FAILED'].includes(status.workflowStatus)) void finishDeepResearch(status, started)
+      },
+      onError: (error) => {
+        setResearchRun((current) => current ? {
+          ...current, connection: 'disconnected', canReconnect: true,
+          error: error.message || '事件流连接中断'
+        } : current)
+        setConnection('error'); setBusy(false)
+      }
+    })
+    researchSubscriptionRef.current = subscription
+    return subscription
+  }
+
+  const reconnectResearch = () => {
+    if (!researchRun?.executionId || busy) return
+    setBusy(true); setConnection('loading')
+    try {
+      connectResearch(researchRun.executionId, userId.trim(), researchRun.startedAt || performance.now())
+    } catch (error) {
+      setResearchRun((current) => ({ ...current, connection: 'disconnected', canReconnect: true, error: error.message }))
+      setConnection('error'); setBusy(false)
+    }
+  }
+
   const submit = async (event) => {
     event?.preventDefault()
     const text = message.trim()
@@ -197,10 +290,23 @@ function ChatPage() {
     setMessages((items) => [...items, { role: 'user', content: text }, { role: 'assistant', content: '', pending: true }])
     setBusy(true); setConnection('loading')
     const started = performance.now()
+    let streaming = false
     try {
-      const response = await fetch('/api/chat/send', {
+      const routed = buildResearchRequest(researchMode, {
+        sessionId: sessionId || null, userId: userId.trim(), message: prompt,
+        orderId: symbol.trim() || null, enableRag: rag, enableTools: tools
+      })
+      if (routed.asynchronous) {
+        const handle = await startResearch(routed.payload)
+        setSessionId(handle.sessionId || sessionId || '')
+        setResearchRun({ ...createResearchProgress(handle.executionId), startedAt: started })
+        connectResearch(handle.executionId, userId.trim(), started)
+        streaming = true
+        return
+      }
+      const response = await fetch(routed.endpoint, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId: sessionId || null, userId: userId.trim(), message: prompt, orderId: symbol.trim() || null, enableRag: rag, enableTools: tools })
+        body: JSON.stringify(routed.payload)
       })
       const raw = await response.text()
       let data
@@ -214,7 +320,7 @@ function ChatPage() {
     } catch (error) {
       setMessages((items) => [...items.slice(0, -1), { role: 'assistant', content: `请求失败：${error.message}`, error: true }])
       setConnection('error')
-    } finally { setBusy(false) }
+    } finally { if (!streaming) setBusy(false) }
   }
 
   const loadHistory = async () => {
@@ -296,8 +402,16 @@ function ChatPage() {
 
       <section className="panel conversation">
         <div className="conversation-head"><div className="conversation-title"><div className="eyebrow">RESEARCH CHAT</div><div className="title-row"><input className="conversation-title-input" value={sessionTitle} maxLength={80} placeholder="研究对话" onChange={(e) => setSessionTitle(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') saveSessionTitle() }} disabled={!sessionId} /><button className="icon-button title-save" title={sessionId ? '保存会话标题' : '新建会话后可编辑标题'} onClick={saveSessionTitle} disabled={!sessionId || !sessionTitle.trim() || savingTitle}>{savingTitle ? <LoaderCircle className="spin" size={15} /> : <CheckCircle2 size={15} />}</button></div><p>{sessionId ? `当前会话 ID：${sessionId}` : '输入问题，Agent 会按需调用行情、技术、财务和资讯工具'}</p></div><button className="button subtle" onClick={copySession} disabled={!sessionId}><Clipboard size={15} />复制 ID</button></div>
+        <section className="research-command-bar" aria-label="分析模式">
+          <div className="research-mode-copy"><strong>选择分析模式</strong><span>{researchMode === 'DEEP' ? '固定多角色审议 · 可查看实时阶段' : '快速完成常规行情、技术、财务与新闻分析'}</span></div>
+          <div className="research-mode-tabs" role="radiogroup" aria-label="研究模式">
+            <button type="button" role="radio" aria-checked={researchMode === 'STANDARD'} className={researchMode === 'STANDARD' ? 'active' : ''} onClick={() => setResearchMode('STANDARD')} disabled={busy}>标准分析<small>同步返回</small></button>
+            <button type="button" role="radio" aria-checked={researchMode === 'DEEP'} className={researchMode === 'DEEP' ? 'active deep' : ''} onClick={() => setResearchMode('DEEP')} disabled={busy}><Sparkles size={14} />深度投研<small>证据审议</small></button>
+          </div>
+          {researchRun ? <ResearchProgress run={researchRun} onReconnect={reconnectResearch} /> : null}
+        </section>
         <div className="message-list">{messages.length === 0 ? <EmptyState /> : messages.map((item, index) => <Message key={index} {...item} />)}</div>
-        <form className="composer" onSubmit={submit}><textarea ref={inputRef} value={message} onChange={(e) => setMessage(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(e) } }} placeholder="例如：帮我分析 600519 的行情、技术面和近期风险……" /><div className="composer-foot"><span>Enter 发送 · Shift + Enter 换行</span><button className="button primary" disabled={busy || !message.trim()}>{busy ? <LoaderCircle className="spin" size={16} /> : <Send size={16} />}发送分析</button></div></form>
+        <form className="composer" onSubmit={submit}><textarea ref={inputRef} value={message} onChange={(e) => setMessage(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(e) } }} placeholder="例如：帮我分析 600519 的行情、技术面和近期风险……" /><div className="composer-foot"><span>Enter 发送 · Shift + Enter 换行</span><button className={`button primary ${researchMode === 'DEEP' ? 'deep-submit' : ''}`} disabled={busy || !message.trim()}>{busy ? <LoaderCircle className="spin" size={16} /> : researchMode === 'DEEP' ? <Sparkles size={16} /> : <Send size={16} />}{researchMode === 'DEEP' ? '启动深度投研' : '发送分析'}</button></div></form>
       </section>
 
       <aside className="panel inspector">
@@ -345,5 +459,13 @@ function SourceItem({ source }) {
   return <div className="source-item source-item-static">{content}</div>
 }
 function Muted({ children }) { return <p className="muted">{children}</p> }
+function ResearchProgress({ run, onReconnect }) {
+  return <div className={`research-progress ${run.connection}`}>
+    <div className="research-progress-head"><span>执行 ID：<code>{run.executionId}</code></span><em>{run.connection === 'terminal' ? '已结束' : run.connection === 'disconnected' ? '连接中断' : '运行中'}</em></div>
+    <div className="research-timeline">{run.phases.map((phase) => <div key={phase.id} className={`research-phase ${phase.status}`}><i /> <span>{phase.label}</span></div>)}</div>
+    {run.retryCount > 0 || run.missingItems?.length ? <div className="research-notices">{run.retryCount > 0 ? <span>已受控重试 {run.retryCount} 次</span> : null}{run.missingItems?.map((item) => <span key={item}>数据缺失：{item}</span>)}</div> : null}
+    {run.connection === 'disconnected' ? <div className="research-reconnect"><span>{run.error || '已通过状态接口完成补偿读取，请按需重新连接事件流。'}</span>{run.canReconnect ? <button type="button" onClick={onReconnect}>重新连接</button> : null}</div> : null}
+  </div>
+}
 
 export default App
