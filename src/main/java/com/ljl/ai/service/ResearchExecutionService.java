@@ -83,6 +83,14 @@ public class ResearchExecutionService implements AutoCloseable {
         }
     }
 
+    public Optional<ExecutionState> findOwned(String executionId, String userId) {
+        if (StringUtils.isBlank(executionId) || StringUtils.isBlank(userId)) {
+            return Optional.empty();
+        }
+        return stateStore.load(executionId.trim())
+                .filter(state -> userId.trim().equals(state.getUserId()));
+    }
+
     private String ensureSession(ChatRequest request) {
         if (StringUtils.isNotBlank(request.getSessionId())) {
             return request.getSessionId().trim();

@@ -63,4 +63,19 @@ class InMemoryRunEventPublisherTest {
                 "execution-1", "trace-1", 1, clock.instant(), RunEvent.EventType.NODE_COMPLETED,
                 "ANSWER", "x".repeat(RunEvent.MAX_SUMMARY_LENGTH + 1)));
     }
+
+    @Test
+    void shouldReplayEventsAfterCursorBeforeDeliveringNewEventsWithoutDuplicates() {
+        InMemoryRunEventPublisher publisher = new InMemoryRunEventPublisher(5, clock);
+        publisher.publish("execution-1", "trace-1", RunEvent.EventType.PLAN_CREATED, "PLAN", "ready");
+        publisher.publish("execution-1", "trace-1", RunEvent.EventType.NODE_STARTED, "INIT", "started");
+        List<RunEvent> received = new ArrayList<>();
+
+        RunEventPublisher.Subscription subscription = publisher.subscribeAfter("execution-1", 1, received::add);
+        publisher.publish("execution-1", "trace-1", RunEvent.EventType.NODE_COMPLETED, "INIT", "completed");
+        subscription.close();
+        publisher.publish("execution-1", "trace-1", RunEvent.EventType.WORKFLOW_COMPLETED, "ANSWER", "done");
+
+        assertEquals(List.of(2L, 3L), received.stream().map(RunEvent::sequence).toList());
+    }
 }

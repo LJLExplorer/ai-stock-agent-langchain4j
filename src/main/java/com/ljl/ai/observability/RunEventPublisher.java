@@ -12,6 +12,8 @@ public interface RunEventPublisher {
 
     Subscription subscribe(String executionId, Consumer<RunEvent> listener);
 
+    Subscription subscribeAfter(String executionId, long afterSequence, Consumer<RunEvent> listener);
+
     @FunctionalInterface
     interface Subscription extends AutoCloseable {
         @Override

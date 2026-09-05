@@ -528,11 +528,11 @@
 
 ### Task 13: 提供执行状态与 SSE 接口
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=ResearchExecutionControllerTest,InMemoryRunEventPublisherTest test'` 失败；测试编译阶段报告缺少 `ResearchExecutionController`、`findOwned` 和 `subscribeAfter`，与预期尚无状态/SSE 适配及所有权查询一致。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=ResearchExecutionControllerTest,InMemoryRunEventPublisherTest test'` 通过（8 tests）；验证 POST 返回 202 与预分配句柄、状态仅对 execution 所属 userId 可见、SSE 按序回放并在终态完成，以及基于 cursor 的原子补发、去重和取消订阅。
 
 **涉及文件：**
 - Create: `src/main/java/com/ljl/ai/controller/ResearchExecutionController.java`
