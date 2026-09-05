@@ -905,11 +905,11 @@
 
 ### Task 22: 更新 README、面试材料并完成全量验证
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `rg -n '^## 可靠 Agent 运行时与金融证据闭环$' README.md` 退出码为 1 且无匹配；当前 README 尚缺少用一级独立章节系统展示节点恢复、EvidencePack、point-in-time、Claim–Evidence、事件流、决策复盘、双模式与 Agent Eval，与预期 RED 一致。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `rg -n '^## 可靠 Agent 运行时与金融证据闭环$' README.md` 唯一命中第 31 行；`zsh -ic 'jdk21 && mvn -q test'` 通过（250 tests，0 failures/errors/skipped），`ResearchExecutionControllerTest` 单独通过（4 tests）；`cd frontend && npm test && npm run build` 通过（9 tests，2064 modules transformed）；`git diff --check` 通过，`git diff -- src/main/resources/application.yml` 无输出。
 
 **涉及文件：**
 - Modify: `README.md`

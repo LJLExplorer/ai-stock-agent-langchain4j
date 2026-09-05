@@ -6,7 +6,7 @@
 ![LangChain4j](https://img.shields.io/badge/LangChain4j-1.0.0--beta3-5B4B8A)
 ![License](https://img.shields.io/badge/License-MIT-blue)
 
-一个面向股票研究场景的 Java AI Agent：用 LangChain4j 组织模型与工具，用 LangGraph4j 编排可重试的 Plan-and-Execute 状态图，用 Milvus Dense + BM25 + RRF 完成混合检索，并用 Redis、MongoDB 构建分层记忆和执行状态持久化。
+一个面向股票研究场景的 Java AI Agent：用 LangChain4j 组织模型与工具，用 LangGraph4j 编排可重试、逐节点持久化的 Plan-and-Execute 状态图，用 Milvus Dense + BM25 + RRF 完成混合检索，并通过金融时点约束、证据引用校验、可回放运行事件和可选多角色深度投研，把模型输出纳入可恢复、可检查的后端边界。
 
 > 项目只提供研究辅助能力，不执行证券交易，不构成投资建议，也不承诺收益或预测准确率。
 
@@ -23,8 +23,118 @@
 | 多轮追问容易丢主语或串话题 | 结合近期业务消息、当前话题摘要与话题状态生成独立查询；按话题拆分 Redis 模型窗口 | `QueryRewriteAssistant`、`ConversationTopicStore`、`ConversationContextService` |
 | 长对话无限增长 | Redis 保留近轮原文，较早消息递归压缩为独立摘要；摘要失败时回滚原始窗口 | `RedisChatMemoryStore`、`ShortTermSummaryService` |
 | 多用户长期记忆可能串数据 | 向量召回扩大候选池后按 `userId` 二次过滤，并校验 MongoDB 中的启用状态 | `LongTermMemoryService` |
-| 状态并发更新可能互相覆盖 | MongoDB 按 `executionId + version` 条件替换；冲突直接失败，不用旧状态覆盖新状态 | `MongoExecutionStateStore`、`WorkflowRunner` |
+| 工作流中断后丢失进度或重复调工具 | 每个成功节点以 CAS 保存 Checkpoint；工具以 `executionId + taskId + attempt` 幂等记录恢复 | `WorkflowRunner`、`MongoExecutionStateStore`、`MongoToolExecutionStore` |
+| 金融回答可能偷看未来数据或编造数字 | 统一 `analysisDate`，工具按时点截断；数字结论必须引用当前 `EvidencePack` | `AnalysisContext`、`EvidencePackBuilder`、`ClaimEvidenceGuard` |
+| 长时间 Agent 只能黑盒等待 | 异步启动深度投研，以受控 `RunEvent` 和 SSE 展示阶段、重试、缺失及终态 | `ResearchExecutionController`、`InMemoryRunEventPublisher` |
 | 公共仓库难以复现 | 脱敏配置模板、固定版本 Compose、测试分层、后端/前端 CI | `application.example.yml`、`compose.yaml`、`ci.yml` |
+
+## 可靠 Agent 运行时与金融证据闭环
+
+这是当前项目最核心的工程增强。它不是又加了一层 Prompt，而是把“时点、数据、执行、引用、观测、复盘、评测”建模为显式的 Java 对象与确定性检查。
+
+| 边界 | 核心对象 | 确定性约束 |
+| --- | --- | --- |
+| 一次分析看什么时点 | `AnalysisContext` | 统一标的、`analysisDate`、模式、用户/会话/执行标识 |
+| 哪些数据能支撑结论 | `FinancialFact` / `EvidencePack` | 稳定 `evidenceId`、来源时间、截止日、缺失项、失败项与 `evidenceHash` |
+| 中断后从什么状态继续 | `ExecutionState` / `ToolExecutionRecord` | 节点级 CAS Checkpoint、图版本/计划摘要校验、工具幂等恢复 |
+| 长任务正在做什么 | `RunEvent` | 固定事件枚举、递增 sequence、有界回放，不承载 Prompt/思维链/工具正文 |
+| 多角色是否越权 | `DeepResearchService` / `ResearchConclusion` | 固定角色顺序与次数，共享同一证据包，Judge 结果再由 Java 校验 |
+| 历史判断如何反馈未来研究 | `ResearchDecision` | 按交易日确定性计算 1/5/20 日后验，与聊天记忆分开存储 |
+
+### 从请求到可验证结论
+
+```mermaid
+flowchart TD
+    Request["用户问题 + analysisDate + researchMode"] --> Context["AnalysisContext<br/>统一标的与时点"]
+    Context --> PIT["按时点读取<br/>K 线 / 财报 / 新闻"]
+    PIT --> Tasks["确定性工具节点<br/>幂等记录 + Checkpoint"]
+    Tasks --> Pack["EvidencePack<br/>事实 + 缺失 + 时点 + Hash"]
+    Pack --> Mode{"STANDARD / DEEP"}
+    Mode -->|STANDARD| Answer["无工具答案生成"]
+    Mode -->|DEEP| Roles["基本面→技术面→新闻<br/>看多→看空→风险→Judge"]
+    Roles --> Conclusion["ResearchConclusion<br/>评级 + 置信度 + 证据 ID"]
+    Conclusion --> Answer
+    Answer --> Guard["Claim–Evidence Guard<br/>引用 / 数字 / 日期校验"]
+    Guard --> Result["带 [evidence:ev-…] 的 Markdown 结论<br/>或确定性降级"]
+    Tasks -.-> Events["RunEvent + SSE"]
+    Roles -.-> Events
+    Result --> Decision["深度模式决策记录<br/>后验复盘"]
+```
+
+### 1. `AnalysisContext`：先固定“当时可见”
+
+- 每次工作流共享同一个不可变上下文：`symbol`、`analysisDate`、`researchMode`、`executionId`、`traceId`、`userId` 与 `sessionId`。
+- 历史 K 线先截断到 `analysisDate`；财务数据按披露日选择；新闻过滤截止日之后的发布时间。
+- 历史数据缺失时不用当前值偷偷回填；时点无法确定的数据显式标记为 `UNKNOWN`，未来数据标记为 `REJECTED`。
+
+这个边界主要解决回测和历史问题中的 look-ahead bias：系统只能使用在分析日当时已知的信息。
+
+### 2. `EvidencePack`：模型不再直接拿工具长文本当事实
+
+`EvidencePackBuilder` 将工作流中的行情、技术、财务与新闻工具结果转为不可变 `FinancialFact`。每条事实保留指标、数值/单位、期间、发布时间、来源 URL、公式、输入快照和时点状态，再由规范化内容生成稳定 `ev-...` ID。证据包还单独保存：
+
+- `missingItems`：本轮应有但没有获取的数据；
+- `toolFailures`：工具失败的受控摘要；
+- `dataAsOf`：整个证据包的数据截止时间；
+- `evidenceHash`：可用于判断两次研究是否基于同一批证据；
+- `modelView`：仅从结构化证据确定性渲染的有界模型上下文。
+
+`ClaimEvidenceGuard` 要求答案以 `[evidence:ev-...]` 引用当前证据包，拒绝未知/跨包 ID、无证据的数字行，以及晚于 `dataAsOf` 的日期。失败时只允许一次带明确原因的重写，再失败就返回确定性降级内容。
+
+### 3. 逐节点 Checkpoint 与工具幂等
+
+- `ExecutionState` 保存 `graphVersion`、规范化 `planHash`、`lastCompletedNode`、`eventSequence`、任务尝试历史、证据包与最终结论。
+- 节点动作成功后，先以 `executionId + version` 做 MongoDB CAS 保存，持久化成功后才发布 `NODE_COMPLETED`；`CRITIC` 路由也在返回 `Command` 前保存。
+- 恢复前校验固定 `graphVersion` 与当前计划摘要，不兼容快照以 `INCOMPATIBLE_CHECKPOINT` 拒绝，避免新图误读旧状态。
+- `ToolExecutionRecord` 以 `executionId:taskId:attempt` 为唯一键，状态只允许 `STARTED -> SUCCEEDED/FAILED`；成功时原子保存原始结果和证据快照。
+- 恢复时已成功的工具零调用复用记录；遗留 `STARTED` 只允许当前四类明确的只读投研工具以新 attempt 重试。
+
+这些机制提供了可验证的 at-least-once 恢复边界，但不宣称通用 Exactly-once，也不是 LangGraph 原生的任意节点游标续跑。
+
+### 4. `RunEvent` + SSE：只暴露运行元数据
+
+`RunEvent` 只包含 `executionId`、`traceId`、递增 `sequence`、时间、固定事件类型、节点和最多 500 字符的受控摘要。它没有 Prompt、模型思考正文或工具结果字段。进程内发布器为每个 execution 保留最近 200 条事件，SSE 先回放快照，再从 sequence 游标补发订阅间隙的事件。
+
+深度投研使用独立异步端点：
+
+```text
+POST /api/research/executions
+GET  /api/research/executions/{executionId}?userId=...
+GET  /api/research/executions/{executionId}/events?userId=...   # text/event-stream
+```
+
+POST 只接受 `researchMode=DEEP`，返回 HTTP 202 与 `executionId/sessionId/submittedAt`。后台执行器默认使用 2 个工作线程和 32 个有界排队位；队列满时返回稳定错误，不创建无界线程。断线不取消后台任务；前端会关闭旧 `EventSource`、查询一次执行状态，并在未终态时显示手动重连。
+
+### 5. 默认可控，深度投研可选
+
+| 模式 | 入口 | 执行方式 | 适用场景 |
+| --- | --- | --- | --- |
+| `STANDARD` | `/api/chat/send` | 现有 Planner + 确定性工具 + 证据答案，同步返回 | 常规行情、技术、财务和新闻问答；默认模式 |
+| `DEEP` | `/api/research/executions` | 先建证据包，再固定执行 6 个角色与 1 个 Judge，通过 SSE 返回进度 | 需要多视角对抗、风险审议和结构化评级的长任务 |
+
+`DeepResearchAssistant` 不注册业务工具，也不绑定会话 MemoryId。基本面、技术面、新闻、看多、看空、风险角色和 Judge 都只看同一个有界 `EvidencePack`；每个角色最多一次调用。Judge JSON 必须通过评级枚举、0～1 置信度、`dataAsOf` 和证据 ID 归属校验；角色失败会记录降级，Judge 解析或证据越界则确定性返回 `INSUFFICIENT_DATA`。
+
+### 6. 决策复盘不等于对话记忆
+
+只有成功的深度结论才会幂等保存 `ResearchDecision`，记录执行、用户、标的、分析日、评级、置信度、证据哈希与图版本。`DecisionReviewService` 不调用 LLM，而是从历史 K 线确定性计算 1/5/20 个交易日的标的收益与相对沪深 300 ETF 的收益。
+
+复盘只在 `outcomeAvailableAt <= 本次 analysisDate` 且用户、标的相同时可见，作为独立“历史校准参考”传入深度研究，不能冒充本轮 evidenceId。这和用户偏好、话题摘要、近轮原文是三类不同的记忆。
+
+### 7. 离线 Agent Eval：先固定可回归基线
+
+`AgentEvalRunner` 使用函数式适配器注入确定性观测，默认不访问网络、模型或外部基础设施。当前 5 个固定样本覆盖 Planner、话题路由、RAG、证据门禁和工作流恢复，并输出字段顺序稳定的 JSON 报告。
+
+| 指标 | 当前离线 fixture 基线 |
+| --- | ---: |
+| Accuracy | 1.0 |
+| Recall@3 | 1.0 |
+| nDCG@3 | 0.9197207891481876 |
+| Citation Coverage | 1.0 |
+| Numeric Consistency | 1.0 |
+| 平均适配器延迟 | 30.0 ms |
+| 总调用计数 | 3 |
+
+> 这些是仓库内固定样本和确定性适配器的回归基线，不是真实市场准确率、线上模型质量或生产延迟承诺。在线评测必须使用显式 Profile，不进入默认 CI。
 
 ## 核心能力
 
@@ -33,9 +143,12 @@
 - Milvus 2.5 Dense Vector + BM25 Sparse Vector + RRF 混合检索，并支持失败时降级为稠密语义检索。
 - 基于近期对话、话题摘要和话题状态的结构化查询改写；按话题隔离 Redis 模型窗口，并支持旧话题返回。
 - Redis 近轮原文与递归摘要、MongoDB 完整业务历史、MongoDB/Milvus 用户长期记忆组成分层上下文。
-- MongoDB 执行快照、状态机、任务级重试历史与乐观锁冲突保护。
+- MongoDB 逐节点 Checkpoint、工具幂等记录、任务重试历史与乐观锁冲突保护。
+- 统一金融时点上下文、EvidencePack 与 Claim–Evidence Guard，防止未来数据和无引用数字进入结论。
+- 默认标准分析与可选多角色深度投研；异步执行通过受控 RunEvent/SSE 展示进度。
+- 独立决策复盘与离线 Agent Eval，分别为历史校准和稳定回归提供可追溯基线。
 - `traceId`、`sessionId`、`executionId` 关联的模型、工作流和工具诊断日志；模型正文默认脱敏。
-- React + Vite 前端，展示会话、知识来源、工具执行结果和长期记忆。
+- React + Vite 前端，展示标准/深度模式、执行时间线、会话、证据缺失、知识来源和工具结果。
 
 ## 技术栈
 
@@ -47,14 +160,16 @@
 | 数据 | MongoDB、Redis、Milvus Java SDK 2.5.7 |
 | 检索 | Dense COSINE、BM25、RRF、语义阈值复核 |
 | 前端 | React 19、Vite 8、React Router |
-| 工程化 | Docker Compose、JUnit 5、Mockito、GitHub Actions |
+| 工程化 | Docker Compose、JUnit 5、Mockito、Node Test Runner、GitHub Actions |
 
 ## 系统架构
 
 ```mermaid
 flowchart LR
     UI["React / Vite"] --> API["Spring Boot REST API"]
-    API --> Chat["ChatService"]
+    API -->|STANDARD 同步| Chat["ChatService"]
+    API -->|DEEP 异步| Async["ResearchExecutionService<br/>有界线程池"]
+    Async --> Chat
 
     Chat --> Rewrite["QueryRewriteAssistant<br/>指代消解 + 话题边界"]
     Rewrite --> RAG["RAG Pipeline"]
@@ -62,15 +177,25 @@ flowchart LR
     RAG --> Docs["MongoDB<br/>文档元数据"]
 
     Chat --> Planner["Planner + PlanValidator"]
-    Planner -->|合法股票计划| Graph["LangGraph4j StateGraph"]
+    Planner -->|合法股票计划| Context["AnalysisContext<br/>symbol + analysisDate + mode"]
+    Context --> Graph["LangGraph4j StateGraph<br/>逐节点 Checkpoint"]
     Planner -->|无效或非股票计划| Agent["受工具上限约束的 Assistant"]
-    Graph --> Tools["7 个业务 Tool"]
+    Graph --> Tools["7 个业务 Tool<br/>关键只读任务幂等"]
     Agent --> Tools
-    Graph --> Answer["无工具 Answer Generator"]
+    Tools --> Evidence["FinancialFact + EvidencePack"]
+    Evidence --> Mode{"STANDARD / DEEP"}
+    Mode -->|STANDARD| Answer["无工具 Answer Generator"]
+    Mode -->|DEEP| Council["固定多角色审议 + Judge"]
+    Council --> Answer
+    Answer --> Guard["Claim–Evidence Guard"]
 
     Chat --> Short["Redis<br/>近轮消息 + 递归摘要"]
     Chat --> Long["MongoDB + Milvus<br/>用户长期记忆"]
-    Chat --> History["MongoDB<br/>会话、消息、执行快照"]
+    Chat --> History["MongoDB<br/>会话、消息、Checkpoint"]
+    Chat --> Review["ResearchDecision<br/>确定性后验复盘"]
+    Graph -.-> Event["RunEvent Publisher"]
+    Event -.-> SSE["SSE 回放 / 订阅"]
+    SSE -.-> UI
 ```
 
 ### 一次请求的真实链路
@@ -112,10 +237,14 @@ flowchart TD
     Financial --> Reflector
     News --> Reflector
     Reflector --> Critic["CRITIC<br/>有限路由"]
-    Critic -->|可信| Answer["ANSWER<br/>无工具模型只汇总任务结果"]
+    Critic -->|可信| Pack["EVIDENCE_PACK<br/>时点校验 + 稳定证据 ID"]
     Critic -->|可重试| Retry["RETRY<br/>只重置问题任务"]
     Critic -->|终态失败| Failed["FAILED"]
     Retry --> Init
+    Pack --> Mode{"researchMode"}
+    Mode -->|STANDARD| Answer["ANSWER<br/>无工具生成 + 证据校验"]
+    Mode -->|DEEP| Deep["DEEP_RESEARCH<br/>多角色审议 + Judge"]
+    Deep --> Answer
     Answer --> End([END])
     Failed --> End
 ```
@@ -130,9 +259,9 @@ flowchart TD
 
 ### 执行状态与 Checkpoint 边界
 
-`ExecutionState` 保存计划、任务状态、尝试次数、结果历史、当前节点、最终答案和版本号。新执行会先写入 MongoDB，工作流结束后再按旧版本条件原子替换；`resume(executionId)` 从最近一次已持久化快照重新执行，已经完成的任务会跳过。
+`ExecutionState` 保存计划、任务状态、尝试次数、结果历史、`graphVersion`、`planHash`、`lastCompletedNode`、`eventSequence`、EvidencePack、深度结论和版本号。新执行先保存初始状态；每个图节点动作成功后，再按旧版本 CAS 持久化，持久化成功后才发布节点完成事件。
 
-这不是“每个节点完成后立即落库”的细粒度 Checkpoint。若进程在一次图执行中途退出，恢复点是上一次成功保存的边界，可能需要重新执行尚未持久化的任务。乐观锁用于拒绝陈旧写入，不代表已经实现分布式调度、Exactly-once 或节点级事务。
+`resume(executionId)` 在执行前校验图版本与规范化计划摘要，然后从最近一次成功 Checkpoint 重新进入受控图。已成功工具的原始结果与证据快照由 `ToolExecutionRecord` 恢复，不再调用外部工具。这是节点级持久化和关键只读工具幂等，仍不是分布式调度、通用 Exactly-once 或 LangGraph 原生任意节点游标续跑。
 
 ## 混合 RAG
 
@@ -237,7 +366,7 @@ flowchart TD
 | Tool | 作用 |
 | --- | --- |
 | `MarketDataTool` | 实时行情 |
-| `TechnicalAnalysisTool` | MA、MACD、RSI、KDJ、布林带等技术指标 |
+| `TechnicalAnalysisTool` | 基于真实日 K 计算截止日收盘、日涨跌、MA5、MA20 与均线趋势 |
 | `FinancialAnalysisTool` | 财务报告与估值指标 |
 | `NewsRagTool` | 新闻、公告和研究资料 |
 | `TimeSeriesPredictionTool` | 调用可选外部预测服务 |
@@ -330,6 +459,24 @@ curl -X POST http://localhost:8080/api/chat/send \
 
 `enableTools=true` 时会先生成并校验计划；合法股票计划进入状态图，未通过则使用受工具调用上限约束的通用 Assistant。`enableRag=true` 时检索知识库并返回可展示的来源列表。
 
+需要深度投研时，显式使用异步端点和 `DEEP` 模式：
+
+```bash
+curl -X POST http://localhost:8080/api/research/executions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "userId": "demo-user",
+    "message": "以 2025-06-30 当时可见信息深度分析贵州茅台",
+    "orderId": "600519.SH",
+    "analysisDate": "2025-06-30",
+    "researchMode": "DEEP",
+    "enableRag": true,
+    "enableTools": true
+  }'
+```
+
+返回的 `executionId` 可用于查询状态或订阅 SSE；前端已在主界面提供醒目的“标准分析 / 深度投研”选择和四阶段时间线。
+
 ## 测试分层与 CI
 
 ```bash
@@ -344,6 +491,7 @@ mvn -Pintegration-test verify
 
 # 前端锁文件安装与生产构建
 npm --prefix frontend ci
+npm --prefix frontend test
 npm --prefix frontend run build
 
 # Compose 静态解析
@@ -352,13 +500,22 @@ docker compose config --quiet
 
 GitHub Actions 将后端测试和前端生产构建拆成独立 Job。公共 CI 不注入个人密钥，也不伪装执行外部集成测试。
 
-当前仓库包含 58 个 `*Test.java` 单元/组件测试类与 2 个 `*IT.java` 外部基础设施测试类。这个数字用于描述测试分层，不代表覆盖率；项目尚未发布覆盖率百分比。
+当前仓库包含 74 个 `*Test.java` 单元/组件测试类与 2 个 `*IT.java` 外部基础设施测试类，前端使用 Node 内置 runner 测试深度投研客户端和进度映射。这些数字只描述测试分层，不代表覆盖率；项目尚未发布覆盖率百分比。
+
+离线 Agent Eval 样本位于 `src/test/resources/eval/agent-eval-cases.json`，可单独运行：
+
+```bash
+mvn -Dtest=AgentEvalRunnerTest test
+```
 
 ## REST API
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | POST | `/api/chat/send` | 发送消息，可控制 RAG 与 Tool |
+| POST | `/api/research/executions` | 异步启动 `DEEP` 投研，返回 HTTP 202 和 executionId |
+| GET | `/api/research/executions/{executionId}` | 按 `userId` 查询执行状态、证据缺失与最终答案 |
+| GET | `/api/research/executions/{executionId}/events` | 按 `userId` 回放并订阅命名 RunEvent SSE |
 | POST | `/api/chat/sessions` | 创建空会话 |
 | GET | `/api/chat/sessions/{sessionId}/messages` | 查询会话消息 |
 | GET | `/api/chat/users/{userId}/sessions` | 查询用户会话 |
@@ -393,11 +550,13 @@ src/main/java/com/ljl/ai/
 ├── observability/  # 模型调用 Trace 与隐私开关
 ├── planner/        # 候选计划解析、校验与任务枚举
 ├── rag/            # Hybrid Search、语义复核与 RAG Pipeline
+├── research/       # 时点上下文、金融证据、深度投研与决策复盘
 ├── service/        # 对话编排、长期记忆、业务消息
 ├── tools/          # 七个业务 Tool
-└── workflow/       # StateGraph、执行状态、Reflector/Critic
+└── workflow/       # StateGraph、Checkpoint、工具幂等、Reflector/Critic
 
-frontend/           # React + Vite
+frontend/           # React + Vite，标准/深度模式与 SSE 进度
+src/test/resources/eval/ # 离线 Agent Eval 固定样本与说明
 docs/               # 配置、简历与面试材料
 compose.yaml        # 本地基础设施
 .github/workflows/  # 后端/前端 CI
@@ -413,15 +572,18 @@ compose.yaml        # 本地基础设施
 | 会话连续性 | MongoDB 保留完整业务历史，Redis 按话题隔离模型窗口 | 支持切换/返回话题；话题识别仍部分依赖模型 |
 | 短期上下文增长 | 原文窗口 + 递归摘要 | 控制上下文成本；摘要会有信息压缩损失 |
 | 多存储一致性 | 状态标记、重试与补偿 | 实现成本低于分布式事务，但仍需对账机制 |
-| 执行持久化粒度 | 工作流边界快照 | 当前实现简单；进程中断时可能重做未持久化任务 |
+| 执行持久化粒度 | 节点级 CAS Checkpoint + 工具幂等记录 | 恢复边界更细；需维护 graphVersion/planHash，且不等于通用 Exactly-once |
+| 多角色分析成本 | 仅 `DEEP` 模式启用固定 6 角色 + Judge | 默认路径保持精简；深度模式会增加延迟和模型调用 |
+| 运行可观测性 vs 隐私 | 事件只发布受控元数据 | 可回放阶段和终态；无法通过事件流查看模型思考正文 |
 
 ## 已知边界
 
 - 没有真实交易、下单、券商账户接入或个性化投资顾问能力。
-- 没有公开可复现的收益率、预测准确率、QPS、P95 延迟或成本基准，因此不展示这些数字。
+- 没有公开可复现的真实市场收益率、线上模型准确率、QPS、P95 延迟或成本基准；离线 fixture 分数不能替代这些指标。
 - `/api` 当前没有完整的登录认证、RBAC、限流和审计体系；`userId` 是业务参数，不应当作可信身份。
 - 会话锁是单 JVM 内锁，多实例部署需要分布式并发控制。
-- 执行状态不是节点级 Checkpoint，不保证 Exactly-once。
+- 执行状态已逐节点持久化，但恢复仍是重新进入受控图并复用成功工具结果，不保证任意外部副作用 Exactly-once。
+- RunEvent 的回放缓冲和深度投研执行器是单进程实现；多实例部署需要外部消息流、分布式调度和统一游标。
 - MongoDB 与 Milvus 间使用补偿而非 ACID 事务，极端失败仍需要后台对账/修复任务。
 - 长期记忆在应用层按用户过滤；严格多租户应增加认证主体与存储层过滤。
 - 话题识别仍部分依赖模型结构化输出；显式股票代码有确定性保护，纯自然语言主题尚无独立分类评测。
