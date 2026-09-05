@@ -486,11 +486,11 @@
 
 ### Task 12: 支持预分配 executionId 的异步深度研究
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=ResearchExecutionServiceTest,ChatServiceWorkflowTest test'` 失败；测试编译阶段报告 `ResearchExecutionResponse` 不存在，与预期缺少异步启动契约和服务一致。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=ResearchExecutionServiceTest,ChatServiceWorkflowTest test'` 通过（9 tests）；验证异步入口预分配 executionId/sessionId、仅接受 DEEP、ChatService 复用指定 executionId、有界队列稳定拒绝、线程池关闭，以及后台异常以脱敏终态事件和同步 eventSequence 的 FAILED 状态落盘。
 
 **涉及文件：**
 - Create: `src/main/java/com/ljl/ai/service/ResearchExecutionService.java`

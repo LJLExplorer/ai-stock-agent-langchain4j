@@ -120,6 +120,10 @@ public class ChatService {
     private RagTraceService ragTraceService;
 
     public ChatResponse chat(ChatRequest request) {
+        return chat(request, null);
+    }
+
+    ChatResponse chat(ChatRequest request, String preallocatedExecutionId) {
         String previousTraceId = MDC.get("traceId");
         String traceId = UUID.randomUUID().toString();
         MDC.put("traceId", traceId);
@@ -128,13 +132,13 @@ public class ChatService {
                 request.getMessage() == null ? 0 : request.getMessage().length());
         try {
             if (StringUtils.isBlank(request.getSessionId())) {
-                return chatInternal(request);
+                return chatInternal(request, preallocatedExecutionId);
             }
             String lockKey = request.getSessionId();
             SessionLock lock = acquireSessionLock(lockKey);
             try {
                 synchronized (lock) {
-                    return chatInternal(request);
+                    return chatInternal(request, preallocatedExecutionId);
                 }
             } finally {
                 releaseSessionLock(lockKey, lock);
@@ -177,7 +181,7 @@ public class ChatService {
         return chatMemoryService.createSession(userId.trim(), StringUtils.trimToNull(orderId));
     }
 
-    private ChatResponse chatInternal(ChatRequest request) {
+    private ChatResponse chatInternal(ChatRequest request, String preallocatedExecutionId) {
         log.info("处理对话请求, userId: {}, sessionId: {}", request.getUserId(), request.getSessionId());
         String activeSessionId = request.getSessionId();
         String activeModelMemoryId = null;
@@ -255,7 +259,8 @@ public class ChatService {
                     PlanValidator.ValidatedPlan validatedPlan = planned.get();
                     if (workflowRunner != null) {
                         ExecutionState executionState = createExecutionState(
-                                request.getUserId(), sessionId, userMessage, validatedPlan);
+                                request.getUserId(), sessionId, userMessage, validatedPlan,
+                                preallocatedExecutionId);
                         executionState = workflowRunner.run(executionState);
                         workflowToolInvocations = workflowToolInvocations(executionState);
                         workflowAnswer = executionState.getFinalAnswer();
@@ -535,11 +540,18 @@ public class ChatService {
 
     ExecutionState createExecutionState(String userId, String sessionId, String question,
                                         PlanValidator.ValidatedPlan validatedPlan) {
+        return createExecutionState(userId, sessionId, question, validatedPlan, null);
+    }
+
+    ExecutionState createExecutionState(String userId, String sessionId, String question,
+                                        PlanValidator.ValidatedPlan validatedPlan,
+                                        String preallocatedExecutionId) {
         List<ExecutionTask> tasks = validatedPlan.plan().getTasks().stream()
                 .map(task -> ExecutionTask.pending(task.name().toLowerCase(), task))
                 .toList();
         ExecutionState state = ExecutionState.planned(
-                UUID.randomUUID().toString(), sessionId, question, tasks);
+                StringUtils.defaultIfBlank(preallocatedExecutionId, UUID.randomUUID().toString()),
+                sessionId, question, tasks);
         state.setTraceId(MDC.get("traceId"));
         state.setUserId(userId);
         state.setPlan(validatedPlan.plan());

@@ -39,6 +39,21 @@ class ChatServiceWorkflowTest {
     }
 
     @Test
+    void shouldUsePreallocatedExecutionIdWhenCreatingWorkflowState() {
+        ChatService service = new ChatService();
+        PlanValidator.ValidatedPlan plan = new PlanValidator.ValidatedPlan(
+                true, null,
+                AgentPlan.builder().intent("STOCK_ANALYSIS").symbol("600519.SH")
+                        .tasks(List.of(StockAnalysisTask.MARKET_DATA)).build(),
+                List.of("getRealtimeQuote"));
+
+        ExecutionState state = service.createExecutionState(
+                "user-1", "session-1", "分析贵州茅台", plan, "execution-preallocated");
+
+        assertEquals("execution-preallocated", state.getExecutionId());
+    }
+
+    @Test
     void shouldLogExecutionStateCreationWithTraceContext() {
         ChatService service = new ChatService();
         PlanValidator.ValidatedPlan plan = new PlanValidator.ValidatedPlan(
