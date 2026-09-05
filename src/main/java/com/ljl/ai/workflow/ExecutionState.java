@@ -4,6 +4,7 @@ import com.ljl.ai.planner.AgentPlan;
 import com.ljl.ai.research.AnalysisContext;
 import com.ljl.ai.research.EvidencePack;
 import com.ljl.ai.research.ResearchConclusion;
+import com.ljl.ai.research.ResearchDecision;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import org.springframework.data.annotation.Id;
@@ -28,6 +29,7 @@ public class ExecutionState {
     private AnalysisContext analysisContext;
     private EvidencePack evidencePack;
     private ResearchConclusion researchConclusion;
+    private List<ResearchDecision> decisionReviews = new ArrayList<>();
     private List<ExecutionTask> tasks = new ArrayList<>();
     private WorkflowStatus workflowStatus = WorkflowStatus.PLANNED;
     private String currentNode;

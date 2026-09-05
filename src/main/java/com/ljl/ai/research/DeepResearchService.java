@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.Set;
 
 /** 固定顺序、固定调用上限的深度研究编排器。 */
@@ -31,6 +32,18 @@ public class DeepResearchService {
             throw new IllegalArgumentException("EvidencePack 不能为空");
         }
         String evidence = truncate(evidencePack.modelView(), EVIDENCE_BUDGET);
+        return research(evidencePack, evidence);
+    }
+
+    public ResearchConclusion research(EvidencePack evidencePack, List<ResearchDecision> decisionReviews) {
+        if (evidencePack == null) {
+            throw new IllegalArgumentException("EvidencePack 不能为空");
+        }
+        String evidence = researchContext(evidencePack, decisionReviews);
+        return research(evidencePack, evidence);
+    }
+
+    private ResearchConclusion research(EvidencePack evidencePack, String evidence) {
         List<RoleResult> results = new ArrayList<>();
         List<String> limitations = new ArrayList<>();
         for (Role role : Role.values()) {
@@ -64,6 +77,43 @@ public class DeepResearchService {
                     exception.getClass().getSimpleName(), reason);
             return fallback(cutoff, limitations);
         }
+    }
+
+    private String researchContext(EvidencePack pack, List<ResearchDecision> reviews) {
+        List<ResearchDecision> visible = visibleReviews(pack, reviews);
+        if (visible.isEmpty()) {
+            return truncate(pack.modelView(), EVIDENCE_BUDGET);
+        }
+        String reviewText = visible.stream()
+                .map(decision -> "- 决策日=" + decision.getAnalysisDate()
+                        + "；结果可用日=" + decision.getOutcomeAvailableAt()
+                        + "；原评级=" + decision.getRating()
+                        + "；确定性复盘=" + oneLine(decision.getReflection()))
+                .reduce((left, right) -> left + "\n" + right).orElse("");
+        return truncate("【本轮 EvidencePack（唯一事实依据）】\n" + value(pack.modelView())
+                + "\n\n【历史复盘参考（仅用于校准，不得覆盖本轮事实或充当 evidenceId）】\n"
+                + reviewText, EVIDENCE_BUDGET);
+    }
+
+    private List<ResearchDecision> visibleReviews(EvidencePack pack, List<ResearchDecision> reviews) {
+        if (pack.context() == null || reviews == null || reviews.isEmpty()) {
+            return List.of();
+        }
+        AnalysisContext context = pack.context();
+        return reviews.stream()
+                .filter(Objects::nonNull)
+                .filter(decision -> decision.getReviewStatus() == ResearchDecision.ReviewStatus.COMPLETED)
+                .filter(decision -> Objects.equals(context.userId(), decision.getUserId()))
+                .filter(decision -> Objects.equals(context.symbol(), decision.getSymbol()))
+                .filter(decision -> decision.getOutcomeAvailableAt() != null
+                        && !decision.getOutcomeAvailableAt().isAfter(context.analysisDate()))
+                .sorted(java.util.Comparator.comparing(ResearchDecision::getOutcomeAvailableAt).reversed())
+                .limit(5)
+                .toList();
+    }
+
+    private String oneLine(String content) {
+        return value(content).replaceAll("\\s+", " ");
     }
 
     private String invoke(Role role, String evidence, String upstream) {

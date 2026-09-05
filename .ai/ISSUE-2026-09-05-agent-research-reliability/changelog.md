@@ -26,3 +26,4 @@
 - 新增无工具、无 MemoryId 的深度研究 Assistant 契约，以及基本面→技术面→新闻→看多→看空→风险→Judge 的固定有界编排；所有角色共享同一 EvidencePack 文本且每个最多调用一次。Judge JSON 映射为不可变 ResearchConclusion，校验 rating、confidence、evidenceIds 和 dataAsOf；单角色失败继续但标记降级，Judge 解析或证据越界时返回确定性 `INSUFFICIENT_DATA`。
 - 将可选深度投研正式接入工作流：可信任务经 EVIDENCE_PACK checkpoint 后按 AnalysisContext 选择 STANDARD 直达回答或 DEEP_RESEARCH 分支，节点状态和事件可恢复、可观察。深度 Assistant Bean 明确不挂载工具与会话记忆；通过校验的 ResearchConclusion 由确定性 Presenter 输出带证据引用的 Markdown，证据不足或结论越界时沿用标准答案链路。
 - 新增独立 Mongo `ResearchDecision` 与后验复盘服务：按 executionId 幂等保存用户、标的、分析日期、评级、置信度、证据哈希和图版本；只查询同用户、同标的、已到期且未完成的记录，以历史日 K 确定性计算 1/5/20 个交易日收益及相对沪深 300 ETF 收益。基准缺失不会丢弃标的收益，复盘结果按 outcome 可用日期控制历史可见性，且不调用 LLM、不读取聊天或偏好记忆。
+- 将决策复盘接入真实对话与深度投研链路：ChatRequest 的 researchMode/analysisDate 经统一解析写入 ExecutionState，工作流启动前 best-effort 刷新并召回当时可见的同用户同标的复盘；DeepResearchService 将其置于带日期、不可充当 evidenceId 的独立参考区。本轮只有在有效深度结论和助手业务消息均成功后才幂等保存决策，复盘/保存失败均不阻断回答，STANDARD 模式不强制产生评级记录。

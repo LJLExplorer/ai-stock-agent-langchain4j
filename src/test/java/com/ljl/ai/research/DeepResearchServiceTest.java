@@ -3,6 +3,7 @@ package com.ljl.ai.research;
 import com.ljl.ai.agent.DeepResearchAssistant;
 import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
+import org.mockito.ArgumentCaptor;
 
 import java.time.Instant;
 import java.time.LocalDate;
@@ -100,6 +101,26 @@ class DeepResearchServiceTest {
         assertThat(conclusion.limitations()).contains("JUDGE_FAILED");
     }
 
+    @Test
+    void shouldInjectOnlySameOwnerSymbolAndHistoricallyVisibleCompletedReviewsAsReference() {
+        DeepResearchAssistant assistant = successfulAssistant();
+        EvidencePack pack = contextualPack();
+        ResearchDecision visible = reviewedDecision("visible", "user-1", "600519.SH",
+                LocalDate.of(2025, 12, 30));
+        ResearchDecision future = reviewedDecision("future", "user-1", "600519.SH",
+                LocalDate.of(2026, 1, 20));
+        ResearchDecision otherUser = reviewedDecision("other-user", "user-2", "600519.SH",
+                LocalDate.of(2025, 12, 30));
+
+        new DeepResearchService(assistant).research(pack, List.of(visible, future, otherUser));
+
+        ArgumentCaptor<String> context = ArgumentCaptor.forClass(String.class);
+        verify(assistant).fundamental(context.capture(), anyString());
+        assertThat(context.getValue())
+                .contains("本轮 EvidencePack", "历史复盘参考", "visible", "2025-12-30")
+                .doesNotContain("future", "other-user");
+    }
+
     private DeepResearchAssistant successfulAssistant() {
         DeepResearchAssistant assistant = mock(DeepResearchAssistant.class);
         when(assistant.fundamental(anyString(), anyString())).thenReturn("基本面摘要");
@@ -129,5 +150,24 @@ class DeepResearchServiceTest {
         return new EvidencePack(null, Map.of(FinancialFact.EvidenceType.MARKET, List.of(fact)),
                 List.of(), List.of(), Instant.parse("2025-12-31T15:00:00Z"), "hash",
                 "[ev-price] MARKET close=1500 CNY/share asOf=2025-12-31 source=provider");
+    }
+
+    private EvidencePack contextualPack() {
+        EvidencePack pack = pack();
+        AnalysisContext context = new AnalysisContext("600519.SH", LocalDate.of(2025, 12, 31),
+                AnalysisContext.ResearchMode.DEEP, "exec-current", "trace-1", "user-1", "session-1");
+        return new EvidencePack(context, pack.evidenceByType(), pack.missingItems(), pack.toolFailures(),
+                pack.dataAsOf(), pack.evidenceHash(), pack.modelView());
+    }
+
+    private ResearchDecision reviewedDecision(String reflection, String userId, String symbol,
+                                                LocalDate availableAt) {
+        ResearchDecision decision = ResearchDecision.pending("decision-" + reflection, "exec-" + reflection,
+                userId, symbol, LocalDate.of(2025, 11, 1), ResearchConclusion.Rating.BULLISH,
+                0.8, "hash-" + reflection, "summary", "graph-v1");
+        decision.setReviewStatus(ResearchDecision.ReviewStatus.COMPLETED);
+        decision.setOutcomeAvailableAt(availableAt);
+        decision.setReflection(reflection);
+        return decision;
     }
 }

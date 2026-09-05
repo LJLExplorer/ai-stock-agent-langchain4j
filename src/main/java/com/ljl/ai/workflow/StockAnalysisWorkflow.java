@@ -219,7 +219,9 @@ public class StockAnalysisWorkflow {
         }
         publish(state, RunEvent.EventType.DEEP_RESEARCH_STARTED, "DEEP_RESEARCH", "status=started");
         try {
-            ResearchConclusion conclusion = deepResearchService.research(state.getEvidencePack());
+            ResearchConclusion conclusion = state.getDecisionReviews() == null || state.getDecisionReviews().isEmpty()
+                    ? deepResearchService.research(state.getEvidencePack())
+                    : deepResearchService.research(state.getEvidencePack(), state.getDecisionReviews());
             state.setResearchConclusion(conclusion);
             log.info("deep_research_finished executionId={}, rating={}, degraded={}", state.getExecutionId(),
                     conclusion.rating(), conclusion.degraded());

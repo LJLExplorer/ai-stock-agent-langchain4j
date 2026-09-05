@@ -740,16 +740,17 @@
 
 ### Task 18: 将决策复盘接入对话与深度研究
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=ChatServiceWorkflowTest,DeepResearchServiceTest test'` 失败；测试编译阶段报告缺少带 ChatRequest 的执行状态构建入口、ExecutionState 决策复盘字段、业务消息后决策保存入口，以及 DeepResearchService 的复盘输入重载，与预期主链路尚未接入一致。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=ChatServiceWorkflowTest,DeepResearchServiceTest test'` 通过（14 tests）；验证请求的 DEEP/analysisDate 进入 ExecutionState、复盘刷新失败不阻断主链路、只注入同用户同标的且在分析时点已可见的完成复盘、STANDARD 不保存评级、助手业务消息未保存时不写决策，以及决策持久化失败 best-effort 降级。整库 `zsh -ic 'jdk21 && mvn -q test'` 通过（247 tests，0 failures/errors/skipped）。
 
 **涉及文件：**
 - Modify: `src/main/java/com/ljl/ai/service/ChatService.java`
 - Modify: `src/main/java/com/ljl/ai/research/DeepResearchService.java`
 - Modify: `src/main/java/com/ljl/ai/workflow/ExecutionState.java`
+- Modify: `src/main/java/com/ljl/ai/workflow/StockAnalysisWorkflow.java`
 - Test: `src/test/java/com/ljl/ai/service/ChatServiceWorkflowTest.java`
 - Test: `src/test/java/com/ljl/ai/research/DeepResearchServiceTest.java`
 
