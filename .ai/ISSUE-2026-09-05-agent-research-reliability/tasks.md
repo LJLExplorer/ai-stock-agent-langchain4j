@@ -403,11 +403,11 @@
 
 ### Task 10: 建立类型化 RunEvent 发布器
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=InMemoryRunEventPublisherTest test'` 失败；测试编译阶段报告 `RunEvent`、`RunEventPublisher` 与 `InMemoryRunEventPublisher` 不存在，与预期缺少类型化事件发布能力一致。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=InMemoryRunEventPublisherTest test'` 通过（3 tests）；验证 executionId 独立连续序号、每次执行的有界回放、取消订阅后继续发布，以及事件结构不暴露 Prompt/响应正文且摘要长度受限。
 
 **涉及文件：**
 - Create: `src/main/java/com/ljl/ai/observability/RunEvent.java`
