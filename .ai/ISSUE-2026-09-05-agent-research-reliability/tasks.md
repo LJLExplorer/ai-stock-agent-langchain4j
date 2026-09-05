@@ -321,11 +321,11 @@
 
 ### Task 8: 建立工具执行幂等存储
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=MongoToolExecutionStoreTest test'` 失败；测试编译阶段报告 `ToolExecutionRecord` 与 `MongoToolExecutionStore` 不存在，与预期一致。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=MongoToolExecutionStoreTest test'` 通过（4 tests）；验证复合幂等键、STARTED 条件迁移、结果/证据快照、重复成功幂等及成功记录冲突保护。
 
 **涉及文件：**
 - Create: `src/main/java/com/ljl/ai/workflow/ToolExecutionRecord.java`
