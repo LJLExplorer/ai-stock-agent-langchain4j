@@ -2,6 +2,8 @@ package com.ljl.ai.workflow;
 
 import com.alibaba.fastjson2.JSON;
 import com.ljl.ai.model.dto.ToolResult;
+import com.ljl.ai.observability.RunEvent;
+import com.ljl.ai.observability.RunEventPublisher;
 import com.ljl.ai.planner.StockAnalysisTask;
 import com.ljl.ai.research.EvidencePackBuilder;
 import lombok.extern.slf4j.Slf4j;
@@ -29,27 +31,35 @@ public class StockAnalysisTaskNode {
     private final EvidencePackBuilder evidencePackBuilder;
     private final ToolExecutionStore toolExecutionStore;
     private final WorkflowRetryPolicy retryPolicy;
+    private final RunEventPublisher eventPublisher;
 
     public StockAnalysisTaskNode(StockAnalysisTaskExecutor executor) {
-        this(executor, new EvidencePackBuilder(), null, new WorkflowRetryPolicy());
+        this(executor, new EvidencePackBuilder(), null, new WorkflowRetryPolicy(), null);
     }
 
     public StockAnalysisTaskNode(StockAnalysisTaskExecutor executor, EvidencePackBuilder evidencePackBuilder) {
-        this(executor, evidencePackBuilder, null, new WorkflowRetryPolicy());
+        this(executor, evidencePackBuilder, null, new WorkflowRetryPolicy(), null);
     }
 
     public StockAnalysisTaskNode(StockAnalysisTaskExecutor executor, EvidencePackBuilder evidencePackBuilder,
                                  ToolExecutionStore toolExecutionStore) {
-        this(executor, evidencePackBuilder, toolExecutionStore, new WorkflowRetryPolicy());
+        this(executor, evidencePackBuilder, toolExecutionStore, new WorkflowRetryPolicy(), null);
+    }
+
+    public StockAnalysisTaskNode(StockAnalysisTaskExecutor executor, EvidencePackBuilder evidencePackBuilder,
+                                 ToolExecutionStore toolExecutionStore, WorkflowRetryPolicy retryPolicy) {
+        this(executor, evidencePackBuilder, toolExecutionStore, retryPolicy, null);
     }
 
     @Autowired
     public StockAnalysisTaskNode(StockAnalysisTaskExecutor executor, EvidencePackBuilder evidencePackBuilder,
-                                 ToolExecutionStore toolExecutionStore, WorkflowRetryPolicy retryPolicy) {
+                                 ToolExecutionStore toolExecutionStore, WorkflowRetryPolicy retryPolicy,
+                                 RunEventPublisher eventPublisher) {
         this.executor = executor;
         this.evidencePackBuilder = evidencePackBuilder;
         this.toolExecutionStore = toolExecutionStore;
         this.retryPolicy = retryPolicy;
+        this.eventPublisher = eventPublisher;
     }
 
     public void execute(ExecutionState state, ExecutionTask task) {
@@ -67,6 +77,7 @@ public class StockAnalysisTaskNode {
         String symbol = state.getPlan() == null ? null : state.getPlan().getSymbol();
         task.start();
         long started = System.nanoTime();
+        publishTool(state, task, RunEvent.EventType.TOOL_STARTED, "status=started");
         log.info("tool_execution_started executionId={}, taskId={}, tool={}, symbol={}, queryLength={}, period={}, attempt={}",
                 state.getExecutionId(), task.getTaskId(), task.getTaskType().toolName(), symbol,
                 state.getOriginalQuestion() == null ? 0 : state.getOriginalQuestion().length(), "latest", task.getAttempts());
@@ -81,8 +92,13 @@ public class StockAnalysisTaskNode {
             if (result.isSuccess()) {
                 var evidence = evidencePackBuilder.map(task.getTaskType(), result.getData(), state.getAnalysisContext());
                 task.complete(JSON.toJSONString(result.getData()), evidence);
+                publishTool(state, task, RunEvent.EventType.TOOL_COMPLETED,
+                        "status=completed,elapsedMs=" + elapsedMillis(started));
             } else {
                 task.fail(result.getErrorMessage());
+                publishTool(state, task, RunEvent.EventType.TOOL_FAILED,
+                        "status=failed,errorCode=" + safeCode(result.getErrorCode())
+                                + ",elapsedMs=" + elapsedMillis(started));
             }
             refreshEvidencePack(state);
         } catch (Exception exception) {
@@ -91,6 +107,9 @@ public class StockAnalysisTaskNode {
                     exception.getClass().getSimpleName());
             task.fail(exception.getMessage() == null
                     ? exception.getClass().getSimpleName() : exception.getMessage());
+            publishTool(state, task, RunEvent.EventType.TOOL_FAILED,
+                    "status=failed,errorCode=" + exception.getClass().getSimpleName()
+                            + ",elapsedMs=" + elapsedMillis(started));
             refreshEvidencePack(state);
         }
     }
@@ -147,6 +166,8 @@ public class StockAnalysisTaskNode {
     private void runAndRecord(ExecutionState state, ExecutionTask task, int attempt) {
         String symbol = state.getPlan() == null ? null : state.getPlan().getSymbol();
         long started = System.nanoTime();
+        publishTool(state, task, RunEvent.EventType.TOOL_STARTED,
+                "status=started,attempt=" + attempt);
         log.info("tool_execution_started executionId={}, taskId={}, tool={}, symbol={}, queryLength={}, period={}, attempt={}",
                 state.getExecutionId(), task.getTaskId(), task.getTaskType().toolName(), symbol,
                 state.getOriginalQuestion() == null ? 0 : state.getOriginalQuestion().length(), "latest", attempt);
@@ -161,6 +182,9 @@ public class StockAnalysisTaskNode {
             ToolExecutionRecord failed = toolExecutionStore.fail(
                     state.getExecutionId(), task.getTaskId(), attempt, result.getErrorMessage());
             task.restoreFailure(failed.attempt(), failed.errorMessage());
+            publishTool(state, task, RunEvent.EventType.TOOL_FAILED,
+                    "status=failed,errorCode=" + safeCode(result.getErrorCode())
+                            + ",elapsedMs=" + elapsedMillis(started));
             refreshEvidencePack(state);
             return;
         }
@@ -170,11 +194,15 @@ public class StockAnalysisTaskNode {
         ToolExecutionRecord completed = toolExecutionStore.complete(
                 state.getExecutionId(), task.getTaskId(), attempt, rawResult, evidence);
         task.complete(completed.resultSnapshot(), completed.evidence());
+        publishTool(state, task, RunEvent.EventType.TOOL_COMPLETED,
+                "status=completed,attempt=" + attempt + ",elapsedMs=" + elapsedMillis(started));
         refreshEvidencePack(state);
     }
 
     private void restoreSuccess(ExecutionState state, ExecutionTask task, ToolExecutionRecord record) {
         task.restoreSuccess(record.attempt(), record.resultSnapshot(), record.evidence());
+        publishTool(state, task, RunEvent.EventType.TOOL_COMPLETED,
+                "status=reused,attempt=" + record.attempt());
         refreshEvidencePack(state);
         log.info("tool_execution_reused executionId={}, taskId={}, attempt={}",
                 state.getExecutionId(), task.getTaskId(), record.attempt());
@@ -196,6 +224,8 @@ public class StockAnalysisTaskNode {
         } else {
             task.restoreFailure(Math.max(1, attempt), message);
         }
+        publishTool(state, task, RunEvent.EventType.TOOL_FAILED,
+                "status=failed,errorCode=" + exception.getClass().getSimpleName() + ",attempt=" + attempt);
         refreshEvidencePack(state);
     }
 
@@ -207,5 +237,29 @@ public class StockAnalysisTaskNode {
 
     private long elapsedMillis(long started) {
         return Math.max(0L, (System.nanoTime() - started) / 1_000_000L);
+    }
+
+    private void publishTool(ExecutionState state, ExecutionTask task,
+                             RunEvent.EventType eventType, String details) {
+        if (eventPublisher == null) {
+            return;
+        }
+        String summary = "tool=" + metadataToken(task.getTaskType().toolName())
+                + ",taskId=" + metadataToken(task.getTaskId()) + "," + details;
+        RunEvent event = eventPublisher.publish(state.getExecutionId(), state.getTraceId(), eventType,
+                task.getTaskType().name(), summary);
+        state.setEventSequence(event.sequence());
+    }
+
+    private String safeCode(String errorCode) {
+        return errorCode == null || errorCode.isBlank() ? "UNKNOWN" : metadataToken(errorCode);
+    }
+
+    private String metadataToken(String value) {
+        if (value == null || value.isBlank()) {
+            return "UNKNOWN";
+        }
+        String sanitized = value.replaceAll("[^A-Za-z0-9_.-]", "_");
+        return sanitized.substring(0, Math.min(64, sanitized.length()));
     }
 }

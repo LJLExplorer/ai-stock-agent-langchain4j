@@ -444,11 +444,11 @@
 
 ### Task 11: 在工作流和工具节点发布 RunEvent
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=WorkflowRunnerTest,StockAnalysisTaskNodeTest test'` 失败；测试编译阶段报告 `WorkflowRunner`、`StockAnalysisWorkflow` 和 `StockAnalysisTaskNode` 均缺少发布器注入构造入口，与预期执行链尚未发布 RunEvent 一致。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=WorkflowRunnerTest,StockAnalysisTaskNodeTest test'` 通过（13 tests）；验证 PLAN/NODE/TOOL/终态事件及连续序号，检查点失败时不发布 NODE_COMPLETED 但保留 WORKFLOW_FAILED，工具成功、业务失败和异常事件均只含受控元数据且 eventSequence 回写执行状态。
 
 **涉及文件：**
 - Modify: `src/main/java/com/ljl/ai/workflow/WorkflowRunner.java`

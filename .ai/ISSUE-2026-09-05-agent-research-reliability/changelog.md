@@ -19,3 +19,4 @@
 - 新增工具幂等记录与 Mongo 条件更新 Store，使用 `executionId:taskId:attempt` 唯一键，只允许 STARTED 进入 SUCCEEDED/FAILED；成功时原始结果和证据原子保存，重复相同完成可复用，冲突写入不会覆盖成功记录。
 - 任务节点接入工具幂等 Store：执行前查询 attempt，SUCCEEDED 直接恢复且不再次调用工具，四类显式只读工具可从遗留 STARTED 使用下一 attempt 重试，FAILED 遵循上限；只有成功记录持久化后任务才进入 COMPLETED。
 - 新增类型化 `RunEvent` 与进程内发布器：不同 executionId 独立生成连续序号，每次执行只保留最近 200 条事件，支持快照回放及可取消订阅；事件仅允许固定类型和 500 字符以内摘要，不提供 Prompt、响应或工具正文载荷字段。
+- 工作流入口、节点包装器及工具节点接入统一 RunEvent：初始状态持久化后发布 PLAN，节点完成事件严格晚于成功 Checkpoint，重试与正常/异常终态均可观察；工具事件仅含固定工具名、截断任务标识、状态、attempt、耗时及受控 errorCode，事件序号同步回写 ExecutionState。

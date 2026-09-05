@@ -1,5 +1,7 @@
 package com.ljl.ai.workflow;
 
+import com.ljl.ai.observability.RunEvent;
+import com.ljl.ai.observability.RunEventPublisher;
 import com.ljl.ai.planner.StockAnalysisTask;
 import org.bsc.langgraph4j.CompiledGraph;
 import org.bsc.langgraph4j.GraphStateException;
@@ -25,18 +27,26 @@ public class StockAnalysisWorkflow {
     private final WorkflowReflector reflector;
     private final WorkflowCritic critic;
     private final WorkflowAnswerGenerator answerGenerator;
+    private final RunEventPublisher eventPublisher;
 
     public StockAnalysisWorkflow() {
-        this(null, new WorkflowReflector(), new WorkflowCritic(), null);
+        this(null, new WorkflowReflector(), new WorkflowCritic(), null, null);
+    }
+
+    public StockAnalysisWorkflow(StockAnalysisTaskNode taskNode, WorkflowReflector reflector,
+                                 WorkflowCritic critic, WorkflowAnswerGenerator answerGenerator) {
+        this(taskNode, reflector, critic, answerGenerator, null);
     }
 
     @Autowired
     public StockAnalysisWorkflow(StockAnalysisTaskNode taskNode, WorkflowReflector reflector,
-                                 WorkflowCritic critic, WorkflowAnswerGenerator answerGenerator) {
+                                 WorkflowCritic critic, WorkflowAnswerGenerator answerGenerator,
+                                 RunEventPublisher eventPublisher) {
         this.taskNode = taskNode;
         this.reflector = reflector;
         this.critic = critic;
         this.answerGenerator = answerGenerator;
+        this.eventPublisher = eventPublisher;
     }
 
     public CompiledGraph<AgentState> compile() {
@@ -67,6 +77,7 @@ public class StockAnalysisWorkflow {
                             decision.set(next);
                             return new Command(next.route().name(), Map.of("currentNode", "CRITIC"));
                         }
+                        publish(executionState, RunEvent.EventType.NODE_STARTED, "CRITIC", "status=started");
                         synchronized (executionState) {
                             long expectedVersion = executionState.getVersion();
                             WorkflowCritic.Decision next = critic.criticize(reflection.get());
@@ -75,6 +86,7 @@ public class StockAnalysisWorkflow {
                                     executionState.getExecutionId(), next.route(), next.reason());
                             executionState.checkpointCompleted("CRITIC", expectedVersion);
                             checkpointCallback.save(executionState, expectedVersion);
+                            publish(executionState, RunEvent.EventType.NODE_COMPLETED, "CRITIC", "status=completed");
                             return new Command(next.route().name(), Map.of("currentNode", "CRITIC"));
                         }
                     }), Map.of("RETRY", "RETRY", "ADD_NEWS", "ADD_NEWS",
@@ -127,12 +139,17 @@ public class StockAnalysisWorkflow {
         return AsyncNodeAction.node_async(state -> {
             if (executionState != null) {
                 synchronized (executionState) {
+                    publish(executionState, RunEvent.EventType.NODE_STARTED, name, "status=started");
                     long expectedVersion = executionState.getVersion();
                     log.info("workflow_node_started executionId={}, node={}, status={}", executionState.getExecutionId(), name,
                             executionState.getWorkflowStatus());
                     action.accept(executionState);
                     executionState.checkpointCompleted(name, expectedVersion);
                     checkpointCallback.save(executionState, expectedVersion);
+                    publish(executionState, RunEvent.EventType.NODE_COMPLETED, name, "status=completed");
+                    if ("RETRY".equals(name) || "ADD_NEWS".equals(name)) {
+                        publish(executionState, RunEvent.EventType.WORKFLOW_RETRYING, name, "status=retrying");
+                    }
                     log.info("workflow_node_finished executionId={}, node={}, status={}", executionState.getExecutionId(), name,
                             executionState.getWorkflowStatus());
                 }
@@ -185,6 +202,14 @@ public class StockAnalysisWorkflow {
 
     private void fail(ExecutionState state, WorkflowCritic.Decision decision) {
         state.fail(decision.reason());
+    }
+
+    private void publish(ExecutionState state, RunEvent.EventType eventType, String node, String summary) {
+        if (eventPublisher == null || state == null) {
+            return;
+        }
+        RunEvent event = eventPublisher.publish(state.getExecutionId(), state.getTraceId(), eventType, node, summary);
+        state.setEventSequence(event.sequence());
     }
 
     @FunctionalInterface

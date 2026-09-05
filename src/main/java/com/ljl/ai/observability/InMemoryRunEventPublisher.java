@@ -15,7 +15,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 
-/** 单进程事件缓冲区；为 SSE 提供有界回放和无阻塞订阅回调。 */
+/** 单进程事件缓冲区；为 SSE 提供有界回放和轻量订阅回调。 */
 @Component
 public class InMemoryRunEventPublisher implements RunEventPublisher {
     private static final int DEFAULT_CAPACITY = 200;

@@ -1,11 +1,14 @@
 package com.ljl.ai.workflow;
 
+import com.ljl.ai.observability.InMemoryRunEventPublisher;
+import com.ljl.ai.observability.RunEvent;
 import org.junit.jupiter.api.Test;
 
 import com.ljl.ai.planner.AgentPlan;
 import com.ljl.ai.planner.StockAnalysisTask;
 
 import java.util.List;
+import java.util.stream.LongStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -45,6 +48,7 @@ class WorkflowRunnerTest {
 
     @Test
     void shouldPersistInitBeforeExecutingFirstTask() {
+        InMemoryRunEventPublisher events = new InMemoryRunEventPublisher();
         StockAnalysisTaskNode taskNode = mock(StockAnalysisTaskNode.class);
         ExecutionTask task = ExecutionTask.pending("market", StockAnalysisTask.MARKET_DATA);
         doAnswer(invocation -> {
@@ -54,19 +58,48 @@ class WorkflowRunnerTest {
             return null;
         }).when(taskNode).execute(any(), eq(task));
         StockAnalysisWorkflow workflow = new StockAnalysisWorkflow(
-                taskNode, new WorkflowReflector(), new WorkflowCritic(), null);
+                taskNode, new WorkflowReflector(), new WorkflowCritic(), null, events);
         ExecutionStateStore store = mock(ExecutionStateStore.class);
         when(store.save(any(), anyLong())).thenAnswer(invocation -> invocation.getArgument(0));
         ExecutionState state = ExecutionState.planned("exec-order", "session-1", "分析", List.of(task));
         state.setPlan(plan());
 
-        new WorkflowRunner(workflow, store).run(state);
+        new WorkflowRunner(workflow, store, events).run(state);
 
         var ordered = inOrder(store, taskNode);
         ordered.verify(store).save(state, -1);
         ordered.verify(store).save(state, 0);
         ordered.verify(taskNode).execute(state, task);
         assertEquals("ANSWER", state.getLastCompletedNode());
+        List<RunEvent> published = events.snapshot(state.getExecutionId());
+        assertEquals(RunEvent.EventType.PLAN_CREATED, published.getFirst().eventType());
+        assertEquals(RunEvent.EventType.WORKFLOW_COMPLETED, published.getLast().eventType());
+        assertEquals(LongStream.rangeClosed(1, published.size()).boxed().toList(),
+                published.stream().map(RunEvent::sequence).toList());
+        assertEquals(published.getLast().sequence(), state.getEventSequence());
+        assertTrue(published.stream().anyMatch(event -> event.eventType() == RunEvent.EventType.NODE_STARTED));
+        assertTrue(published.stream().anyMatch(event -> event.eventType() == RunEvent.EventType.NODE_COMPLETED));
+    }
+
+    @Test
+    void shouldPublishFailureButNotNodeCompletionWhenCheckpointFails() {
+        InMemoryRunEventPublisher events = new InMemoryRunEventPublisher();
+        StockAnalysisWorkflow workflow = new StockAnalysisWorkflow(
+                null, new WorkflowReflector(), new WorkflowCritic(), null, events);
+        ExecutionStateStore store = mock(ExecutionStateStore.class);
+        ExecutionState state = ExecutionState.planned("exec-checkpoint", "session-1", "分析", List.of());
+        state.setPlan(plan());
+        when(store.save(state, -1)).thenReturn(state);
+        when(store.save(state, 0)).thenThrow(new CheckpointConflictException("exec-checkpoint", 0));
+
+        assertThrows(RuntimeException.class,
+                () -> new WorkflowRunner(workflow, store, events).run(state));
+
+        List<RunEvent> published = events.snapshot(state.getExecutionId());
+        assertEquals(List.of(RunEvent.EventType.PLAN_CREATED, RunEvent.EventType.NODE_STARTED,
+                        RunEvent.EventType.WORKFLOW_FAILED),
+                published.stream().map(RunEvent::eventType).toList());
+        assertTrue(published.stream().noneMatch(event -> event.eventType() == RunEvent.EventType.NODE_COMPLETED));
     }
 
     @Test

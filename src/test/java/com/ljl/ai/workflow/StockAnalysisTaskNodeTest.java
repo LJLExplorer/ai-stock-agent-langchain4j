@@ -5,6 +5,8 @@ import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import com.ljl.ai.model.dto.ToolResult;
 import com.ljl.ai.model.entity.StockQuote;
+import com.ljl.ai.observability.InMemoryRunEventPublisher;
+import com.ljl.ai.observability.RunEvent;
 import com.ljl.ai.planner.AgentPlan;
 import com.ljl.ai.planner.StockAnalysisTask;
 import com.ljl.ai.research.AnalysisContext;
@@ -34,6 +36,38 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 
 class StockAnalysisTaskNodeTest {
+
+    @Test
+    void shouldPublishToolMetadataWithoutResultOrFailureBody() {
+        InMemoryRunEventPublisher events = new InMemoryRunEventPublisher();
+        StockAnalysisTaskExecutor executor = mock(StockAnalysisTaskExecutor.class);
+        doReturn(ToolResult.success("完整工具输出")).when(executor).execute(any(), any(), any(), any());
+        ExecutionTask successTask = pendingTask();
+        ExecutionState successState = state(successTask);
+        new StockAnalysisTaskNode(executor, new EvidencePackBuilder(), null,
+                new WorkflowRetryPolicy(), events).execute(successState, successTask);
+
+        List<RunEvent> successEvents = events.snapshot(successState.getExecutionId());
+        assertThat(successEvents).extracting(RunEvent::eventType)
+                .containsExactly(RunEvent.EventType.TOOL_STARTED, RunEvent.EventType.TOOL_COMPLETED);
+        assertThat(successEvents).allSatisfy(event -> assertThat(event.summary())
+                .doesNotContain("完整工具输出").doesNotContain("分析600519"));
+        assertThat(successState.getEventSequence()).isEqualTo(2);
+
+        doReturn(ToolResult.failure("TOOL_ERROR", "数据源失败"))
+                .when(executor).execute(any(), any(), any(), any());
+        ExecutionTask failedTask = pendingTask();
+        ExecutionState failedState = ExecutionState.planned("execution-failed", "session-tool",
+                "分析600519", List.of(failedTask));
+        failedState.setPlan(successState.getPlan());
+        new StockAnalysisTaskNode(executor, new EvidencePackBuilder(), null,
+                new WorkflowRetryPolicy(), events).execute(failedState, failedTask);
+
+        assertThat(events.snapshot(failedState.getExecutionId())).extracting(RunEvent::eventType)
+                .containsExactly(RunEvent.EventType.TOOL_STARTED, RunEvent.EventType.TOOL_FAILED);
+        assertThat(events.snapshot(failedState.getExecutionId()).getLast().summary())
+                .contains("errorCode=TOOL_ERROR").doesNotContain("数据源失败");
+    }
 
     @Test
     void shouldLogToolMetadataWithoutSensitiveInputOrOutput() {
