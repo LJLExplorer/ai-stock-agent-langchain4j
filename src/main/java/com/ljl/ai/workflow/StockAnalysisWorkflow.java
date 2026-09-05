@@ -40,19 +40,19 @@ public class StockAnalysisWorkflow {
     }
 
     public CompiledGraph<AgentState> compile() {
-        return compile(null);
+        return compile(null, CheckpointCallback.NOOP);
     }
 
-    private CompiledGraph<AgentState> compile(ExecutionState executionState) {
+    private CompiledGraph<AgentState> compile(ExecutionState executionState, CheckpointCallback checkpointCallback) {
         try {
             AtomicReference<WorkflowReflector.ReflectionDecision> reflection = new AtomicReference<>();
             AtomicReference<WorkflowCritic.Decision> decision = new AtomicReference<>();
             StateGraph<AgentState> graph = new StateGraph<>(AgentState::new)
-                    .addNode("INIT", stateNode("INIT", executionState, this::start))
-                    .addNode("MARKET_DATA", taskNode("MARKET_DATA", executionState))
-                    .addNode("TECHNICAL_ANALYSIS", taskNode("TECHNICAL_ANALYSIS", executionState))
-                    .addNode("FINANCIAL_ANALYSIS", taskNode("FINANCIAL_ANALYSIS", executionState))
-                    .addNode("NEWS_ANALYSIS", taskNode("NEWS_ANALYSIS", executionState))
+                    .addNode("INIT", stateNode("INIT", executionState, this::start, checkpointCallback))
+                    .addNode("MARKET_DATA", taskNode("MARKET_DATA", executionState, checkpointCallback))
+                    .addNode("TECHNICAL_ANALYSIS", taskNode("TECHNICAL_ANALYSIS", executionState, checkpointCallback))
+                    .addNode("FINANCIAL_ANALYSIS", taskNode("FINANCIAL_ANALYSIS", executionState, checkpointCallback))
+                    .addNode("NEWS_ANALYSIS", taskNode("NEWS_ANALYSIS", executionState, checkpointCallback))
                     .addNode("REFLECTOR", stateNode("REFLECTOR", executionState,
                             ignored -> {
                                 WorkflowReflector.ReflectionDecision next = reflector.reflect(executionState);
@@ -60,25 +60,32 @@ public class StockAnalysisWorkflow {
                                 log.info("workflow_reflection_finished executionId={}, trusted={}, retryTaskIds={}, additionalTasks={}, reason={}",
                                         executionState.getExecutionId(), next.trusted(), next.retryTaskIds(),
                                         next.additionalTasks(), next.reason());
-                            }))
+                            }, checkpointCallback))
                     .addNode("CRITIC", AsyncCommandAction.node_async((state, config) -> {
-                        WorkflowCritic.Decision next = critic.criticize(reflection.get());
-                        decision.set(next);
-                        log.info("workflow_route_selected executionId={}, route={}, reason={}",
-                                executionState == null ? null : executionState.getExecutionId(), next.route(), next.reason());
-                        if (executionState != null) {
-                            executionState.setCurrentNode("CRITIC");
+                        if (executionState == null) {
+                            WorkflowCritic.Decision next = critic.criticize(reflection.get());
+                            decision.set(next);
+                            return new Command(next.route().name(), Map.of("currentNode", "CRITIC"));
                         }
-                        return new Command(next.route().name(), Map.of("currentNode", "CRITIC"));
+                        synchronized (executionState) {
+                            long expectedVersion = executionState.getVersion();
+                            WorkflowCritic.Decision next = critic.criticize(reflection.get());
+                            decision.set(next);
+                            log.info("workflow_route_selected executionId={}, route={}, reason={}",
+                                    executionState.getExecutionId(), next.route(), next.reason());
+                            executionState.checkpointCompleted("CRITIC", expectedVersion);
+                            checkpointCallback.save(executionState, expectedVersion);
+                            return new Command(next.route().name(), Map.of("currentNode", "CRITIC"));
+                        }
                     }), Map.of("RETRY", "RETRY", "ADD_NEWS", "ADD_NEWS",
                             "ANSWER", "ANSWER", "FAILED", "FAILED"))
                     .addNode("RETRY", stateNode("RETRY", executionState,
-                            ignored -> retry(executionState, reflection.get())))
+                            ignored -> retry(executionState, reflection.get()), checkpointCallback))
                     .addNode("ADD_NEWS", stateNode("ADD_NEWS", executionState,
-                            ignored -> addNews(executionState, reflection.get())))
-                    .addNode("ANSWER", stateNode("ANSWER", executionState, this::answer))
+                            ignored -> addNews(executionState, reflection.get()), checkpointCallback))
+                    .addNode("ANSWER", stateNode("ANSWER", executionState, this::answer, checkpointCallback))
                     .addNode("FAILED", stateNode("FAILED", executionState,
-                            ignored -> fail(executionState, decision.get())));
+                            ignored -> fail(executionState, decision.get()), checkpointCallback));
 
             graph.addEdge(StateGraph.START, "INIT");
             graph.addEdge("INIT", "MARKET_DATA");
@@ -101,9 +108,13 @@ public class StockAnalysisWorkflow {
     }
 
     public ExecutionState run(ExecutionState executionState) {
+        return run(executionState, CheckpointCallback.NOOP);
+    }
+
+    public ExecutionState run(ExecutionState executionState, CheckpointCallback checkpointCallback) {
         log.info("workflow_graph_started executionId={}, status={}, taskCount={}", executionState.getExecutionId(),
                 executionState.getWorkflowStatus(), executionState.getTasks().size());
-        compile(executionState).invoke(Map.of("question", executionState.getOriginalQuestion(),
+        compile(executionState, checkpointCallback).invoke(Map.of("question", executionState.getOriginalQuestion(),
                 "executionId", executionState.getExecutionId()));
         log.info("workflow_graph_finished executionId={}, status={}, currentNode={}", executionState.getExecutionId(),
                 executionState.getWorkflowStatus(), executionState.getCurrentNode());
@@ -111,27 +122,33 @@ public class StockAnalysisWorkflow {
     }
 
     private AsyncNodeAction<AgentState> stateNode(String name, ExecutionState executionState,
-                                                    Consumer<ExecutionState> action) {
+                                                    Consumer<ExecutionState> action,
+                                                    CheckpointCallback checkpointCallback) {
         return AsyncNodeAction.node_async(state -> {
             if (executionState != null) {
-                log.info("workflow_node_started executionId={}, node={}, status={}", executionState.getExecutionId(), name,
-                        executionState.getWorkflowStatus());
-                action.accept(executionState);
-                executionState.setCurrentNode(name);
-                log.info("workflow_node_finished executionId={}, node={}, status={}", executionState.getExecutionId(), name,
-                        executionState.getWorkflowStatus());
+                synchronized (executionState) {
+                    long expectedVersion = executionState.getVersion();
+                    log.info("workflow_node_started executionId={}, node={}, status={}", executionState.getExecutionId(), name,
+                            executionState.getWorkflowStatus());
+                    action.accept(executionState);
+                    executionState.checkpointCompleted(name, expectedVersion);
+                    checkpointCallback.save(executionState, expectedVersion);
+                    log.info("workflow_node_finished executionId={}, node={}, status={}", executionState.getExecutionId(), name,
+                            executionState.getWorkflowStatus());
+                }
             }
             return Map.of("currentNode", name);
         });
     }
 
-    private AsyncNodeAction<AgentState> taskNode(String name, ExecutionState executionState) {
+    private AsyncNodeAction<AgentState> taskNode(String name, ExecutionState executionState,
+                                                 CheckpointCallback checkpointCallback) {
         return stateNode(name, executionState, ignored -> {
             if (taskNode != null && executionState != null) {
                 executionState.getTasks().stream().filter(task -> name.equals(task.getTaskType().name()))
                         .findFirst().ifPresent(task -> taskNode.execute(executionState, task));
             }
-        });
+        }, checkpointCallback);
     }
 
     private void start(ExecutionState state) {
@@ -168,5 +185,12 @@ public class StockAnalysisWorkflow {
 
     private void fail(ExecutionState state, WorkflowCritic.Decision decision) {
         state.fail(decision.reason());
+    }
+
+    @FunctionalInterface
+    public interface CheckpointCallback {
+        CheckpointCallback NOOP = (state, expectedVersion) -> { };
+
+        void save(ExecutionState state, long expectedVersion);
     }
 }

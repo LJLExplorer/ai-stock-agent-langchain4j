@@ -15,3 +15,4 @@
 - 行情与技术工具增加 `AnalysisContext` 工作流入口：历史行情由截止日 K 线构造，技术分析只读取截止日之前数据并输出数据截止日；修正技术工具描述，不再宣称尚未计算的 MACD/RSI/KDJ/布林带。
 - 财务与新闻工具增加 `AnalysisContext` 工作流入口：财务结果显式输出请求期间、报告期、披露日期、来源和时点状态，新闻结果保留 URL、来源、发布时间和 temporalStatus；历史数据缺失时不回退当前内容。
 - 新增确定性 `EvidencePackBuilder`，将行情数值、技术/财务文本与新闻来源映射为 `FinancialFact`，按稳定 evidenceId 分类去重并生成 evidenceHash；未来事实不可引用，未知时点和工具失败进入缺失说明，任务节点同步刷新执行状态证据包。
+- 工作流改为逐节点 CAS Checkpoint：每个节点成功后立即更新 lastCompletedNode 并保存，保存失败即停止推进，CRITIC 路由也在返回前落盘；恢复前校验固定 graphVersion 与规范化 planHash，不兼容时返回稳定 `INCOMPATIBLE_CHECKPOINT`。

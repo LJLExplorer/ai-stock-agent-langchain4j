@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
 
 import java.util.List;
+import java.util.ArrayList;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -105,5 +106,24 @@ class StockAnalysisWorkflowTest {
         new StockAnalysisWorkflow(null, new WorkflowReflector(), new WorkflowCritic(), answerGenerator).run(state);
 
         verify(answerGenerator).generate(state);
+    }
+
+    @Test
+    void shouldCheckpointEverySuccessfulNodeIncludingCriticRoute() {
+        ExecutionTask market = ExecutionTask.pending("market", StockAnalysisTask.MARKET_DATA);
+        market.start();
+        market.complete("股票：600519.SH；价格：1500");
+        ExecutionState state = ExecutionState.planned("execution-checkpoint", "session-1", "分析", List.of(market));
+        state.setPlan(AgentPlan.builder().intent("STOCK_ANALYSIS").symbol("600519.SH")
+                .tasks(List.of(StockAnalysisTask.MARKET_DATA)).build());
+        List<String> checkpoints = new ArrayList<>();
+
+        new StockAnalysisWorkflow().run(state, (current, expectedVersion) -> {
+            checkpoints.add(current.getLastCompletedNode());
+            assertEquals(current.getVersion(), expectedVersion + 1);
+        });
+
+        assertThat(checkpoints).contains("INIT", "MARKET_DATA", "REFLECTOR", "CRITIC", "ANSWER");
+        assertEquals("ANSWER", state.getLastCompletedNode());
     }
 }

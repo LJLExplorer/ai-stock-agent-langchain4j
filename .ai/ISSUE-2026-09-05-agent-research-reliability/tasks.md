@@ -279,11 +279,11 @@
 
 ### Task 7: 实现逐节点 Checkpoint 与图版本保护
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=StockAnalysisWorkflowTest,WorkflowRunnerTest test'` 失败；测试编译阶段报告缺少 CheckpointCallback、逐节点 run 重载、graphVersion/planHash/lastCompletedNode 和 checkpointCompleted，与预期一致。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=StockAnalysisWorkflowTest,WorkflowRunnerTest test'` 通过（10 tests）；验证 INIT 先保存再执行任务、逐节点与 CRITIC 路由检查点、CAS 冲突停止推进，以及 graphVersion/planHash 不兼容拒绝恢复。
 
 **涉及文件：**
 - Modify: `src/main/java/com/ljl/ai/workflow/ExecutionState.java`

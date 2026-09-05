@@ -29,6 +29,10 @@ public class ExecutionState {
     private List<ExecutionTask> tasks = new ArrayList<>();
     private WorkflowStatus workflowStatus = WorkflowStatus.PLANNED;
     private String currentNode;
+    private String graphVersion;
+    private String planHash;
+    private String lastCompletedNode;
+    private long eventSequence;
     private long version;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
@@ -80,6 +84,19 @@ public class ExecutionState {
         workflowStatus = WorkflowStatus.FAILED;
         errorMessage = reason;
         touch();
+    }
+
+    public void checkpointCompleted(String node) {
+        checkpointCompleted(node, version);
+    }
+
+    void checkpointCompleted(String node, long expectedVersion) {
+        currentNode = node;
+        lastCompletedNode = node;
+        if (version <= expectedVersion) {
+            version = expectedVersion + 1;
+        }
+        updatedAt = LocalDateTime.now();
     }
 
     private void touch() {
