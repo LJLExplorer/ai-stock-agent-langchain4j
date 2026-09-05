@@ -22,3 +22,4 @@
 - 工作流入口、节点包装器及工具节点接入统一 RunEvent：初始状态持久化后发布 PLAN，节点完成事件严格晚于成功 Checkpoint，重试与正常/异常终态均可观察；工具事件仅含固定工具名、截断任务标识、状态、attempt、耗时及受控 errorCode，事件序号同步回写 ExecutionState。
 - 新增异步深度研究执行服务：仅接受 DEEP 请求，必要时先创建会话并预分配 executionId，再通过代码内固定大小、有界队列的线程池执行；队列满返回稳定错误码，关闭服务会释放线程池，后台异常保存 FAILED 检查点并发布不含异常正文的终态事件。ChatService 新增包内预分配 ID 入口，原同步 `chat(request)` 行为保持不变。
 - 新增 `/api/research/executions` 异步启动、所有者状态查询和 SSE 事件流接口；未授权与不存在的执行统一不可见。SSE 先回放有界快照，再通过 sequence 游标原子补发订阅间隙事件并去重，终态自动完成，断连/超时/发送失败只注销监听器而不取消后台研究。
+- 新增确定性 Claim–Evidence Guard，以 `[evidence:ev-…]` 显式语法校验回答只引用当前 EvidencePack；拒绝未知/跨包 ID、无证据引用的数值以及晚于 dataAsOf 的日期。工作流回答改为先证据校验、再 Markdown 校验，只允许一次受原因约束的重写，仍失败则确定性降级；旧 `factCheck` 兼容代码未被当作事实验证接入。

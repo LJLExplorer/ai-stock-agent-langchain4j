@@ -570,11 +570,11 @@
 
 ### Task 14: 建立 Claim–Evidence 校验并接入答案生成
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=ClaimEvidenceGuardTest,WorkflowAnswerGeneratorTest test'` 失败；测试编译阶段报告 `ClaimEvidenceGuard` 不存在，与预期缺少证据门禁及生成链路接入一致。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=ClaimEvidenceGuardTest,WorkflowAnswerGeneratorTest test'` 通过（10 tests）；验证当前 EvidencePack 合法引用、未知/跨包 ID 拒绝、无引用数值拒绝、晚于 dataAsOf 日期拒绝，以及证据校验后独立执行 Markdown Guard、一次重写和确定性降级。
 
 **涉及文件：**
 - Create: `src/main/java/com/ljl/ai/research/ClaimEvidenceGuard.java`

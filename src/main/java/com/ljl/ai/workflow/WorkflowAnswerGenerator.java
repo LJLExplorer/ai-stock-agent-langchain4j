@@ -1,8 +1,10 @@
 package com.ljl.ai.workflow;
 
 import com.ljl.ai.agent.WorkflowAnswerAssistant;
+import com.ljl.ai.research.ClaimEvidenceGuard;
 import com.ljl.ai.service.AnswerTextFormatter;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -16,13 +18,23 @@ public class WorkflowAnswerGenerator {
 
     private final WorkflowAnswerAssistant assistant;
     private final AnswerContextBuilder contextBuilder;
+    private final ClaimEvidenceGuard evidenceGuard;
     private final AnswerQualityGuard qualityGuard;
 
     public WorkflowAnswerGenerator(WorkflowAnswerAssistant assistant,
                                    AnswerContextBuilder contextBuilder,
                                    AnswerQualityGuard qualityGuard) {
+        this(assistant, contextBuilder, new ClaimEvidenceGuard(), qualityGuard);
+    }
+
+    @Autowired
+    public WorkflowAnswerGenerator(WorkflowAnswerAssistant assistant,
+                                   AnswerContextBuilder contextBuilder,
+                                   ClaimEvidenceGuard evidenceGuard,
+                                   AnswerQualityGuard qualityGuard) {
         this.assistant = assistant;
         this.contextBuilder = contextBuilder;
+        this.evidenceGuard = evidenceGuard;
         this.qualityGuard = qualityGuard;
     }
 
@@ -31,13 +43,14 @@ public class WorkflowAnswerGenerator {
             return;
         }
         AnswerContextBuilder.Context context = contextBuilder.build(state);
-        GenerationAttempt first = firstAttempt(state, context);
+        String trustedContext = trustedContext(state, context);
+        GenerationAttempt first = firstAttempt(state, context, trustedContext);
         if (first.valid()) {
             state.setFinalAnswer(AnswerTextFormatter.format(first.answer()));
             return;
         }
 
-        GenerationAttempt rewritten = rewriteAttempt(state, context, first.reason());
+        GenerationAttempt rewritten = rewriteAttempt(state, context, trustedContext, first.reason());
         if (rewritten.valid()) {
             state.setFinalAnswer(AnswerTextFormatter.format(rewritten.answer()));
             return;
@@ -48,9 +61,10 @@ public class WorkflowAnswerGenerator {
         state.setFinalAnswer(fallback(state));
     }
 
-    private GenerationAttempt firstAttempt(ExecutionState state, AnswerContextBuilder.Context context) {
+    private GenerationAttempt firstAttempt(ExecutionState state, AnswerContextBuilder.Context context,
+                                           String trustedContext) {
         try {
-            String answer = assistant.generate(state.getOriginalQuestion(), context.content());
+            String answer = assistant.generate(state.getOriginalQuestion(), trustedContext);
             return validate(state, context, 1, answer);
         } catch (RuntimeException exception) {
             log.warn("workflow_answer_failed executionId={}, attempt=1, reason={}, contextLength={}, errorType={}",
@@ -59,9 +73,10 @@ public class WorkflowAnswerGenerator {
         }
     }
 
-    private GenerationAttempt rewriteAttempt(ExecutionState state, AnswerContextBuilder.Context context, String reason) {
+    private GenerationAttempt rewriteAttempt(ExecutionState state, AnswerContextBuilder.Context context,
+                                             String trustedContext, String reason) {
         try {
-            String answer = assistant.rewrite(state.getOriginalQuestion(), context.content(), reason);
+            String answer = assistant.rewrite(state.getOriginalQuestion(), trustedContext, reason);
             return validate(state, context, 2, answer);
         } catch (RuntimeException exception) {
             log.warn("workflow_answer_failed executionId={}, attempt=2, reason={}, contextLength={}, errorType={}",
@@ -72,6 +87,14 @@ public class WorkflowAnswerGenerator {
 
     private GenerationAttempt validate(ExecutionState state, AnswerContextBuilder.Context context,
                                        int attempt, String answer) {
+        ClaimEvidenceGuard.Validation evidenceValidation = evidenceGuard.validate(answer, state.getEvidencePack());
+        if (!evidenceValidation.valid()) {
+            log.warn("workflow_answer_rejected executionId={}, attempt={}, reason={}, missingEvidenceIds={}, answerLength={}, contextLength={}",
+                    state.getExecutionId(), attempt, evidenceValidation.reason(),
+                    evidenceValidation.missingEvidenceIds(), answer == null ? 0 : answer.length(),
+                    context.content().length());
+            return GenerationAttempt.invalid(evidenceValidation.reason().name());
+        }
         AnswerQualityGuard.Validation validation = qualityGuard.validate(answer);
         if (validation.valid()) {
             log.info("workflow_answer_accepted executionId={}, attempt={}, answerLength={}, contextLength={}, truncatedTaskCount={}",
@@ -82,6 +105,14 @@ public class WorkflowAnswerGenerator {
                 state.getExecutionId(), attempt, validation.reason(), answer == null ? 0 : answer.length(),
                 context.content().length(), context.truncatedTaskCount());
         return GenerationAttempt.invalid(validation.reason().name());
+    }
+
+    private String trustedContext(ExecutionState state, AnswerContextBuilder.Context fallbackContext) {
+        if (state.getEvidencePack() != null && state.getEvidencePack().modelView() != null
+                && !state.getEvidencePack().modelView().isBlank()) {
+            return state.getEvidencePack().modelView();
+        }
+        return fallbackContext.content();
     }
 
     private String fallback(ExecutionState state) {
