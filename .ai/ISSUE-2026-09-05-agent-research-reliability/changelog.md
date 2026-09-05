@@ -23,3 +23,4 @@
 - 新增异步深度研究执行服务：仅接受 DEEP 请求，必要时先创建会话并预分配 executionId，再通过代码内固定大小、有界队列的线程池执行；队列满返回稳定错误码，关闭服务会释放线程池，后台异常保存 FAILED 检查点并发布不含异常正文的终态事件。ChatService 新增包内预分配 ID 入口，原同步 `chat(request)` 行为保持不变。
 - 新增 `/api/research/executions` 异步启动、所有者状态查询和 SSE 事件流接口；未授权与不存在的执行统一不可见。SSE 先回放有界快照，再通过 sequence 游标原子补发订阅间隙事件并去重，终态自动完成，断连/超时/发送失败只注销监听器而不取消后台研究。
 - 新增确定性 Claim–Evidence Guard，以 `[evidence:ev-…]` 显式语法校验回答只引用当前 EvidencePack；拒绝未知/跨包 ID、无证据引用的数值以及晚于 dataAsOf 的日期。工作流回答改为先证据校验、再 Markdown 校验，只允许一次受原因约束的重写，仍失败则确定性降级；旧 `factCheck` 兼容代码未被当作事实验证接入。
+- 新增无工具、无 MemoryId 的深度研究 Assistant 契约，以及基本面→技术面→新闻→看多→看空→风险→Judge 的固定有界编排；所有角色共享同一 EvidencePack 文本且每个最多调用一次。Judge JSON 映射为不可变 ResearchConclusion，校验 rating、confidence、evidenceIds 和 dataAsOf；单角色失败继续但标记降级，Judge 解析或证据越界时返回确定性 `INSUFFICIENT_DATA`。

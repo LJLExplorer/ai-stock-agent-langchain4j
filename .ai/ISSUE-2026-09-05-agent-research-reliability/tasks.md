@@ -612,11 +612,11 @@
 
 ### Task 15: 定义深度投研角色与结构化结论
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=DeepResearchServiceTest,DeepResearchAssistantContractTest test'` 失败；测试编译阶段报告 `DeepResearchAssistant` 不存在，与预期缺少固定角色契约、结构化结论和编排服务一致。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=DeepResearchServiceTest,DeepResearchAssistantContractTest test'` 通过（6 tests）；验证六角色固定顺序且各调用一次、共享同一预算证据、契约无工具/无 MemoryId、Judge JSON 解析、结论字段边界、跨包 evidenceId 拒绝、单角色失败继续及 Judge 失败确定性降级。
 
 **涉及文件：**
 - Create: `src/main/java/com/ljl/ai/research/ResearchConclusion.java`
