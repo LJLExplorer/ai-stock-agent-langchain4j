@@ -155,6 +155,8 @@ risks, missingInformation, evidenceIds, dataAsOf
 
 事件发布器同时更新每个 executionId 的有界内存流和 MongoDB 执行状态中的最新序号/摘要。SSE Controller 支持订阅运行中事件；状态查询接口用于断线重连后的补偿读取。SSE 取消订阅不传播为工作流取消。
 
+为保证客户端能在工作流结束前获得 executionId，保留现有同步 `POST /api/chat/send`，并为深度投研新增异步启动接口：服务端先创建会话、executionId 和 PLANNED 状态，返回 `202 Accepted`，再由受控执行器在后台运行。客户端使用 executionId 订阅事件或查询状态。异步执行使用有界线程池和拒绝策略，不使用无界任务队列。
+
 ## 8. 决策复盘记忆
 
 `ResearchDecision` 使用独立 MongoDB 集合，保存 userId、symbol、analysisDate、rating、confidence、evidenceHash、结论摘要、评估窗口和模型/图版本。`DecisionReviewService` 在后续分析开始时检查已到期且未评估的记录，通过历史行情计算标的和基准收益，保存结构化 outcome 与 reflection。
