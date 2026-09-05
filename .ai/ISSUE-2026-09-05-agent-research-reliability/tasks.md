@@ -783,11 +783,11 @@
 
 ### Task 19: 建立离线 Agent Eval 与基线报告
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=AgentEvalRunnerTest test'` 失败；测试编译阶段报告 `AgentEvalRunner` 不存在，与预期缺少离线样本加载、统一指标计算及稳定报告能力一致。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=AgentEvalRunnerTest test'` 通过（3 tests）；固定 5 样本基线为 accuracy=1.0、Recall@3=1.0、nDCG@3=0.9197207891481876、引用覆盖=1.0、数字一致性=1.0、平均延迟=30.0ms、总调用数=3，并验证零样本、重复 caseId、非法期望与非法观测显式失败，默认评测零网络/模型调用。
 
 **涉及文件：**
 - Create: `src/test/java/com/ljl/ai/eval/AgentEvalRunner.java`

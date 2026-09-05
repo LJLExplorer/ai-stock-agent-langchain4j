@@ -27,3 +27,4 @@
 - 将可选深度投研正式接入工作流：可信任务经 EVIDENCE_PACK checkpoint 后按 AnalysisContext 选择 STANDARD 直达回答或 DEEP_RESEARCH 分支，节点状态和事件可恢复、可观察。深度 Assistant Bean 明确不挂载工具与会话记忆；通过校验的 ResearchConclusion 由确定性 Presenter 输出带证据引用的 Markdown，证据不足或结论越界时沿用标准答案链路。
 - 新增独立 Mongo `ResearchDecision` 与后验复盘服务：按 executionId 幂等保存用户、标的、分析日期、评级、置信度、证据哈希和图版本；只查询同用户、同标的、已到期且未完成的记录，以历史日 K 确定性计算 1/5/20 个交易日收益及相对沪深 300 ETF 收益。基准缺失不会丢弃标的收益，复盘结果按 outcome 可用日期控制历史可见性，且不调用 LLM、不读取聊天或偏好记忆。
 - 将决策复盘接入真实对话与深度投研链路：ChatRequest 的 researchMode/analysisDate 经统一解析写入 ExecutionState，工作流启动前 best-effort 刷新并召回当时可见的同用户同标的复盘；DeepResearchService 将其置于带日期、不可充当 evidenceId 的独立参考区。本轮只有在有效深度结论和助手业务消息均成功后才幂等保存决策，复盘/保存失败均不阻断回答，STANDARD 模式不强制产生评级记录。
+- 建立覆盖 Planner、话题路由、RAG、证据门禁和工作流恢复的离线 Agent Eval；Runner 通过函数式适配器接收固定观测，输出字段顺序稳定的 JSON，并校验空样本、重复 ID 和非法计数。5 个确定性样本基线：accuracy 1.0、Recall@3 1.0、nDCG@3 0.9197207891481876、引用覆盖 1.0、数字一致性 1.0、平均延迟 30.0ms、总调用 3；默认 CI 不访问网络或模型，在线评测必须使用显式 Profile。
