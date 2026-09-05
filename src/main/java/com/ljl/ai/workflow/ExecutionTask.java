@@ -1,6 +1,7 @@
 package com.ljl.ai.workflow;
 
 import com.ljl.ai.planner.StockAnalysisTask;
+import com.ljl.ai.research.FinancialFact;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
@@ -20,6 +21,8 @@ public class ExecutionTask {
     private String result;
     /** 每次成功完成的结果都保留，避免重试覆盖之前可用的数据。 */
     private List<String> resultHistory = new ArrayList<>();
+    /** 每次成功执行得到的结构化证据按 evidenceId 追加去重。 */
+    private List<FinancialFact> evidence = new ArrayList<>();
     private String errorMessage;
     private LocalDateTime startedAt;
     private LocalDateTime completedAt;
@@ -55,6 +58,10 @@ public class ExecutionTask {
     }
 
     public void complete(String taskResult) {
+        complete(taskResult, List.of());
+    }
+
+    public void complete(String taskResult, List<FinancialFact> taskEvidence) {
         if (status != TaskStatus.RUNNING) {
             throw new IllegalStateException("任务未运行，不能完成: " + status);
         }
@@ -66,7 +73,23 @@ public class ExecutionTask {
             }
             resultHistory.add(taskResult);
         }
+        appendEvidence(taskEvidence);
         completedAt = LocalDateTime.now();
+    }
+
+    private void appendEvidence(List<FinancialFact> taskEvidence) {
+        if (taskEvidence == null || taskEvidence.isEmpty()) {
+            return;
+        }
+        if (evidence == null) {
+            evidence = new ArrayList<>();
+        }
+        for (FinancialFact fact : taskEvidence) {
+            if (fact != null && evidence.stream()
+                    .noneMatch(existing -> existing.evidenceId().equals(fact.evidenceId()))) {
+                evidence.add(fact);
+            }
+        }
     }
 
     public void fail(String reason) {

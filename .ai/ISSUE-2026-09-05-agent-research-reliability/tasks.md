@@ -68,11 +68,11 @@
 
 ### Task 2: 建立金融事实与证据包领域模型
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=FinancialFactTest,ExecutionTaskTest test'` 失败；测试编译阶段报告 `FinancialFact` 不存在，与预期缺少事实模型和任务证据接口一致。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=FinancialFactTest,ExecutionTaskTest test'` 通过（6 tests）；验证稳定 evidenceId、嵌套集合不可变及成功重试证据追加去重。
 
 **涉及文件：**
 - Create: `src/main/java/com/ljl/ai/research/FinancialFact.java`
