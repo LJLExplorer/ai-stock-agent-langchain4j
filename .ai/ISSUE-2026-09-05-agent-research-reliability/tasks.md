@@ -698,11 +698,11 @@
 
 ### Task 17: 建立研究决策与后验复盘服务
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=ResearchDecisionServiceTest,DecisionReviewServiceTest test'` 失败；测试编译阶段报告 `ResearchDecision`（以及依赖它的决策保存、复盘服务）不存在，与预期尚无独立投研决策模型和后验收益闭环一致。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=ResearchDecisionServiceTest,DecisionReviewServiceTest test'` 通过（7 tests）；验证 executionId 幂等保存、userId/symbol/状态/可见时间联合隔离、1/5/20 交易日 BigDecimal 收益、相对沪深 300 ETF 基准收益、未到期跳过、基准缺失降级、重复复盘不重写，以及历史 analysisDate 不召回未来 outcome。
 
 **涉及文件：**
 - Create: `src/main/java/com/ljl/ai/research/ResearchDecision.java`
