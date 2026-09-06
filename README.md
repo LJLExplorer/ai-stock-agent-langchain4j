@@ -79,7 +79,15 @@ flowchart TD
 - `evidenceHash`：可用于判断两次研究是否基于同一批证据；
 - `modelView`：仅从结构化证据确定性渲染的有界模型上下文。
 
-`ClaimEvidenceGuard` 要求答案以 `[evidence:ev-...]` 引用当前证据包，拒绝未知/跨包 ID、无证据的数字行，以及晚于 `dataAsOf` 的日期。失败时只允许一次带明确原因的重写，再失败就返回确定性降级内容。
+`ClaimEvidenceGuard` 要求答案以 `[evidence:ev-...]` 引用当前证据包中时间已核实的证据，拒绝未知/跨包 ID、无引用的阿拉伯数字及中文数值表达，以及晚于 `dataAsOf` 的日期。标准回答失败时只允许一次重写；深度裁决失败或缺失时直接返回确定性说明，不再调用普通回答模型绕过裁决。重复文本和超长连续中文段落也会被质量门禁拒绝。这些规则不等于对每个自然语言判断完成了事实核验。
+
+新闻检索使用公司新闻/公告主题，不直接复制用户的策略或 skill 指令。每次至少尝试媒体新闻与官方披露两类来源；官方来源使用通用搜索并限定交易所、巨潮和已配置的公司官网域名，不只使用新闻索引。新闻按请求天数筛选，官方公告/定期报告单独使用一年披露窗口，并在最终结果中优先保留官方来源。股票名称从行情服务解析后与代码一起参与主体匹配；名称解析失败时退回代码，不猜公司官网。
+
+`news-search.issuer-domains` 支持 `600519=moutai.com.cn,moutaichina.com;其他代码=经核对的官网域名`，默认只配置已核对的茅台官网，其他股票仍检索通用官方披露网站。`news-search.issuer-listings` 支持 `代码=已核实的官方披露目录URL`（分号分隔），默认配置[茅台官网财务报告目录](https://www.moutai.com.cn/mtgf/tzzgx/cwbg/index.html)；配置 Tavily 时会直接提取目录，把每条报告的原文链接和披露日期关联起来，不把某条报告日期赋给整个目录，也不把 PDF 上传目录日期当作披露日期。目录证据明确注明仅核实文件与日期、尚未提取全文或指标。保留媒体来源名额，避免最终列表被报告不同版本占满。
+
+日期支持 ISO、英文 GMT、中文日期标签与英文绝对日期；不会把报告期或抓取时间当成发布日期。来源仍须通过非教程/代码仓库、主体、链接和时点筛选，媒体结果额外经过语义相关性过滤；已核实的官方披露不再因向量分数被误删。无日期原文不会被强行采纳。财务指标另外保留实际使用的东方财富接口 URL，不伪装为公司财报 PDF。
+
+可选联网检查：`mvn -Dtest=NewsSearchLiveTest -Dnews.live=true test`，读取本地新闻 API 配置，验证检索层返回腾讯行情页以外且包含官方来源的结果；不调用 LLM、不写业务数据库，未启用 Embedding 语义过滤，默认测试跳过此项。2026-09-06 实测返回 3 份茅台官网报告链接和 2 条媒体报道。
 
 ### 3. 逐节点 Checkpoint 与工具幂等
 
@@ -110,9 +118,9 @@ POST 只接受 `researchMode=DEEP`，返回 HTTP 202 与 `executionId/sessionId/
 | 模式 | 入口 | 执行方式 | 适用场景 |
 | --- | --- | --- | --- |
 | `STANDARD` | `/api/chat/send` | 现有 Planner + 确定性工具 + 证据答案，同步返回 | 常规行情、技术、财务和新闻问答；默认模式 |
-| `DEEP` | `/api/research/executions` | 先建证据包，再固定执行 6 个角色与 1 个 Judge，通过 SSE 返回进度 | 需要多视角对抗、风险审议和结构化评级的长任务 |
+| `DEEP` | `/api/research/executions` | 先建证据包，按证据范围并行执行适用角色，再交给 Judge，通过 SSE 返回进度 | 需要多视角对抗、风险审议和结构化评级的长任务 |
 
-`DeepResearchAssistant` 不注册业务工具，也不绑定会话 MemoryId。基本面、技术面、新闻、看多、看空、风险角色和 Judge 都只看同一个有界 `EvidencePack`；每个角色最多一次调用。Judge JSON 必须通过评级枚举、0～1 置信度、`dataAsOf` 和证据 ID 归属校验；角色失败会记录降级，Judge 解析或证据越界则确定性返回 `INSUFFICIENT_DATA`。
+`DeepResearchAssistant` 不注册业务工具，也不绑定会话 MemoryId。适用角色和 Judge 都只看同一个有界 `EvidencePack`；每个角色最多一次调用。角色输出在截取或传给 Judge 之前经过质量门禁，异常输出被丢弃。Judge JSON 必须通过评级枚举、0～1 置信度、正文质量、`dataAsOf` 和非空证据 ID 校验；角色失败会记录降级，Judge 失败则返回 `INSUFFICIENT_DATA`，不继续生成评级或仓位建议。
 
 ### 6. 决策复盘不等于对话记忆
 
@@ -147,7 +155,7 @@ POST 只接受 `researchMode=DEEP`，返回 HTTP 202 与 `executionId/sessionId/
 - 统一金融时点上下文、EvidencePack 与 Claim–Evidence Guard，防止未来数据和无引用数字进入结论。
 - 默认标准分析与可选多角色深度投研；异步执行通过受控 RunEvent/SSE 展示进度。
 - 独立决策复盘与离线 Agent Eval，分别为历史校准和稳定回归提供可追溯基线。
-- `traceId`、`sessionId`、`executionId` 关联的模型、工作流和工具诊断日志；模型正文默认脱敏。
+- `traceId`、`sessionId`、`executionId` 关联的模型、工作流和工具诊断日志；当前测试配置默认记录模型请求和响应正文，生产环境应关闭。
 - React + Vite 前端，展示标准/深度模式、执行时间线、会话、证据缺失、知识来源和工具结果。
 
 ## 技术栈
@@ -379,11 +387,11 @@ flowchart TD
 
 - 每次对话生成 `traceId`；工作流继续关联 `executionId`，会话使用 `sessionId`。
 - `TracingChatLanguageModel` 统一记录模型调用开始、结束、耗时与异常。
-- 模型请求和响应正文默认输出 `<redacted>`；只有显式设置 `TRACE_LOGGING_INCLUDE_CONTENT=true` 才记录，并受 `TRACE_LOGGING_MAX_CONTENT_LENGTH` 限制。
+- 为方便本地测试，模型请求和响应正文默认可见；设置 `TRACE_LOGGING_INCLUDE_CONTENT=false` 可恢复 `<redacted>`。正文受 `TRACE_LOGGING_MAX_CONTENT_LENGTH` 限制，`0` 表示不截断。配置修改后需重启后端。
 - 核心对话、RAG、知识库和工具日志默认只记录标识、长度、数量、状态与错误类型，不直接输出问题、上下文、文档标题或工具结果。
 - 异常栈、第三方 SDK 日志和显式开启的模型正文仍需要部署侧的访问控制、保留周期与集中式脱敏策略。
 
-不要在共享环境开启完整模型正文日志。它可能包含用户问题、检索上下文和模型输出。
+不要在共享环境开启完整模型正文日志；部署时应设置 `TRACE_LOGGING_INCLUDE_CONTENT=false`。正文可能包含用户问题、检索上下文和模型输出。
 
 ## 快速开始
 

@@ -1,6 +1,18 @@
 const EXECUTION_BASE = '/api/research/executions'
 
+export function taskDurationMs(task) {
+  if (!task?.startedAt || !task?.completedAt) return null
+  const duration = Date.parse(task.completedAt) - Date.parse(task.startedAt)
+  return Number.isFinite(duration) && duration >= 0 ? duration : null
+}
+
+export function formatToolDuration(duration) {
+  return typeof duration === 'number' && Number.isFinite(duration) && duration >= 0
+    ? `${duration} ms` : '耗时未记录'
+}
+
 export const RUN_EVENT_TYPES = Object.freeze([
+  'EXECUTION_ACCEPTED',
   'PLAN_CREATED',
   'NODE_STARTED',
   'NODE_COMPLETED',
@@ -10,6 +22,7 @@ export const RUN_EVENT_TYPES = Object.freeze([
   'WORKFLOW_RETRYING',
   'EVIDENCE_PACK_READY',
   'DEEP_RESEARCH_STARTED',
+  'ROLE_STARTED',
   'ROLE_COMPLETED',
   'ANSWER_READY',
   'WORKFLOW_COMPLETED',
@@ -25,7 +38,6 @@ const PHASES = Object.freeze([
   ['RESEARCH', '多角色审议'],
   ['ANSWER', '结论生成']
 ])
-
 export function buildResearchRequest(mode, payload) {
   const normalizedMode = mode === 'DEEP' ? 'DEEP' : 'STANDARD'
   const deep = normalizedMode === 'DEEP'
@@ -45,6 +57,17 @@ export function createResearchProgress(executionId) {
   return {
     executionId: requireExecutionId(executionId),
     phases: PHASES.map(([id, label]) => ({ id, label, status: 'pending' })),
+    plannedTaskCount: null,
+    plannedRoleCount: null,
+    completedToolNodes: [],
+    completedRoleNodes: [],
+    activeRoleNodes: [],
+    planCompleted: false,
+    evidenceReady: false,
+    answerReady: false,
+    completedSteps: 0,
+    totalSteps: null,
+    percent: 0,
     lastSequence: 0,
     retryCount: 0,
     missingItems: [],
@@ -73,29 +96,80 @@ export function reduceResearchProgress(progress, rawEvent) {
       : index === target ? { ...phase, status: 'active' } : phase)
   }
 
-  if (event.eventType === 'PLAN_CREATED') activate('PLAN')
+  let plannedTaskCount = progress.plannedTaskCount
+  let plannedRoleCount = progress.plannedRoleCount
+  let completedToolNodes = new Set(progress.completedToolNodes || [])
+  let completedRoleNodes = new Set(progress.completedRoleNodes || [])
+  let activeRoleNodes = new Set(progress.activeRoleNodes || [])
+  let planCompleted = progress.planCompleted || false
+  let evidenceReady = progress.evidenceReady || false
+  let answerReady = progress.answerReady || false
+
+  if (event.eventType === 'EXECUTION_ACCEPTED') activate('PLAN')
+  if (event.eventType === 'PLAN_CREATED') {
+    planCompleted = true
+    plannedTaskCount = parseTaskCount(event.summary)
+    completeThrough('PLAN')
+    activate('DATA')
+  }
   if (['NODE_STARTED', 'TOOL_STARTED', 'TOOL_COMPLETED', 'TOOL_FAILED'].includes(event.eventType)) {
     if (event.node === 'DEEP_RESEARCH') activate('RESEARCH')
     else if (event.node === 'ANSWER') activate('ANSWER')
     else if (!['PLAN', 'INIT', 'CRITIC', 'REFLECTOR'].includes(event.node)) activate('DATA')
   }
-  if (event.eventType === 'EVIDENCE_PACK_READY') completeThrough('DATA')
-  if (event.eventType === 'DEEP_RESEARCH_STARTED' || event.eventType === 'ROLE_COMPLETED') activate('RESEARCH')
-  if (event.eventType === 'ANSWER_READY') completeThrough('ANSWER')
+  if (['TOOL_COMPLETED', 'TOOL_FAILED'].includes(event.eventType) && event.node) {
+    completedToolNodes.add(event.node)
+  }
+  if (event.eventType === 'EVIDENCE_PACK_READY') {
+    evidenceReady = true
+    completeThrough('DATA')
+  }
+  if (event.eventType === 'DEEP_RESEARCH_STARTED') {
+    plannedRoleCount = parseRoleCount(event.summary)
+    activate('RESEARCH')
+  }
+  if (event.eventType === 'ROLE_STARTED') {
+    if (event.node) activeRoleNodes.add(event.node)
+    activate('RESEARCH')
+  }
+  if (event.eventType === 'ROLE_COMPLETED') {
+    if (event.node) {
+      activeRoleNodes.delete(event.node)
+      completedRoleNodes.add(event.node)
+    }
+    if (plannedRoleCount != null && completedRoleNodes.size >= plannedRoleCount) {
+      completeThrough('RESEARCH')
+      activate('ANSWER')
+    } else {
+      activate('RESEARCH')
+    }
+  }
+  if (event.eventType === 'ANSWER_READY') {
+    answerReady = true
+    completeThrough('ANSWER')
+  }
   if (event.eventType === 'WORKFLOW_COMPLETED') completeThrough('ANSWER')
   if (event.eventType === 'WORKFLOW_FAILED') {
     phases = phases.map((phase) => phase.status === 'active' ? { ...phase, status: 'failed' } : phase)
   }
-  return {
+  return withProgressMetrics({
     ...progress,
     phases,
+    plannedTaskCount,
+    plannedRoleCount,
+    completedToolNodes: [...completedToolNodes],
+    completedRoleNodes: [...completedRoleNodes],
+    activeRoleNodes: [...activeRoleNodes],
+    planCompleted,
+    evidenceReady,
+    answerReady,
     lastSequence: event.sequence,
     retryCount: progress.retryCount + (event.eventType === 'WORKFLOW_RETRYING' ? 1 : 0),
     connection: isTerminalRunEvent(event) ? 'terminal' : 'connected',
     canReconnect: false,
     lastEvent: { eventType: event.eventType, node: event.node, summary: event.summary },
     error: event.eventType === 'WORKFLOW_FAILED' ? '研究任务执行失败' : progress.error
-  }
+  }, event.eventType === 'WORKFLOW_COMPLETED')
 }
 
 export function applyStatusCompensation(progress, status) {
@@ -103,15 +177,59 @@ export function applyStatusCompensation(progress, status) {
     throw new Error('状态补偿 executionId 不匹配')
   }
   const terminal = ['COMPLETED', 'FAILED'].includes(status.workflowStatus)
-  return {
+  const tasks = Array.isArray(status.tasks) ? status.tasks : []
+  const roleNames = roleNamesFromPack(status.evidencePack)
+  const completedToolNodes = tasks
+    .filter((task) => ['COMPLETED', 'FAILED'].includes(task.status))
+    .map((task) => String(task.taskType || task.taskId || ''))
+    .filter(Boolean)
+  const hasConclusion = Boolean(status.researchConclusion)
+  return withProgressMetrics({
     ...progress,
-    missingItems: Array.isArray(status.evidencePack?.missingItems)
-      ? status.evidencePack.missingItems.map(String) : [],
+    plannedTaskCount: tasks.length || progress.plannedTaskCount,
+    plannedRoleCount: roleNames.length || progress.plannedRoleCount,
+    completedToolNodes,
+    completedRoleNodes: hasConclusion
+      ? roleNames
+      : progress.completedRoleNodes,
+    activeRoleNodes: hasConclusion ? [] : progress.activeRoleNodes,
+    planCompleted: Boolean(status.plan) || progress.planCompleted,
+    evidenceReady: Boolean(status.evidencePack) || progress.evidenceReady,
+    answerReady: Boolean(status.finalAnswer) || progress.answerReady,
+    missingItems: evidenceLimitations(status.evidencePack),
     connection: terminal ? 'terminal' : 'disconnected',
     canReconnect: !terminal,
     error: status.workflowStatus === 'FAILED'
       ? String(status.errorMessage || '研究任务执行失败') : progress.error
-  }
+  }, status.workflowStatus === 'COMPLETED')
+}
+
+function parseTaskCount(summary) {
+  const match = String(summary || '').match(/(?:^|;)taskCount=(\d+)(?:;|$)/)
+  return match ? Number(match[1]) : 0
+}
+
+function parseRoleCount(summary) {
+  const match = String(summary || '').match(/(?:^|;)roleCount=(\d+)(?:;|$)/)
+  return match ? Number(match[1]) : null
+}
+
+function withProgressMetrics(progress, completed) {
+  const taskCount = Number.isSafeInteger(progress.plannedTaskCount)
+    ? Math.max(0, progress.plannedTaskCount) : null
+  const roleCount = Number.isSafeInteger(progress.plannedRoleCount)
+    ? Math.max(0, progress.plannedRoleCount) : null
+  const totalSteps = taskCount == null || roleCount == null ? null : taskCount + roleCount + 3
+  const toolCount = taskCount == null ? 0 : progress.evidenceReady
+    ? taskCount : Math.min(taskCount, new Set(progress.completedToolNodes || []).size)
+  const completedSteps = (progress.planCompleted ? 1 : 0)
+    + toolCount
+    + (progress.evidenceReady ? 1 : 0)
+    + Math.min(roleCount || 0, new Set(progress.completedRoleNodes || []).size)
+    + (progress.answerReady ? 1 : 0)
+  const percent = completed ? 100 : totalSteps
+    ? Math.min(99, Math.floor(completedSteps * 100 / totalSteps)) : 0
+  return { ...progress, completedSteps, totalSteps, percent }
 }
 
 export function mapTerminalResearchResult(status) {
@@ -123,9 +241,79 @@ export function mapTerminalResearchResult(status) {
     success,
     answer: success ? String(status.finalAnswer || '') : '',
     error: workflowStatus === 'FAILED' ? String(status.errorMessage || '研究任务执行失败') : '',
-    missingItems: Array.isArray(status?.evidencePack?.missingItems)
-      ? status.evidencePack.missingItems.map(String) : []
+    missingItems: evidenceLimitations(status?.evidencePack),
+    sources: evidenceSourcesFromPack(status?.evidencePack)
   }
+}
+
+export function evidenceSourcesFromPack(evidencePack) {
+  const grouped = evidencePack?.evidenceByType
+  if (!grouped || typeof grouped !== 'object') return []
+  const sources = new Map()
+  Object.values(grouped).flatMap((facts) => Array.isArray(facts) ? facts : []).forEach((fact) => {
+    const evidenceId = String(fact?.evidenceId || '').trim()
+    if (!evidenceId || fact?.temporalStatus === 'REJECTED' || sources.has(evidenceId)) return
+    const title = String(fact.sourceName || '数据证据').trim() || '数据证据'
+    const metric = String(fact.metric || '事实').trim() || '事实'
+    const unit = String(fact.unit || '').trim()
+    const value = String(fact.value || '').trim()
+    const type = String(fact.evidenceType || 'EVIDENCE').trim()
+    const asOf = String(fact.asOf || '').trim()
+    sources.set(evidenceId, {
+      documentId: evidenceId,
+      documentTitle: title,
+      documentType: 'EVIDENCE',
+      contentSnippet: `${metric}：${value}${unit ? ` ${unit}` : ''}`,
+      documentUrl: safeHttpUrl(fact.sourceUrl),
+      location: [type, asOf, fact.temporalStatus === 'UNKNOWN' ? '时间未核实，不用于结论' : ''].filter(Boolean).join(' · ')
+    })
+  })
+  return [...sources.values()]
+}
+
+export function evidenceLimitations(pack) {
+  const facts = Object.values(pack?.evidenceByType || {}).flatMap((items) => Array.isArray(items) ? items : [])
+  const labels = {
+    NEWS_ANALYSIS: '未找到可核验的近期相关新闻或公告；不采用教程、skill 或无日期材料',
+    TECHNICAL_ANALYSIS: '技术指标数据不可用',
+    FINANCIAL_ANALYSIS: '财务报告数据不可用',
+    MARKET_DATA: '行情数据不可用'
+  }
+  return (Array.isArray(pack?.missingItems) ? pack.missingItems : []).map((item) => {
+    const value = String(item)
+    const match = value.match(/^时间未知:\s*(ev-[A-Za-z0-9._-]+)$/)
+    if (!match) return labels[value] || value
+    const fact = facts.find((entry) => entry?.evidenceId === match[1])
+    const title = fact?.evidenceType === 'NEWS' ? fact.metric : fact?.sourceName
+    return `${title ? `《${title}》` : '一项来源材料'}的发布时间或数据日期未核实，不用于结论；可在来源信息中核对`
+  })
+}
+
+export function formatEvidenceCitations(content, sources = []) {
+  const byId = new Map((Array.isArray(sources) ? sources : [])
+    .filter((source) => source?.documentId)
+    .map((source) => [String(source.documentId), source]))
+  return String(content || '').replace(/\[evidence:(ev-[A-Za-z0-9._-]+)]/g, (_, evidenceId) => {
+    const source = byId.get(evidenceId)
+    const title = String(source?.documentTitle || '数据来源').replace(/[\[\]\\]/g, '').trim() || '数据来源'
+    const target = safeHttpUrl(source?.documentUrl) || `#evidence-${evidenceId}`
+    return `[证据：${title}](${target})`
+  })
+}
+
+function roleNamesFromPack(evidencePack) {
+  const types = new Set(Object.keys(evidencePack?.evidenceByType || {}))
+  return [
+    ...(types.has('FINANCIAL') ? ['FUNDAMENTAL'] : []),
+    ...(types.has('TECHNICAL') || types.has('MARKET') ? ['TECHNICAL'] : []),
+    ...(types.has('NEWS') ? ['NEWS'] : []),
+    'BULL', 'BEAR', 'RISK', 'JUDGE'
+  ]
+}
+
+function safeHttpUrl(value) {
+  const url = String(value || '').trim()
+  return /^https?:\/\//i.test(url) ? url : null
 }
 
 export async function startResearch(request, { fetchImpl = globalThis.fetch } = {}) {

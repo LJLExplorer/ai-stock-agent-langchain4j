@@ -1,6 +1,7 @@
 package com.ljl.ai.observability;
 
 import com.alibaba.fastjson2.JSON;
+import com.alibaba.fastjson2.JSONWriter;
 import dev.langchain4j.model.ModelProvider;
 import dev.langchain4j.model.chat.Capability;
 import dev.langchain4j.model.chat.ChatLanguageModel;
@@ -14,7 +15,7 @@ import org.slf4j.MDC;
 import java.util.List;
 import java.util.Set;
 
-/** 记录模型调用元数据；仅在显式开启时记录受长度限制的请求和响应正文。 */
+/** 记录模型调用元数据及可配置关闭、限制长度的请求和响应正文。 */
 @Slf4j
 public final class TracingChatLanguageModel implements ChatLanguageModel {
     private final ChatLanguageModel delegate;
@@ -77,7 +78,8 @@ public final class TracingChatLanguageModel implements ChatLanguageModel {
         }
         String content;
         try {
-            content = JSON.toJSONString(value);
+            // LangChain4j 使用 messages()/aiMessage() 等访问器，不是 JavaBean getter。
+            content = JSON.toJSONString(value, JSONWriter.Feature.FieldBased);
         } catch (RuntimeException exception) {
             content = String.valueOf(value);
         }

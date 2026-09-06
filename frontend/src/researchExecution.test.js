@@ -5,6 +5,11 @@ import {
   applyStatusCompensation,
   buildResearchRequest,
   createResearchProgress,
+  evidenceSourcesFromPack,
+  evidenceLimitations,
+  formatEvidenceCitations,
+  formatToolDuration,
+  taskDurationMs,
   getResearchStatus,
   isTerminalRunEvent,
   mapTerminalResearchResult,
@@ -13,6 +18,32 @@ import {
   startResearch,
   subscribeResearch
 } from './researchExecution.js'
+
+test('explains source date problems with titles instead of opaque evidence identifiers', () => {
+  const pack = {
+    evidenceByType: { NEWS: [{ evidenceId: 'ev-unknown', evidenceType: 'NEWS', metric: '公司分红公告', temporalStatus: 'UNKNOWN' }] },
+    missingItems: ['时间未知: ev-unknown', 'NEWS_ANALYSIS']
+  }
+  const notices = evidenceLimitations(pack)
+  assert.match(notices[0], /公司分红公告.*未核实.*不用于结论/)
+  assert.ok(notices.every((notice) => !notice.includes('ev-unknown')))
+  assert.match(notices[1], /未找到可核验/)
+  assert.match(evidenceSourcesFromPack(pack)[0].location, /不用于结论/)
+})
+
+test('uses recorded task timestamps and does not invent zero duration for missing data', () => {
+  const duration = taskDurationMs({ startedAt: '2026-09-06T13:50:01.665123', completedAt: '2026-09-06T13:50:01.912456' })
+  assert.equal(duration, 247)
+  assert.equal(formatToolDuration(duration), '247 ms')
+  for (const task of [null, {}, { startedAt: '2026-09-06T13:50:01' },
+    { startedAt: 'invalid', completedAt: 'invalid' },
+    { startedAt: '2026-09-06T13:50:02', completedAt: '2026-09-06T13:50:01' }]) {
+    assert.equal(taskDurationMs(task), null)
+    assert.equal(formatToolDuration(taskDurationMs(task)), '耗时未记录')
+  }
+  assert.equal(formatToolDuration(0), '0 ms')
+  assert.equal(formatToolDuration(undefined), '耗时未记录')
+})
 
 test('routes standard synchronously and deep research asynchronously with explicit modes', () => {
   const payload = { userId: 'user-1', message: '分析600519', enableTools: false }
@@ -32,19 +63,62 @@ test('routes standard synchronously and deep research asynchronously with explic
 
 test('maps controlled events into a phase timeline without exposing payload bodies', () => {
   let progress = createResearchProgress('exec-1')
-  progress = reduceResearchProgress(progress, { executionId: 'exec-1', sequence: 1, eventType: 'PLAN_CREATED', node: 'PLAN', summary: '' })
-  progress = reduceResearchProgress(progress, { executionId: 'exec-1', sequence: 2, eventType: 'TOOL_STARTED', node: 'MARKET_DATA', summary: 'attempt=1' })
-  progress = reduceResearchProgress(progress, { executionId: 'exec-1', sequence: 3, eventType: 'WORKFLOW_RETRYING', node: 'RETRY', summary: 'status=retrying' })
-  progress = reduceResearchProgress(progress, { executionId: 'exec-1', sequence: 4, eventType: 'EVIDENCE_PACK_READY', node: 'EVIDENCE_PACK', summary: 'evidenceHash=hash' })
-  progress = reduceResearchProgress(progress, { executionId: 'exec-1', sequence: 5, eventType: 'DEEP_RESEARCH_STARTED', node: 'DEEP_RESEARCH', summary: '' })
-  progress = reduceResearchProgress(progress, { executionId: 'exec-1', sequence: 6, eventType: 'ANSWER_READY', node: 'ANSWER', summary: '' })
+  progress = reduceResearchProgress(progress, { executionId: 'exec-1', sequence: 1, eventType: 'EXECUTION_ACCEPTED', node: 'EXECUTION', summary: 'status=accepted' })
+  assert.equal(progress.percent, 0)
+  assert.equal(progress.phases.find(({ id }) => id === 'RESEARCH').status, 'pending')
+  progress = reduceResearchProgress(progress, { executionId: 'exec-1', sequence: 2, eventType: 'PLAN_CREATED', node: 'PLAN', summary: 'graphVersion=v1;taskCount=1' })
+  assert.equal(progress.completedSteps, 1)
+  assert.equal(progress.totalSteps, null)
+  progress = reduceResearchProgress(progress, { executionId: 'exec-1', sequence: 3, eventType: 'TOOL_STARTED', node: 'MARKET_DATA', summary: 'attempt=1' })
+  progress = reduceResearchProgress(progress, { executionId: 'exec-1', sequence: 4, eventType: 'TOOL_COMPLETED', node: 'MARKET_DATA', summary: 'status=completed' })
+  progress = reduceResearchProgress(progress, { executionId: 'exec-1', sequence: 5, eventType: 'WORKFLOW_RETRYING', node: 'RETRY', summary: 'status=retrying' })
+  progress = reduceResearchProgress(progress, { executionId: 'exec-1', sequence: 6, eventType: 'EVIDENCE_PACK_READY', node: 'EVIDENCE_PACK', summary: 'evidenceHash=hash' })
+  progress = reduceResearchProgress(progress, { executionId: 'exec-1', sequence: 7, eventType: 'DEEP_RESEARCH_STARTED', node: 'DEEP_RESEARCH', summary: 'status=started;roleCount=5' })
+  for (const [index, role] of ['TECHNICAL', 'BULL', 'BEAR', 'RISK', 'JUDGE'].entries()) {
+    progress = reduceResearchProgress(progress, { executionId: 'exec-1', sequence: 8 + index * 2, eventType: 'ROLE_STARTED', node: role, summary: 'status=started' })
+    progress = reduceResearchProgress(progress, { executionId: 'exec-1', sequence: 9 + index * 2, eventType: 'ROLE_COMPLETED', node: role, summary: 'status=completed' })
+  }
+  assert.equal(progress.completedSteps, 8)
+  assert.equal(progress.totalSteps, 9)
+  assert.equal(progress.percent, 88)
+  progress = reduceResearchProgress(progress, { executionId: 'exec-1', sequence: 18, eventType: 'ANSWER_READY', node: 'ANSWER', summary: 'answer=ready' })
+  progress = reduceResearchProgress(progress, { executionId: 'exec-1', sequence: 19, eventType: 'WORKFLOW_COMPLETED', node: 'ANSWER', summary: 'status=COMPLETED' })
 
   assert.deepEqual(progress.phases.map(({ id, status }) => [id, status]), [
     ['PLAN', 'completed'], ['DATA', 'completed'], ['RESEARCH', 'completed'], ['ANSWER', 'completed']
   ])
   assert.equal(progress.retryCount, 1)
-  assert.equal(progress.lastSequence, 6)
+  assert.equal(progress.lastSequence, 19)
+  assert.equal(progress.percent, 100)
+  assert.equal(progress.completedSteps, 9)
   assert.equal('prompt' in progress, false)
+})
+
+test('tracks the actual concurrently active research roles', () => {
+  let progress = createResearchProgress('exec-1')
+  progress = reduceResearchProgress(progress, { executionId: 'exec-1', sequence: 1, eventType: 'DEEP_RESEARCH_STARTED', node: 'DEEP_RESEARCH', summary: 'status=started;roleCount=5' })
+  progress = reduceResearchProgress(progress, { executionId: 'exec-1', sequence: 2, eventType: 'ROLE_STARTED', node: 'TECHNICAL', summary: 'status=started' })
+  progress = reduceResearchProgress(progress, { executionId: 'exec-1', sequence: 3, eventType: 'ROLE_STARTED', node: 'BULL', summary: 'status=started' })
+  progress = reduceResearchProgress(progress, { executionId: 'exec-1', sequence: 4, eventType: 'ROLE_COMPLETED', node: 'TECHNICAL', summary: 'status=completed' })
+
+  assert.deepEqual(progress.activeRoleNodes, ['BULL'])
+  assert.equal(progress.plannedRoleCount, 5)
+})
+
+test('renders evidence ids as readable links and maps the source inspector data', () => {
+  const pack = { evidenceByType: { TECHNICAL: [{
+    evidenceId: 'ev-technical', evidenceType: 'TECHNICAL', metric: 'technical_analysis',
+    value: 'MA5=1305.09', asOf: '2026-09-04', sourceName: 'Tencent Finance',
+    sourceUrl: 'https://gu.qq.com/sh600519/gp', temporalStatus: 'VERIFIED'
+  }] } }
+
+  const sources = evidenceSourcesFromPack(pack)
+  const answer = formatEvidenceCitations('趋势向上 [evidence:ev-technical]', sources)
+
+  assert.equal(sources.length, 1)
+  assert.equal(sources[0].documentType, 'EVIDENCE')
+  assert.match(answer, /\[证据：Tencent Finance\]\(https:\/\/gu\.qq\.com\/sh600519\/gp\)/)
+  assert.doesNotMatch(answer, /\[evidence:/)
 })
 
 test('maps stream compensation and terminal execution state for reconnect UI', () => {
@@ -63,7 +137,7 @@ test('maps stream compensation and terminal execution state for reconnect UI', (
   assert.equal(running.connection, 'disconnected')
   assert.equal(running.canReconnect, true)
   assert.deepEqual(running.missingItems, ['财务报告缺失'])
-  assert.deepEqual(completed, { terminal: true, success: true, answer: '最终结论', error: '', missingItems: [] })
+  assert.deepEqual(completed, { terminal: true, success: true, answer: '最终结论', error: '', missingItems: [], sources: [] })
   assert.equal(failed.success, false)
   assert.equal(failed.error, '工具失败')
 })

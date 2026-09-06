@@ -4,6 +4,7 @@ import com.ljl.ai.config.AgentToolConfig;
 import com.ljl.ai.memory.RedisChatMemoryProvider;
 import com.ljl.ai.observability.TraceLoggingConfig;
 import com.ljl.ai.observability.TracingChatLanguageModel;
+import com.ljl.ai.observability.RunEventPublisher;
 import com.ljl.ai.research.DeepResearchService;
 import com.ljl.ai.tools.FinancialAnalysisTool;
 import com.ljl.ai.tools.MarketDataTool;
@@ -25,6 +26,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * Agent配置
@@ -161,8 +164,16 @@ public class AgentConfig {
     }
 
     @Bean
-    public DeepResearchService deepResearchService(DeepResearchAssistant assistant) {
-        return new DeepResearchService(assistant);
+    public ExecutorService deepResearchRoleExecutor() {
+        return Executors.newThreadPerTaskExecutor(
+                Thread.ofVirtual().name("deep-research-role-", 0).factory());
+    }
+
+    @Bean
+    public DeepResearchService deepResearchService(DeepResearchAssistant assistant,
+                                                   RunEventPublisher eventPublisher,
+                                                   ExecutorService deepResearchRoleExecutor) {
+        return new DeepResearchService(assistant, eventPublisher, deepResearchRoleExecutor);
     }
 
     /**

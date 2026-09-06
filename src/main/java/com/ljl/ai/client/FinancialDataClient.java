@@ -53,7 +53,9 @@ public class FinancialDataClient {
             if (snapshot == null) {
                 throw new IllegalStateException("分析日期前没有可用财务数据: " + rawSymbol + " " + analysisDate);
             }
-            return snapshot;
+            Map<String, Object> values = new LinkedHashMap<>(snapshot.values());
+            values.put("sourceUrl", url);
+            return new FinancialSnapshot(values, snapshot.reportDate(), snapshot.publishedAt(), snapshot.temporalStatus());
         }
     }
 

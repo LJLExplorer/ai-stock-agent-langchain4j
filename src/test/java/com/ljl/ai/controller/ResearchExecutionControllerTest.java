@@ -9,6 +9,8 @@ import com.ljl.ai.workflow.ExecutionStateStore;
 import com.ljl.ai.workflow.WorkflowStatus;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
@@ -30,6 +32,15 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.setup.MockMvcBuilders.standaloneSetup;
 
 class ResearchExecutionControllerTest {
+
+    @Test
+    void shouldMapResponseStatusExceptionWithoutNegotiatingAResponseBody() {
+        ResponseEntity<Void> response = new GlobalExceptionHandler().handleResponseStatusException(
+                new org.springframework.web.server.ResponseStatusException(HttpStatus.NOT_FOUND));
+
+        org.assertj.core.api.Assertions.assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        org.assertj.core.api.Assertions.assertThat(response.getBody()).isNull();
+    }
 
     @Test
     void shouldLoadStatusFromStoreOnlyForItsOwner() {
@@ -112,5 +123,24 @@ class ResearchExecutionControllerTest {
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("PLAN_CREATED")))
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("WORKFLOW_COMPLETED")));
         verify(service).findOwned("execution-1", "user-1");
+    }
+
+    @Test
+    void shouldReturnCleanNotFoundForMissingSseExecution() throws Exception {
+        ResearchExecutionService service = mock(ResearchExecutionService.class);
+        when(service.findOwned("missing", "user-1")).thenReturn(Optional.empty());
+        MockMvc mvc = standaloneSetup(new ResearchExecutionController(service, new InMemoryRunEventPublisher()))
+                .setControllerAdvice(new GlobalExceptionHandler())
+                .build();
+
+        MvcResult result = mvc.perform(get("/api/research/executions/missing/events")
+                        .param("userId", "user-1")
+                        .accept(MediaType.TEXT_EVENT_STREAM))
+                .andExpect(status().isNotFound())
+                .andExpect(content().string(""))
+                .andReturn();
+
+        org.assertj.core.api.Assertions.assertThat(result.getResolvedException())
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
     }
 }

@@ -17,6 +17,9 @@ public final class ClaimEvidenceGuard {
     private static final Pattern CITATION = Pattern.compile("\\[evidence:(ev-[A-Za-z0-9._-]+)]");
     private static final Pattern DATE = Pattern.compile("(?<!\\d)(20\\d{2}-\\d{2}-\\d{2})(?!\\d)");
     private static final Pattern NUMBER = Pattern.compile("(?<![A-Za-z0-9_.-])[-+]?\\d+(?:\\.\\d+)?%?");
+    private static final Pattern CHINESE_NUMBER = Pattern.compile(
+            "百分之[零〇一二两三四五六七八九十百千万点]+|[零〇一二两三四五六七八九十百千万]+点[零〇一二两三四五六七八九]+"
+                    + "|[零〇一二两三四五六七八九十百千万]{2,}(?:元|年|月|日|倍|成|区间|仓位)");
     private static final Pattern URL = Pattern.compile("https?://\\S+");
     private static final Pattern ORDERED_LIST_PREFIX = Pattern.compile("^\\s*\\d+[.)、]\\s+");
 
@@ -41,7 +44,8 @@ public final class ClaimEvidenceGuard {
         for (String line : answer.lines().toList()) {
             String claim = URL.matcher(CITATION.matcher(line).replaceAll("")).replaceAll("");
             claim = ORDERED_LIST_PREFIX.matcher(claim).replaceFirst("");
-            if (NUMBER.matcher(claim).find() && !hasCurrentEvidenceReference(line, availableIds)) {
+            if ((NUMBER.matcher(claim).find() || CHINESE_NUMBER.matcher(claim).find())
+                    && !hasCurrentEvidenceReference(line, availableIds)) {
                 return Validation.failed(Reason.UNSUPPORTED_NUMERIC_CLAIM, List.of());
             }
         }
@@ -55,7 +59,7 @@ public final class ClaimEvidenceGuard {
         }
         pack.evidenceByType().values().forEach(facts -> facts.stream()
                 .filter(fact -> fact != null
-                        && fact.temporalStatus() != FinancialFact.TemporalStatus.REJECTED)
+                        && fact.temporalStatus() == FinancialFact.TemporalStatus.VERIFIED)
                 .map(FinancialFact::evidenceId)
                 .forEach(ids::add));
         return ids;

@@ -4,6 +4,9 @@ import com.ljl.ai.agent.AgentPlannerAssistant;
 import com.ljl.ai.model.entity.KnowledgeSource;
 import com.ljl.ai.model.entity.ToolInvocation;
 import com.ljl.ai.planner.PlanValidator;
+import com.ljl.ai.planner.StockAnalysisTask;
+import com.ljl.ai.research.EvidencePack;
+import com.ljl.ai.research.FinancialFact;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -11,9 +14,14 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
+import java.util.Map;
+import java.time.Instant;
+import java.time.LocalDate;
 
 class ChatServicePlannerTest {
 
@@ -29,6 +37,20 @@ class ChatServicePlannerTest {
 
         assertEquals("600519.SH", result.plan().getSymbol());
         assertEquals(2, result.toolNames().size());
+        verify(planner).plan("分析贵州茅台最近为什么跌");
+    }
+
+    @Test
+    void shouldPlanExplicitStockCodeLocallyWithoutCallingPlanner() {
+        ChatService chatService = new ChatService();
+        AgentPlannerAssistant planner = mock(AgentPlannerAssistant.class);
+        ReflectionTestUtils.setField(chatService, "agentPlannerAssistant", planner);
+
+        PlanValidator.ValidatedPlan result = chatService.planForExecution("请对600519做技术分析").orElseThrow();
+
+        assertEquals("600519.SH", result.plan().getSymbol());
+        assertEquals(List.of(StockAnalysisTask.TECHNICAL_ANALYSIS), result.plan().getTasks());
+        verifyNoInteractions(planner);
     }
 
     @Test
@@ -73,7 +95,7 @@ class ChatServicePlannerTest {
     }
 
     @Test
-    void shouldParseRealMarkdownPlannerResponseAndKeepAllSupportedTasks() {
+    void shouldPreferRestrictedUserIntentOverVerbosePlannerResponse() {
         ChatService chatService = new ChatService();
         AgentPlannerAssistant planner = mock(AgentPlannerAssistant.class);
         when(planner.plan("查询600511并给出购买建议")).thenReturn(
@@ -86,7 +108,8 @@ class ChatServicePlannerTest {
         PlanValidator.ValidatedPlan result = chatService.planForExecution("查询600511并给出购买建议").orElseThrow();
 
         assertEquals("600511.SH", result.plan().getSymbol());
-        assertEquals(4, result.plan().getTasks().size());
+        assertEquals(List.of(StockAnalysisTask.NEWS_ANALYSIS), result.plan().getTasks());
+        verifyNoInteractions(planner);
     }
 
     @Test
@@ -114,5 +137,27 @@ class ChatServicePlannerTest {
         assertEquals("贵州茅台最新公告", sources.get(0).getDocumentTitle());
         assertEquals("https://example.com/news", sources.get(0).getDocumentUrl());
         assertEquals("WEB", sources.get(0).getDocumentType());
+    }
+
+    @Test
+    void shouldExposeWorkflowEvidenceAsReadableClickableSources() {
+        LocalDate asOf = LocalDate.of(2026, 9, 4);
+        FinancialFact fact = new FinancialFact("ev-technical", FinancialFact.EvidenceType.TECHNICAL,
+                "technical_analysis", "MA5=1305.09", null, null, asOf.toString(), asOf,
+                Instant.parse("2026-09-04T07:00:00Z"), "Tencent Finance",
+                "https://gu.qq.com/sh600519/gp", Instant.parse("2026-09-06T05:00:00Z"),
+                null, null, FinancialFact.TemporalStatus.VERIFIED);
+        EvidencePack pack = new EvidencePack(null,
+                Map.of(FinancialFact.EvidenceType.TECHNICAL, List.of(fact)), List.of(), List.of(),
+                Instant.parse("2026-09-04T07:00:00Z"), "hash", "model-view");
+
+        List<KnowledgeSource> sources = ChatService.extractEvidenceSources(pack);
+
+        assertEquals(1, sources.size());
+        assertEquals("ev-technical", sources.get(0).getDocumentId());
+        assertEquals("Tencent Finance", sources.get(0).getDocumentTitle());
+        assertEquals("EVIDENCE", sources.get(0).getDocumentType());
+        assertEquals("https://gu.qq.com/sh600519/gp", sources.get(0).getDocumentUrl());
+        assertTrue(sources.get(0).getContentSnippet().contains("MA5=1305.09"));
     }
 }

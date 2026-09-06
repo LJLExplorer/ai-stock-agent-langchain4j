@@ -8,6 +8,9 @@ import {
   applyStatusCompensation,
   buildResearchRequest,
   createResearchProgress,
+  formatEvidenceCitations,
+  formatToolDuration,
+  taskDurationMs,
   getResearchStatus,
   mapTerminalResearchResult,
   reduceResearchProgress,
@@ -219,15 +222,15 @@ function ChatPage() {
       ? result.answer || '深度投研已完成，但没有可展示的结论。'
       : `深度投研失败：${result.error}`
     setMessages((items) => [...items.slice(0, -1), {
-      role: 'assistant', content, error: !result.success
+      role: 'assistant', content, sources: result.sources, error: !result.success
     }])
     const taskTools = Array.isArray(status.tasks) ? status.tasks.map((task) => ({
       toolName: task.taskType || task.taskId || '工作流任务',
       success: task.status === 'COMPLETED',
       errorMessage: task.errorMessage || null,
-      executionTime: 0
+      executionTime: taskDurationMs(task)
     })) : []
-    setDetails({ tools: taskTools, sources: [], duration: Math.round(performance.now() - started) })
+    setDetails({ tools: taskTools, sources: result.sources, duration: Math.round(performance.now() - started) })
     setConnection(result.success ? 'ready' : 'error')
     setBusy(false)
     await loadSessions(userId)
@@ -313,7 +316,7 @@ function ChatPage() {
       try { data = raw ? JSON.parse(raw) : {} } catch { throw new Error(raw || `接口请求失败（HTTP ${response.status}）`) }
       if (!response.ok || data.success === false) throw new Error(data.errorMessage || '接口请求失败')
       setSessionId(data.sessionId || '')
-      setMessages((items) => [...items.slice(0, -1), { role: 'assistant', content: data.content || '接口返回空内容' }])
+      setMessages((items) => [...items.slice(0, -1), { role: 'assistant', content: data.content || '接口返回空内容', sources: data.knowledgeSources || [] }])
       setDetails({ tools: data.toolInvocations || [], sources: data.knowledgeSources || [], duration: Math.round(performance.now() - started) })
       await loadSessions(userId)
       setConnection('ready')
@@ -329,7 +332,7 @@ function ChatPage() {
       const response = await fetch(`/api/chat/sessions/${encodeURIComponent(sessionId.trim())}/messages?userId=${encodeURIComponent(userId.trim())}`)
       if (!response.ok) throw new Error('会话加载失败')
       const data = await response.json()
-      setMessages(data.map((item) => ({ role: item.role?.toLowerCase() === 'user' ? 'user' : 'assistant', content: item.content || '' })))
+      setMessages(data.map((item) => ({ role: item.role?.toLowerCase() === 'user' ? 'user' : 'assistant', content: item.content || '', sources: item.knowledgeSources || [] })))
     } catch (error) { window.alert(error.message) }
   }
 
@@ -343,7 +346,7 @@ function ChatPage() {
       const response = await fetch(`/api/chat/sessions/${encodeURIComponent(session.sessionId)}/messages?userId=${encodeURIComponent(userId.trim())}`)
       if (!response.ok) throw new Error('会话加载失败')
       const data = await response.json()
-      setMessages(data.map((item) => ({ role: item.role?.toLowerCase() === 'user' ? 'user' : 'assistant', content: item.content || '' })))
+      setMessages(data.map((item) => ({ role: item.role?.toLowerCase() === 'user' ? 'user' : 'assistant', content: item.content || '', sources: item.knowledgeSources || [] })))
     } catch (error) { window.alert(error.message) }
   }
 
@@ -425,7 +428,7 @@ function ChatPage() {
           </div>
         </div>
         <div className="inspector-block inspector-tools"><div className="block-heading"><span><Wrench size={14} />工具调用</span><em>{details.tools.length}</em></div><div className="inspector-list">{details.tools.length ? details.tools.map((tool, index) => <ToolItem key={index} tool={tool} />) : <Muted>发送请求后显示工具执行结果</Muted>}</div></div>
-        <div className="inspector-block inspector-sources"><div className="block-heading"><span><Database size={14} />知识来源</span><em>{details.sources.length}</em></div><div className="inspector-list">{details.sources.length ? details.sources.map((source, index) => <SourceItem key={index} source={source} />) : <Muted>启用 RAG 或新闻检索后显示引用来源</Muted>}</div></div>
+        <div className="inspector-block inspector-sources"><div className="block-heading"><span><Database size={14} />知识与证据来源</span><em>{details.sources.length}</em></div><div className="inspector-list">{details.sources.length ? details.sources.map((source, index) => <SourceItem key={index} source={source} />) : <Muted>运行检索或分析后显示引用来源</Muted>}</div></div>
       </aside>
     </main>
   </div>
@@ -436,7 +439,7 @@ function Field({ label, children }) { return <label className="field"><span>{lab
 function Toggle({ label, checked, onChange }) { return <div className="toggle-row"><span>{label}</span><button className={`switch ${checked ? 'on' : ''}`} onClick={() => onChange(!checked)} aria-pressed={checked}><i /></button></div> }
 function Stat({ label, value }) { return <div className="stat"><span>{label}</span><strong>{value}</strong></div> }
 function EmptyState() { return <div className="empty"><div className="empty-icon"><Bot size={25} /></div><h2>开始一次股票研究</h2><p>选择股票代码后，输入问题或使用左侧快捷提问</p></div> }
-function Message({ role, content, pending, error }) { return <article className={`message ${role}`}><div className="message-label">{role === 'user' ? '你' : 'Agent'}<span>{role === 'assistant' ? <Bot size={13} /> : <MessageSquare size={13} />}</span></div><div className={`bubble ${error ? 'error' : ''}`}>{pending ? <span className="loading"><i /><i /><i /></span> : role === 'assistant' && !error ? <ReactMarkdown remarkPlugins={[remarkGfm]}>{normalizeMarkdown(content)}</ReactMarkdown> : content}</div></article> }
+function Message({ role, content, sources, pending, error }) { return <article className={`message ${role}`}><div className="message-label">{role === 'user' ? '你' : 'Agent'}<span>{role === 'assistant' ? <Bot size={13} /> : <MessageSquare size={13} />}</span></div><div className={`bubble ${error ? 'error' : ''}`}>{pending ? <span className="loading"><i /><i /><i /></span> : role === 'assistant' && !error ? <ReactMarkdown remarkPlugins={[remarkGfm]}>{normalizeMarkdown(formatEvidenceCitations(content, sources))}</ReactMarkdown> : content}</div></article> }
 function SessionItem({ session, active, pinned, deleting, onClick, onPin, onDelete }) {
   return <div className={`session-item ${active ? 'active' : ''}`}>
     <button className="session-main" onClick={onClick} disabled={deleting}>
@@ -451,19 +454,37 @@ function SessionItem({ session, active, pinned, deleting, onClick, onPin, onDele
   </div>
 }
 function formatSessionTime(value) { if (!value) return ''; const date = new Date(value); return Number.isNaN(date.getTime()) ? '' : date.toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) }
-function ToolItem({ tool }) { return <div className="tool-item"><div><span className={`tool-dot ${tool.success ? 'done' : 'fail'}`} />{tool.toolName || '工具调用'}{tool.success ? <CheckCircle2 className="tool-icon done" size={13} /> : <XCircle className="tool-icon fail" size={13} />}</div><small>{tool.errorMessage || `${tool.executionTime || 0} ms`}</small></div> }
+function ToolItem({ tool }) { return <div className="tool-item"><div><span className={`tool-dot ${tool.success ? 'done' : 'fail'}`} />{tool.toolName || '工具调用'}{tool.success ? <CheckCircle2 className="tool-icon done" size={13} /> : <XCircle className="tool-icon fail" size={13} />}</div><small>{tool.errorMessage || formatToolDuration(tool.executionTime)}</small></div> }
 function SourceItem({ source }) {
-  const content = <><FileText size={14} /><span><strong>{source.documentTitle || source.source || '知识来源'}</strong>{source.documentType === 'WEB' ? <small>{source.location || '网页来源'} · 点击查看原文</small> : null}</span></>
-  if (source.documentType === 'WEB' && source.documentUrl) return <a className="source-item" href={source.documentUrl} target="_blank" rel="noreferrer">{content}</a>
-  if (source.documentType !== 'WEB' && source.documentId) return <Link className="source-item" to={`/knowledge/documents/${encodeURIComponent(source.documentId)}`}>{content}</Link>
-  return <div className="source-item source-item-static">{content}</div>
+  const evidence = source.documentType === 'EVIDENCE'
+  const sourceId = evidence && source.documentId ? `evidence-${source.documentId}` : undefined
+  const detail = source.location || (source.documentType === 'WEB' ? '网页来源' : evidence ? '分析证据' : '')
+  const content = <><FileText size={14} /><span><strong>{source.documentTitle || source.source || '知识来源'}</strong>{detail ? <small>{detail}{source.documentUrl ? ' · 点击查看原文' : ''}</small> : null}</span></>
+  if (source.documentUrl) return <a id={sourceId} className="source-item" href={source.documentUrl} target="_blank" rel="noreferrer">{content}</a>
+  if (!evidence && source.documentId) return <Link className="source-item" to={`/knowledge/documents/${encodeURIComponent(source.documentId)}`}>{content}</Link>
+  return <div id={sourceId} className="source-item source-item-static">{content}</div>
 }
 function Muted({ children }) { return <p className="muted">{children}</p> }
 function ResearchProgress({ run, onReconnect }) {
+  const [now, setNow] = useState(() => globalThis.performance?.now?.() || Date.now())
+  useEffect(() => {
+    setNow(globalThis.performance?.now?.() || Date.now())
+    if (run.connection === 'terminal') return undefined
+    const timer = setInterval(() => setNow(globalThis.performance?.now?.() || Date.now()), 1000)
+    return () => clearInterval(timer)
+  }, [run.connection, run.startedAt])
+  const elapsedSeconds = run.startedAt ? Math.max(0, Math.floor((now - run.startedAt) / 1000)) : 0
+  const roleLabels = { FUNDAMENTAL: '基本面', TECHNICAL: '技术面', NEWS: '新闻', BULL: '看多', BEAR: '看空', RISK: '风险', JUDGE: '裁决' }
+  const activeRoles = (run.activeRoleNodes || []).map((role) => roleLabels[role] || role)
+  const current = activeRoles.length
+    ? `正在并行审议：${activeRoles.join('、')} · 已耗时 ${elapsedSeconds} 秒`
+    : run.lastEvent ? `最新事件：${run.lastEvent.node || run.lastEvent.eventType} · 已耗时 ${elapsedSeconds} 秒` : null
   return <div className={`research-progress ${run.connection}`}>
-    <div className="research-progress-head"><span>执行 ID：<code>{run.executionId}</code></span><em>{run.connection === 'terminal' ? '已结束' : run.connection === 'disconnected' ? '连接中断' : '运行中'}</em></div>
+    <div className="research-progress-head"><span>执行 ID：<code>{run.executionId}</code></span><em>{run.connection === 'terminal' ? '已结束' : run.connection === 'disconnected' ? '连接中断' : run.totalSteps == null ? `${run.completedSteps} 步已完成 · 正在确定总步骤` : `${run.completedSteps}/${run.totalSteps} 步 · ${run.percent}%`}</em></div>
+    <div className="research-progress-track" role="progressbar" aria-label="深度投研真实进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow={run.percent || 0}><i style={{ width: `${run.percent || 0}%` }} /></div>
     <div className="research-timeline">{run.phases.map((phase) => <div key={phase.id} className={`research-phase ${phase.status}`}><i /> <span>{phase.label}</span></div>)}</div>
-    {run.retryCount > 0 || run.missingItems?.length ? <div className="research-notices">{run.retryCount > 0 ? <span>已受控重试 {run.retryCount} 次</span> : null}{run.missingItems?.map((item) => <span key={item}>数据缺失：{item}</span>)}</div> : null}
+    {current ? <div className="research-current">{current}</div> : null}
+    {run.retryCount > 0 || run.missingItems?.length ? <div className="research-notices">{run.retryCount > 0 ? <span>已受控重试 {run.retryCount} 次</span> : null}{run.missingItems?.map((item) => <span key={item}>数据限制：{item}</span>)}</div> : null}
     {run.connection === 'disconnected' ? <div className="research-reconnect"><span>{run.error || '已通过状态接口完成补偿读取，请按需重新连接事件流。'}</span>{run.canReconnect ? <button type="button" onClick={onReconnect}>重新连接</button> : null}</div> : null}
   </div>
 }

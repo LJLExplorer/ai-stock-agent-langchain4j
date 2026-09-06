@@ -1,26 +1,50 @@
 package com.ljl.ai.research;
 
 import com.ljl.ai.agent.DeepResearchAssistant;
+import com.ljl.ai.observability.InMemoryRunEventPublisher;
+import com.ljl.ai.observability.RunEvent;
 import org.junit.jupiter.api.Test;
-import org.mockito.InOrder;
 import org.mockito.ArgumentCaptor;
 
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class DeepResearchServiceTest {
+
+    @Test
+    void shouldDiscardInvalidRoleBodyBeforeJudge() {
+        DeepResearchAssistant assistant = successfulAssistant();
+        when(assistant.bear(anyString(), anyString())).thenReturn("志同道合".repeat(9));
+
+        ResearchConclusion conclusion = new DeepResearchService(assistant).research(pack());
+
+        ArgumentCaptor<String> upstream = ArgumentCaptor.forClass(String.class);
+        verify(assistant).judge(anyString(), upstream.capture());
+        assertThat(upstream.getValue()).doesNotContain("志同道合");
+        assertThat(conclusion.limitations()).contains("ROLE_INVALID:BEAR:REPETITIVE_OUTPUT");
+    }
+
+    @Test
+    void shouldRejectDegeneratedJudgeSummaryAndMissingEvidence() {
+        assertJudgeFailure(judgeJson("ev-price").replace("证据多空交织", "志同道合".repeat(9)),
+                "JUDGE_INVALID_CONTENT:REPETITIVE_OUTPUT");
+        assertJudgeFailure(judgeJson("ev-price").replace("[\"ev-price\"]", "[]"), "JUDGE_MISSING_EVIDENCE");
+    }
 
     @Test
     void shouldValidateConclusionRatingConfidenceEvidenceIdsAndDataAsOf() {
@@ -40,9 +64,9 @@ class DeepResearchServiceTest {
     }
 
     @Test
-    void shouldCallEveryRoleOnceInFixedOrderWithSameEvidenceViewAndParseJudgeJson() {
+    void shouldCallEveryApplicableRoleOnceWithSameEvidenceViewAndParseJudgeJson() {
         DeepResearchAssistant assistant = successfulAssistant();
-        EvidencePack pack = pack();
+        EvidencePack pack = fullPack();
         DeepResearchService service = new DeepResearchService(assistant);
 
         ResearchConclusion conclusion = service.research(pack);
@@ -51,15 +75,62 @@ class DeepResearchServiceTest {
         assertThat(conclusion.confidence()).isEqualTo(0.72);
         assertThat(conclusion.evidenceIds()).containsExactly("ev-price");
         assertThat(conclusion.degraded()).isFalse();
-        InOrder ordered = inOrder(assistant);
-        ordered.verify(assistant).fundamental(eq(pack.modelView()), anyString());
-        ordered.verify(assistant).technical(eq(pack.modelView()), anyString());
-        ordered.verify(assistant).news(eq(pack.modelView()), anyString());
-        ordered.verify(assistant).bull(eq(pack.modelView()), anyString());
-        ordered.verify(assistant).bear(eq(pack.modelView()), anyString());
-        ordered.verify(assistant).risk(eq(pack.modelView()), anyString());
-        ordered.verify(assistant).judge(eq(pack.modelView()), anyString());
+        verify(assistant).fundamental(anyString(), anyString());
+        verify(assistant).technical(anyString(), anyString());
+        verify(assistant).news(anyString(), anyString());
+        verify(assistant).bull(anyString(), anyString());
+        verify(assistant).bear(anyString(), anyString());
+        verify(assistant).risk(anyString(), anyString());
+        verify(assistant).judge(anyString(), anyString());
         verify(assistant, times(1)).judge(anyString(), anyString());
+    }
+
+    @Test
+    void shouldRunOnlyEvidenceScopedRolesInParallelBeforeJudge() throws Exception {
+        DeepResearchAssistant assistant = successfulAssistant();
+        CountDownLatch specialistsStarted = new CountDownLatch(4);
+        org.mockito.stubbing.Answer<String> waitForPeers = invocation -> {
+            specialistsStarted.countDown();
+            if (!specialistsStarted.await(2, TimeUnit.SECONDS)) {
+                throw new AssertionError("specialist roles did not run concurrently");
+            }
+            return invocation.getMethod().getName() + "摘要";
+        };
+        when(assistant.technical(anyString(), anyString())).thenAnswer(waitForPeers);
+        when(assistant.bull(anyString(), anyString())).thenAnswer(waitForPeers);
+        when(assistant.bear(anyString(), anyString())).thenAnswer(waitForPeers);
+        when(assistant.risk(anyString(), anyString())).thenAnswer(waitForPeers);
+        ExecutorService executor = Executors.newFixedThreadPool(4);
+
+        try {
+            DeepResearchService service = new DeepResearchService(assistant, null, executor);
+            ResearchConclusion conclusion = service.research(pack());
+
+            assertThat(conclusion.degraded()).isFalse();
+            assertThat(service.plannedRoleCount(pack())).isEqualTo(5);
+            verify(assistant, never()).fundamental(anyString(), anyString());
+            verify(assistant, never()).news(anyString(), anyString());
+            verify(assistant).judge(anyString(), anyString());
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void shouldPublishActualCompletionForEveryResearchRoleAndJudge() {
+        DeepResearchAssistant assistant = successfulAssistant();
+        InMemoryRunEventPublisher events = new InMemoryRunEventPublisher();
+
+        new DeepResearchService(assistant, events).research(contextualPack());
+
+        assertThat(events.snapshot("exec-current"))
+                .filteredOn(event -> event.eventType() == RunEvent.EventType.ROLE_STARTED)
+                .extracting(RunEvent::node)
+                .containsExactlyInAnyOrder("TECHNICAL", "BULL", "BEAR", "RISK", "JUDGE");
+        assertThat(events.snapshot("exec-current"))
+                .filteredOn(event -> event.eventType() == RunEvent.EventType.ROLE_COMPLETED)
+                .extracting(RunEvent::node)
+                .containsExactlyInAnyOrder("TECHNICAL", "BULL", "BEAR", "RISK", "JUDGE");
     }
 
     @Test
@@ -72,7 +143,7 @@ class DeepResearchServiceTest {
         assertThat(conclusion.rating()).isEqualTo(ResearchConclusion.Rating.NEUTRAL);
         assertThat(conclusion.degraded()).isTrue();
         assertThat(conclusion.limitations()).contains("ROLE_FAILED:TECHNICAL");
-        verify(assistant).news(anyString(), anyString());
+        verify(assistant).bull(anyString(), anyString());
         verify(assistant).judge(anyString(), anyString());
     }
 
@@ -98,7 +169,20 @@ class DeepResearchServiceTest {
         assertThat(conclusion.rating()).isEqualTo(ResearchConclusion.Rating.INSUFFICIENT_DATA);
         assertThat(conclusion.confidence()).isZero();
         assertThat(conclusion.degraded()).isTrue();
-        assertThat(conclusion.limitations()).contains("JUDGE_FAILED");
+        assertThat(conclusion.limitations()).contains("JUDGE_MISSING_JSON_OBJECT");
+        verify(assistant, times(1)).judge(anyString(), anyString());
+    }
+
+    @Test
+    void shouldReportSpecificJudgeValidationReasons() {
+        assertJudgeFailure("", "JUDGE_EMPTY_RESPONSE");
+        assertJudgeFailure("{not-json}", "JUDGE_INVALID_JSON");
+        assertJudgeFailure(judgeJson("ev-price").replace("NEUTRAL", "SIDEWAYS"),
+                "JUDGE_INVALID_RATING");
+        assertJudgeFailure(judgeJson("ev-price").replace("0.72", "1.2"),
+                "JUDGE_INVALID_CONFIDENCE");
+        assertJudgeFailure(judgeJson("ev-price").replace("2025-12-31", "not-a-date"),
+                "JUDGE_INVALID_DATA_AS_OF");
     }
 
     @Test
@@ -115,10 +199,25 @@ class DeepResearchServiceTest {
         new DeepResearchService(assistant).research(pack, List.of(visible, future, otherUser));
 
         ArgumentCaptor<String> context = ArgumentCaptor.forClass(String.class);
-        verify(assistant).fundamental(context.capture(), anyString());
+        verify(assistant).technical(context.capture(), anyString());
         assertThat(context.getValue())
                 .contains("本轮 EvidencePack", "历史复盘参考", "visible", "2025-12-30")
                 .doesNotContain("future", "other-user");
+    }
+
+    @Test
+    void shouldGiveRolesAuthoritativeAnalysisDateAndActualEvidenceScope() {
+        DeepResearchAssistant assistant = successfulAssistant();
+
+        new DeepResearchService(assistant).research(contextualPack());
+
+        ArgumentCaptor<String> context = ArgumentCaptor.forClass(String.class);
+        verify(assistant).technical(context.capture(), anyString());
+        assertThat(context.getValue())
+                .contains("分析日期=2025-12-31", "本轮证据范围=MARKET", "未出现的板块不属于本次分析范围");
+        assertThat(DeepResearchAssistant.ROLE_RULES)
+                .contains("风险字段只描述标的本身的投资风险")
+                .contains("不得把角色输出质量或流水线问题写成标的风险");
     }
 
     private DeepResearchAssistant successfulAssistant() {
@@ -131,6 +230,18 @@ class DeepResearchServiceTest {
         when(assistant.risk(anyString(), anyString())).thenReturn("风险摘要");
         when(assistant.judge(anyString(), anyString())).thenReturn(judgeJson("ev-price"));
         return assistant;
+    }
+
+    private void assertJudgeFailure(String rawJudge, String expectedReason) {
+        DeepResearchAssistant assistant = successfulAssistant();
+        when(assistant.judge(anyString(), anyString())).thenReturn(rawJudge);
+
+        ResearchConclusion conclusion = new DeepResearchService(assistant).research(pack());
+
+        assertThat(conclusion.rating()).isEqualTo(ResearchConclusion.Rating.INSUFFICIENT_DATA);
+        assertThat(conclusion.degraded()).isTrue();
+        assertThat(conclusion.limitations()).contains(expectedReason);
+        verify(assistant, times(1)).judge(anyString(), anyString());
     }
 
     private String judgeJson(String evidenceId) {
@@ -158,6 +269,16 @@ class DeepResearchServiceTest {
                 AnalysisContext.ResearchMode.DEEP, "exec-current", "trace-1", "user-1", "session-1");
         return new EvidencePack(context, pack.evidenceByType(), pack.missingItems(), pack.toolFailures(),
                 pack.dataAsOf(), pack.evidenceHash(), pack.modelView());
+    }
+
+    private EvidencePack fullPack() {
+        EvidencePack pack = pack();
+        FinancialFact fact = pack.evidenceByType().values().iterator().next().get(0);
+        return new EvidencePack(pack.context(), Map.of(
+                FinancialFact.EvidenceType.FINANCIAL, List.of(fact),
+                FinancialFact.EvidenceType.TECHNICAL, List.of(fact),
+                FinancialFact.EvidenceType.NEWS, List.of(fact)),
+                pack.missingItems(), pack.toolFailures(), pack.dataAsOf(), pack.evidenceHash(), pack.modelView());
     }
 
     private ResearchDecision reviewedDecision(String reflection, String userId, String symbol,

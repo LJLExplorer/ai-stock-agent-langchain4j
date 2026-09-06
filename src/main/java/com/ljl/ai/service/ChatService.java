@@ -22,6 +22,8 @@ import com.ljl.ai.planner.PlannerTextParser;
 import com.ljl.ai.research.AnalysisContext;
 import com.ljl.ai.research.AnalysisContextResolver;
 import com.ljl.ai.research.DecisionReviewService;
+import com.ljl.ai.research.EvidencePack;
+import com.ljl.ai.research.FinancialFact;
 import com.ljl.ai.research.ResearchConclusion;
 import com.ljl.ai.research.ResearchDecisionService;
 import com.ljl.ai.workflow.ExecutionState;
@@ -66,6 +68,7 @@ public class ChatService {
     private static final int ROUTING_HISTORY_LIMIT = 30;
     private static final Pattern STOCK_CODE = Pattern.compile("(?<!\\d)(\\d{6})(?:\\.(?:SH|SZ|BJ|HK))?(?!\\d)",
             Pattern.CASE_INSENSITIVE);
+    private static final Pattern SAFE_ERROR_CODE = Pattern.compile("[A-Z][A-Z0-9_.:-]{2,127}");
 
     private static final Map<String, String> TOOL_DISPLAY_NAMES = Map.ofEntries(
             Map.entry("getRealtimeQuote", "查询实时行情"),
@@ -214,11 +217,7 @@ public class ChatService {
                     request.getUserId());
             String baseMemoryId = memoryId(request.getUserId(), sessionId);
             String originalUserMessage = request.getMessage();
-            String userMessage = originalUserMessage;
-
-            if (StringUtils.isNotBlank(request.getOrderId())) {
-                userMessage = userMessage + "\n当前用户正在咨询股票：" + request.getOrderId();
-            }
+            String userMessage = executionQuestion(originalUserMessage, request.getOrderId());
             ConversationTopicStore.TopicState topicState = currentTopicState(baseMemoryId);
             String activeTopicMemoryId = ConversationTopicStore.topicMemoryId(
                     baseMemoryId, topicState.activeTopicKey());
@@ -317,10 +316,13 @@ public class ChatService {
                     collectToolInvocations(modelMemoryId, previousToolInvocationIds));
             toolInvocations.addAll(workflowToolInvocations);
             knowledgeSources = mergeKnowledgeSources(knowledgeSources, extractWebSources(workflowToolInvocations));
+            knowledgeSources = mergeKnowledgeSources(knowledgeSources,
+                    completedExecution == null ? List.of()
+                            : extractEvidenceSources(completedExecution.getEvidencePack()));
 
             // 4. 保存用户消息和AI回复到业务层（chat_messages 集合，用于前端展示）
             chatMemoryService.saveUserMessage(sessionId, originalUserMessage);
-            ChatMessage assistantMessage = chatMemoryService.saveAssistantMessage(sessionId, aiResponse);
+            ChatMessage assistantMessage = chatMemoryService.saveAssistantMessage(sessionId, aiResponse, knowledgeSources);
             if (assistantMessage == null) {
                 log.warn("保存助手消息失败, sessionId: {}", sessionId);
             }
@@ -360,7 +362,8 @@ public class ChatService {
                     .build();
 
         } catch (Exception e) {
-            log.error("对话处理失败, errorType={}", e.getClass().getSimpleName());
+            log.error("对话处理失败, errorType={}, errorCode={}",
+                    e.getClass().getSimpleName(), diagnosticErrorCode(e));
 
             boolean toolLoopExceeded = hasMessage(e, "exceeded") && hasMessage(e, "sequential tool executions");
             String content = "抱歉，处理您的请求时出现了问题，请稍后重试或联系人工投研助手。";
@@ -392,6 +395,15 @@ public class ChatService {
 
     Optional<PlanValidator.ValidatedPlan> planForExecution(String userMessage) {
         try {
+            AgentPlan localPlan = PlannerTextParser.parse("", userMessage);
+            if (localPlan != null) {
+                PlanValidator.ValidatedPlan localValidated = planValidator.validate(localPlan);
+                if (localValidated.valid()) {
+                    log.info("planner_local_plan_succeeded traceId={}, plan={}", MDC.get("traceId"),
+                            JSON.toJSONString(localValidated.plan()));
+                    return Optional.of(localValidated);
+                }
+            }
             if (agentPlannerAssistant == null) {
                 return Optional.empty();
             }
@@ -473,6 +485,30 @@ public class ChatService {
         return sources;
     }
 
+    static List<KnowledgeSource> extractEvidenceSources(EvidencePack evidencePack) {
+        if (evidencePack == null || evidencePack.evidenceByType() == null) {
+            return List.of();
+        }
+        return evidencePack.evidenceByType().values().stream()
+                .flatMap(List::stream)
+                .filter(java.util.Objects::nonNull)
+                .filter(fact -> fact.temporalStatus() != FinancialFact.TemporalStatus.REJECTED)
+                .map(fact -> KnowledgeSource.builder()
+                        .documentId(fact.evidenceId())
+                        .documentTitle(StringUtils.defaultIfBlank(fact.sourceName(), "数据证据"))
+                        .documentType("EVIDENCE")
+                        .contentSnippet(evidenceSnippet(fact))
+                        .documentUrl(fact.sourceUrl())
+                        .location(fact.evidenceType() + (fact.asOf() == null ? "" : " · " + fact.asOf()))
+                        .build())
+                .toList();
+    }
+
+    private static String evidenceSnippet(FinancialFact fact) {
+        String unit = StringUtils.isBlank(fact.unit()) ? "" : " " + fact.unit();
+        return fact.metric() + "：" + StringUtils.defaultString(fact.value()) + unit;
+    }
+
     static List<ToolInvocation> workflowToolInvocations(ExecutionState state) {
         if (state == null || state.getTasks() == null) {
             return Collections.emptyList();
@@ -511,6 +547,9 @@ public class ChatService {
     }
 
     private String sourceKey(KnowledgeSource source) {
+        if ("EVIDENCE".equals(source.getDocumentType())) {
+            return StringUtils.defaultString(source.getDocumentId());
+        }
         return StringUtils.defaultIfBlank(source.getDocumentUrl(), source.getDocumentId());
     }
 
@@ -647,6 +686,39 @@ public class ChatService {
         return userId + ":" + sessionId;
     }
 
+    static String executionQuestion(String message, String orderId) {
+        String question = StringUtils.defaultString(message);
+        String order = StringUtils.trimToEmpty(orderId);
+        if (order.isEmpty()) {
+            return question;
+        }
+        Matcher orderCode = STOCK_CODE.matcher(order);
+        if (orderCode.find()) {
+            String expectedCode = orderCode.group(1);
+            Matcher questionCode = STOCK_CODE.matcher(question);
+            while (questionCode.find()) {
+                if (expectedCode.equals(questionCode.group(1))) {
+                    return question;
+                }
+            }
+        } else if (StringUtils.containsIgnoreCase(question, order)) {
+            return question;
+        }
+        return question + "\n当前用户正在咨询股票：" + order;
+    }
+
+    private String diagnosticErrorCode(Throwable throwable) {
+        Throwable current = throwable;
+        while (current != null) {
+            String message = StringUtils.trimToEmpty(current.getMessage());
+            if (SAFE_ERROR_CODE.matcher(message).matches()) {
+                return message;
+            }
+            current = current.getCause();
+        }
+        return "UNCLASSIFIED";
+    }
+
     String rewriteRetrievalQuery(String query, String shortTermSummary) {
         return resolveRetrievalQuery(query, "", shortTermSummary,
                 ConversationTopicStore.TopicState.empty()).standaloneQuery();
@@ -659,6 +731,10 @@ public class ChatService {
         if (query == null || query.isBlank()) {
             return new ConversationQuery(query, topicState.activeTopicKey(),
                     ConversationQuery.TopicRelation.CONTINUE, 0D);
+        }
+        if (STOCK_CODE.matcher(query).find()) {
+            log.info("query_rewrite_skipped traceId={}, reason=EXPLICIT_STOCK_CODE", MDC.get("traceId"));
+            return fallbackQuery(query, topicState);
         }
         try {
             String rewritten = queryRewriteAssistant.rewrite(

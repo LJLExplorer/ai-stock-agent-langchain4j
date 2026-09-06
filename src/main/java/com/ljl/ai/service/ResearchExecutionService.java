@@ -66,16 +66,22 @@ public class ResearchExecutionService implements AutoCloseable {
         String sessionId = ensureSession(request);
         String executionId = UUID.randomUUID().toString();
         ChatRequest executionRequest = copyForSession(request, sessionId);
+        ExecutionState acceptedState = ExecutionState.planned(
+                executionId, sessionId,
+                ChatService.executionQuestion(request.getMessage(), request.getOrderId()), List.of());
+        acceptedState.setUserId(request.getUserId());
+        stateStore.save(acceptedState, -1);
         CountDownLatch accepted = new CountDownLatch(1);
         try {
             executor.execute(() -> runAfterAccepted(accepted, executionRequest, executionId));
         } catch (RejectedExecutionException exception) {
+            recordFailure(executionRequest, executionId, "RESEARCH_EXECUTION_QUEUE_FULL");
             throw new IllegalStateException("RESEARCH_EXECUTION_QUEUE_FULL", exception);
         }
 
         try {
-            eventPublisher.publish(executionId, null, RunEvent.EventType.DEEP_RESEARCH_STARTED,
-                    "DEEP_RESEARCH", "status=accepted");
+            eventPublisher.publish(executionId, null, RunEvent.EventType.EXECUTION_ACCEPTED,
+                    "EXECUTION", "status=accepted");
             return new ResearchExecutionResponse(executionId, sessionId,
                     ResearchExecutionResponse.Status.ACCEPTED, Instant.now());
         } finally {

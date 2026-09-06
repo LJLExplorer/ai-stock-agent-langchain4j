@@ -2,6 +2,7 @@ package com.ljl.ai.workflow;
 
 import com.ljl.ai.agent.WorkflowAnswerAssistant;
 import com.ljl.ai.research.ClaimEvidenceGuard;
+import com.ljl.ai.research.AnalysisContext;
 import com.ljl.ai.research.ResearchConclusion;
 import com.ljl.ai.service.AnswerTextFormatter;
 import lombok.extern.slf4j.Slf4j;
@@ -67,18 +68,42 @@ public class WorkflowAnswerGenerator {
 
     private boolean presentResearchConclusion(ExecutionState state, AnswerContextBuilder.Context context) {
         ResearchConclusion conclusion = state.getResearchConclusion();
-        if (conclusion == null || conclusion.rating() == ResearchConclusion.Rating.INSUFFICIENT_DATA) {
+        if (conclusion == null) {
+            if (state.getAnalysisContext() != null
+                    && state.getAnalysisContext().researchMode() == AnalysisContext.ResearchMode.DEEP) {
+                rejectResearch(state, "MISSING_RESEARCH_CONCLUSION");
+                return true;
+            }
             return false;
+        }
+        if (conclusion.rating() == ResearchConclusion.Rating.INSUFFICIENT_DATA) {
+            state.setFinalAnswer(researchFailure());
+            return true;
         }
         String answer = render(conclusion);
         GenerationAttempt validation = validate(state, context, 0, answer);
         if (!validation.valid()) {
             log.warn("deep_research_answer_rejected executionId={}, reason={}",
                     state.getExecutionId(), validation.reason());
-            return false;
+            rejectResearch(state, validation.reason());
+            return true;
         }
         state.setFinalAnswer(AnswerTextFormatter.format(answer));
         return true;
+    }
+
+    private String researchFailure() {
+        return "## 深度投研未通过校验\n\n"
+                + "当前证据不足，或模型输出未通过质量与证据校验，本次不提供评级、置信度和仓位建议。\n\n"
+                + "已停止生成替代结论，避免将异常内容作为研究结果返回。请核对下方来源与数据限制后重新分析。";
+    }
+
+    private void rejectResearch(ExecutionState state, String reason) {
+        java.time.LocalDate date = state.getResearchConclusion() != null
+                ? state.getResearchConclusion().dataAsOf() : state.getAnalysisContext().analysisDate();
+        state.setResearchConclusion(new ResearchConclusion(ResearchConclusion.Rating.INSUFFICIENT_DATA, 0,
+                "结论未通过校验，本次不提供投资判断。", List.of(), List.of(), date, true, List.of(reason)));
+        state.setFinalAnswer(researchFailure());
     }
 
     private String render(ResearchConclusion conclusion) {
@@ -153,9 +178,10 @@ public class WorkflowAnswerGenerator {
     }
 
     private String trustedContext(ExecutionState state, AnswerContextBuilder.Context fallbackContext) {
-        if (state.getEvidencePack() != null && state.getEvidencePack().modelView() != null
-                && !state.getEvidencePack().modelView().isBlank()) {
-            return state.getEvidencePack().modelView();
+        if (state.getEvidencePack() != null) {
+            String evidence = state.getEvidencePack().modelView();
+            return evidence == null || evidence.isBlank()
+                    ? "当前没有通过校验的事实证据；只能说明证据不足，不得给出评级、数值或仓位建议。" : evidence;
         }
         return fallbackContext.content();
     }

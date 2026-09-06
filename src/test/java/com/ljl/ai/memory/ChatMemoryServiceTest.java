@@ -2,6 +2,7 @@ package com.ljl.ai.memory;
 
 import com.ljl.ai.model.entity.ChatSession;
 import com.ljl.ai.model.entity.ChatMessage;
+import com.ljl.ai.model.entity.KnowledgeSource;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.query.Query;
@@ -16,6 +17,8 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verify;
+import org.mockito.ArgumentCaptor;
 
 class ChatMemoryServiceTest {
     @Test
@@ -54,5 +57,20 @@ class ChatMemoryServiceTest {
         List<ChatMessage> messages = service.getRecentSessionMessages("s1", 2);
 
         assertEquals(List.of("old", "new"), messages.stream().map(ChatMessage::getMessageId).toList());
+    }
+
+    @Test
+    void shouldPersistAssistantEvidenceSourcesWithMessage() {
+        MongoTemplate mongo = mock(MongoTemplate.class);
+        ChatMemoryService service = new ChatMemoryService();
+        ReflectionTestUtils.setField(service, "mongoTemplate", mongo);
+        KnowledgeSource source = KnowledgeSource.builder()
+                .documentId("ev-1").documentTitle("Tencent Finance").documentType("EVIDENCE").build();
+
+        service.saveAssistantMessage("s1", "结论", List.of(source));
+
+        ArgumentCaptor<ChatMessage> saved = ArgumentCaptor.forClass(ChatMessage.class);
+        verify(mongo).save(saved.capture());
+        assertEquals(List.of(source), saved.getValue().getKnowledgeSources());
     }
 }

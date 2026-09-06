@@ -3,7 +3,11 @@ package com.ljl.ai.research;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
 import com.ljl.ai.agent.DeepResearchAssistant;
+import com.ljl.ai.observability.RunEvent;
+import com.ljl.ai.observability.RunEventPublisher;
+import com.ljl.ai.workflow.AnswerQualityGuard;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
 
 import java.time.LocalDate;
 import java.time.ZoneOffset;
@@ -13,8 +17,11 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
+import java.util.concurrent.ForkJoinPool;
 
-/** 固定顺序、固定调用上限的深度研究编排器。 */
+/** 按证据范围选择专家，并行生成独立观点后交由单次 Judge 裁决。 */
 @Slf4j
 public class DeepResearchService {
     private static final int EVIDENCE_BUDGET = 12_000;
@@ -22,16 +29,30 @@ public class DeepResearchService {
     private static final int UPSTREAM_BUDGET = 10_000;
 
     private final DeepResearchAssistant assistant;
+    private final RunEventPublisher eventPublisher;
+    private final Executor roleExecutor;
+    private final AnswerQualityGuard qualityGuard = new AnswerQualityGuard();
 
     public DeepResearchService(DeepResearchAssistant assistant) {
+        this(assistant, null, ForkJoinPool.commonPool());
+    }
+
+    public DeepResearchService(DeepResearchAssistant assistant, RunEventPublisher eventPublisher) {
+        this(assistant, eventPublisher, ForkJoinPool.commonPool());
+    }
+
+    public DeepResearchService(DeepResearchAssistant assistant, RunEventPublisher eventPublisher,
+                               Executor roleExecutor) {
         this.assistant = assistant;
+        this.eventPublisher = eventPublisher;
+        this.roleExecutor = Objects.requireNonNull(roleExecutor, "roleExecutor 不能为空");
     }
 
     public ResearchConclusion research(EvidencePack evidencePack) {
         if (evidencePack == null) {
             throw new IllegalArgumentException("EvidencePack 不能为空");
         }
-        String evidence = truncate(evidencePack.modelView(), EVIDENCE_BUDGET);
+        String evidence = researchContext(evidencePack, List.of());
         return research(evidencePack, evidence);
     }
 
@@ -44,26 +65,31 @@ public class DeepResearchService {
     }
 
     private ResearchConclusion research(EvidencePack evidencePack, String evidence) {
-        List<RoleResult> results = new ArrayList<>();
-        List<String> limitations = new ArrayList<>();
-        for (Role role : Role.values()) {
-            String upstream = upstream(results);
-            try {
-                String output = invoke(role, evidence, upstream);
-                results.add(new RoleResult(role, truncate(value(output), ROLE_OUTPUT_BUDGET)));
-            } catch (RuntimeException exception) {
-                String limitation = "ROLE_FAILED:" + role.name();
-                limitations.add(limitation);
-                results.add(new RoleResult(role, limitation));
-                log.warn("deep_research_role_failed role={}, errorType={}",
-                        role, exception.getClass().getSimpleName());
-            }
+        if (availableEvidenceIds(evidencePack).isEmpty()) {
+            return fallback(dataAsOf(evidencePack), List.of("NO_VERIFIED_EVIDENCE"));
         }
+        List<Role> roles = plannedRoles(evidencePack);
+        String traceId = evidencePack.context() == null ? MDC.get("traceId") : evidencePack.context().traceId();
+        List<CompletableFuture<RoleOutcome>> futures = roles.stream()
+                .map(role -> CompletableFuture.supplyAsync(
+                        () -> runRole(evidencePack, role, evidence, traceId), roleExecutor))
+                .toList();
+        List<RoleOutcome> outcomes = futures.stream().map(CompletableFuture::join).toList();
+        List<RoleResult> results = outcomes.stream().map(RoleOutcome::result).toList();
+        List<String> limitations = new ArrayList<>();
+        outcomes.stream().map(RoleOutcome::limitation).filter(Objects::nonNull).forEach(limitations::add);
 
         LocalDate cutoff = dataAsOf(evidencePack);
+        if (outcomes.stream().allMatch(outcome -> outcome.limitation() != null)) {
+            limitations.add("NO_VALID_ROLE_OUTPUT");
+            return fallback(cutoff, limitations);
+        }
+        String rawJudge = null;
+        publishRoleEvent(evidencePack, RunEvent.EventType.ROLE_STARTED, "JUDGE", "status=started");
         try {
-            String rawJudge = assistant.judge(evidence, upstream(results));
+            rawJudge = assistant.judge(evidence, upstream(results));
             ResearchConclusion judged = parseJudge(rawJudge, evidencePack, cutoff);
+            publishRoleEvent(evidencePack, RunEvent.EventType.ROLE_COMPLETED, "JUDGE", "status=completed");
             if (limitations.isEmpty()) {
                 return judged;
             }
@@ -73,16 +99,92 @@ public class DeepResearchService {
             String reason = exception instanceof JudgeValidationException validation
                     ? validation.code : "JUDGE_FAILED";
             limitations.add(reason);
-            log.warn("deep_research_judge_failed errorType={}, reason={}",
-                    exception.getClass().getSimpleName(), reason);
+            publishRoleEvent(evidencePack, RunEvent.EventType.ROLE_COMPLETED, "JUDGE",
+                    "status=failed;reason=" + reason);
+            log.warn("deep_research_judge_failed errorType={}, reason={}, responseLength={}",
+                    exception.getClass().getSimpleName(), reason, rawJudge == null ? 0 : rawJudge.length());
             return fallback(cutoff, limitations);
         }
     }
 
+    public int plannedRoleCount(EvidencePack evidencePack) {
+        return plannedRoles(evidencePack).size() + 1;
+    }
+
+    private List<Role> plannedRoles(EvidencePack evidencePack) {
+        Set<FinancialFact.EvidenceType> types = evidencePack == null || evidencePack.evidenceByType() == null
+                ? Set.of() : evidencePack.evidenceByType().keySet();
+        List<Role> roles = new ArrayList<>();
+        if (types.contains(FinancialFact.EvidenceType.FINANCIAL)) {
+            roles.add(Role.FUNDAMENTAL);
+        }
+        if (types.contains(FinancialFact.EvidenceType.TECHNICAL)
+                || types.contains(FinancialFact.EvidenceType.MARKET)) {
+            roles.add(Role.TECHNICAL);
+        }
+        if (types.contains(FinancialFact.EvidenceType.NEWS)) {
+            roles.add(Role.NEWS);
+        }
+        roles.add(Role.BULL);
+        roles.add(Role.BEAR);
+        roles.add(Role.RISK);
+        return List.copyOf(roles);
+    }
+
+    private RoleOutcome runRole(EvidencePack evidencePack, Role role, String evidence, String traceId) {
+        String previousTraceId = MDC.get("traceId");
+        String previousRole = MDC.get("researchRole");
+        if (traceId != null && !traceId.isBlank()) {
+            MDC.put("traceId", traceId);
+        }
+        MDC.put("researchRole", role.name());
+        long started = System.nanoTime();
+        publishRoleEvent(evidencePack, RunEvent.EventType.ROLE_STARTED, role.name(), "status=started");
+        log.info("deep_research_role_started role={}", role);
+        try {
+            String output = invoke(role, evidence, "");
+            AnswerQualityGuard.Validation quality = qualityGuard.validate(output);
+            if (!quality.valid() || output.length() > ROLE_OUTPUT_BUDGET) {
+                String reason = quality.valid() ? "OUTPUT_TOO_LONG" : quality.reason().name();
+                String limitation = "ROLE_INVALID:" + role.name() + ":" + reason;
+                publishRoleEvent(evidencePack, RunEvent.EventType.ROLE_COMPLETED, role.name(),
+                        "status=failed;reason=" + reason);
+                log.warn("deep_research_role_rejected role={}, reason={}, responseLength={}",
+                        role, reason, output == null ? 0 : output.length());
+                return new RoleOutcome(new RoleResult(role, "该角色输出未通过校验，不作为证据。"), limitation);
+            }
+            publishRoleEvent(evidencePack, RunEvent.EventType.ROLE_COMPLETED, role.name(), "status=completed");
+            log.info("deep_research_role_finished role={}, elapsedMs={}", role, elapsedMillis(started));
+            return new RoleOutcome(new RoleResult(role, value(output)), null);
+        } catch (RuntimeException exception) {
+            String limitation = "ROLE_FAILED:" + role.name();
+            publishRoleEvent(evidencePack, RunEvent.EventType.ROLE_COMPLETED, role.name(), "status=failed");
+            log.warn("deep_research_role_failed role={}, elapsedMs={}, errorType={}",
+                    role, elapsedMillis(started), exception.getClass().getSimpleName());
+            return new RoleOutcome(new RoleResult(role, limitation), limitation);
+        } finally {
+            restoreMdc("traceId", previousTraceId);
+            restoreMdc("researchRole", previousRole);
+        }
+    }
+
+    private long elapsedMillis(long started) {
+        return Math.max(0L, (System.nanoTime() - started) / 1_000_000L);
+    }
+
+    private void restoreMdc(String key, String value) {
+        if (value == null) {
+            MDC.remove(key);
+        } else {
+            MDC.put(key, value);
+        }
+    }
+
     private String researchContext(EvidencePack pack, List<ResearchDecision> reviews) {
+        String currentEvidence = scopeContext(pack);
         List<ResearchDecision> visible = visibleReviews(pack, reviews);
         if (visible.isEmpty()) {
-            return truncate(pack.modelView(), EVIDENCE_BUDGET);
+            return truncate(currentEvidence, EVIDENCE_BUDGET);
         }
         String reviewText = visible.stream()
                 .map(decision -> "- 决策日=" + decision.getAnalysisDate()
@@ -90,9 +192,22 @@ public class DeepResearchService {
                         + "；原评级=" + decision.getRating()
                         + "；确定性复盘=" + oneLine(decision.getReflection()))
                 .reduce((left, right) -> left + "\n" + right).orElse("");
-        return truncate("【本轮 EvidencePack（唯一事实依据）】\n" + value(pack.modelView())
+        return truncate("【本轮 EvidencePack（唯一事实依据）】\n" + currentEvidence
                 + "\n\n【历史复盘参考（仅用于校准，不得覆盖本轮事实或充当 evidenceId）】\n"
                 + reviewText, EVIDENCE_BUDGET);
+    }
+
+    private String scopeContext(EvidencePack pack) {
+        String evidenceTypes = pack.evidenceByType().keySet().stream()
+                .map(Enum::name).sorted().reduce((left, right) -> left + "," + right).orElse("NONE");
+        LocalDate analysisDate = pack.context() == null || pack.context().analysisDate() == null
+                ? dataAsOf(pack) : pack.context().analysisDate();
+        return "【权威分析边界】分析日期=" + analysisDate
+                + "；数据截止日=" + dataAsOf(pack)
+                + "；本轮证据范围=" + evidenceTypes
+                + "；未出现的板块不属于本次分析范围，不得报告为缺失或损坏；"
+                + "不晚于分析日期的数据不得称为未来数据。\n"
+                + value(pack.modelView());
     }
 
     private List<ResearchDecision> visibleReviews(EvidencePack pack, List<ResearchDecision> reviews) {
@@ -128,30 +243,87 @@ public class DeepResearchService {
     }
 
     private ResearchConclusion parseJudge(String raw, EvidencePack pack, LocalDate cutoff) {
-        JSONObject json = JSON.parseObject(extractJson(raw));
-        ResearchConclusion.Rating rating = ResearchConclusion.Rating.valueOf(
-                value(json.getString("rating")).toUpperCase(Locale.ROOT));
-        Double confidence = json.getDouble("confidence");
-        LocalDate conclusionDate = LocalDate.parse(value(json.getString("dataAsOf")));
+        JSONObject json;
+        try {
+            json = JSON.parseObject(extractJson(raw));
+        } catch (JudgeValidationException exception) {
+            throw exception;
+        } catch (RuntimeException exception) {
+            throw new JudgeValidationException("JUDGE_INVALID_JSON", exception);
+        }
+        if (json == null) {
+            throw new JudgeValidationException("JUDGE_INVALID_JSON");
+        }
+
+        ResearchConclusion.Rating rating;
+        try {
+            rating = ResearchConclusion.Rating.valueOf(
+                    value(json.getString("rating")).toUpperCase(Locale.ROOT));
+        } catch (RuntimeException exception) {
+            throw new JudgeValidationException("JUDGE_INVALID_RATING", exception);
+        }
+
+        Double confidence;
+        try {
+            confidence = json.getDouble("confidence");
+        } catch (RuntimeException exception) {
+            throw new JudgeValidationException("JUDGE_INVALID_CONFIDENCE", exception);
+        }
+        if (confidence == null || !Double.isFinite(confidence) || confidence < 0 || confidence > 1) {
+            throw new JudgeValidationException("JUDGE_INVALID_CONFIDENCE");
+        }
+
+        String summary = value(json.getString("summary"));
+        if (summary.isEmpty()) {
+            throw new JudgeValidationException("JUDGE_INVALID_JSON");
+        }
+        validateProse(summary);
+
+        LocalDate conclusionDate;
+        try {
+            conclusionDate = LocalDate.parse(value(json.getString("dataAsOf")));
+        } catch (RuntimeException exception) {
+            throw new JudgeValidationException("JUDGE_INVALID_DATA_AS_OF", exception);
+        }
         if (conclusionDate.isAfter(cutoff)) {
             throw new JudgeValidationException("DATE_AFTER_DATA_AS_OF");
         }
-        List<String> evidenceIds = stringList(json, "evidenceIds");
+        List<String> evidenceIds;
+        List<String> risks;
+        try {
+            evidenceIds = stringList(json, "evidenceIds");
+            risks = stringList(json, "risks");
+        } catch (RuntimeException exception) {
+            throw new JudgeValidationException("JUDGE_INVALID_JSON", exception);
+        }
         Set<String> available = availableEvidenceIds(pack);
         List<String> unknown = evidenceIds.stream().filter(id -> !available.contains(id)).sorted().toList();
         if (!unknown.isEmpty()) {
             throw new JudgeValidationException("UNKNOWN_EVIDENCE_ID:" + String.join(",", unknown));
         }
-        return new ResearchConclusion(rating, confidence == null ? Double.NaN : confidence,
-                json.getString("summary"), evidenceIds, stringList(json, "risks"),
+        if (rating != ResearchConclusion.Rating.INSUFFICIENT_DATA && evidenceIds.isEmpty()) {
+            throw new JudgeValidationException("JUDGE_MISSING_EVIDENCE");
+        }
+        for (String risk : risks) {
+            validateProse(risk);
+        }
+        return new ResearchConclusion(rating, confidence, summary, evidenceIds, risks,
                 conclusionDate, false, List.of());
+    }
+
+    private void validateProse(String text) {
+        AnswerQualityGuard.Validation quality = qualityGuard.validate(text);
+        if (!quality.valid() || text.length() > ROLE_OUTPUT_BUDGET) {
+            throw new JudgeValidationException("JUDGE_INVALID_CONTENT:"
+                    + (quality.valid() ? "OUTPUT_TOO_LONG" : quality.reason().name()));
+        }
     }
 
     private Set<String> availableEvidenceIds(EvidencePack pack) {
         Set<String> ids = new LinkedHashSet<>();
         pack.evidenceByType().values().forEach(facts -> facts.stream()
                 .filter(fact -> fact != null
-                        && fact.temporalStatus() != FinancialFact.TemporalStatus.REJECTED)
+                        && fact.temporalStatus() == FinancialFact.TemporalStatus.VERIFIED)
                 .map(FinancialFact::evidenceId).forEach(ids::add));
         return ids;
     }
@@ -163,10 +335,13 @@ public class DeepResearchService {
 
     private String extractJson(String raw) {
         String value = value(raw);
+        if (value.isEmpty()) {
+            throw new JudgeValidationException("JUDGE_EMPTY_RESPONSE");
+        }
         int start = value.indexOf('{');
         int end = value.lastIndexOf('}');
         if (start < 0 || end < start) {
-            throw new JudgeValidationException("JUDGE_FAILED");
+            throw new JudgeValidationException("JUDGE_MISSING_JSON_OBJECT");
         }
         return value.substring(start, end + 1);
     }
@@ -195,6 +370,21 @@ public class DeepResearchService {
         return truncate(content, UPSTREAM_BUDGET);
     }
 
+    private void publishRoleEvent(EvidencePack pack, RunEvent.EventType eventType,
+                                  String role, String summary) {
+        if (eventPublisher == null || pack.context() == null
+                || value(pack.context().executionId()).isEmpty()) {
+            return;
+        }
+        try {
+            eventPublisher.publish(pack.context().executionId(), pack.context().traceId(),
+                    eventType, role, summary);
+        } catch (RuntimeException exception) {
+            log.warn("deep_research_progress_publish_failed role={}, errorType={}",
+                    role, exception.getClass().getSimpleName());
+        }
+    }
+
     private String truncate(String content, int maxLength) {
         String value = value(content);
         return value.length() <= maxLength ? value : value.substring(0, maxLength) + "…";
@@ -216,11 +406,19 @@ public class DeepResearchService {
     private record RoleResult(Role role, String output) {
     }
 
+    private record RoleOutcome(RoleResult result, String limitation) {
+    }
+
     private static final class JudgeValidationException extends IllegalArgumentException {
         private final String code;
 
         private JudgeValidationException(String code) {
             super(code);
+            this.code = code;
+        }
+
+        private JudgeValidationException(String code, Throwable cause) {
+            super(code, cause);
             this.code = code;
         }
     }

@@ -41,6 +41,7 @@ public class FinancialAnalysisTool {
                     + "\n披露日期：" + value(snapshot.publishedAt())
                     + "\n时点状态：" + snapshot.temporalStatus()
                     + "\n来源：" + snapshot.values().getOrDefault("source", "未知")
+                    + "\n来源链接：" + snapshot.values().getOrDefault("sourceUrl", "未知")
                     + "\n指标：" + snapshot.values();
         });
     }

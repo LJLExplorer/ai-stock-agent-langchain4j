@@ -13,6 +13,24 @@ class ClaimEvidenceGuardTest {
     private final ClaimEvidenceGuard guard = new ClaimEvidenceGuard();
 
     @Test
+    void shouldRejectChineseNumericClaimsWithoutEvidence() {
+        for (String claim : List.of("离散度突破百分之三点二五", "平均趋向指数读数为三十二点五", "输出日期为二零二六年四月十一日")) {
+            assertThat(guard.validate(claim, pack("ev-price")).reason())
+                    .isEqualTo(ClaimEvidenceGuard.Reason.UNSUPPORTED_NUMERIC_CLAIM);
+        }
+    }
+
+    @Test
+    void shouldNotAcceptUnknownTimeEvidenceAsVerifiedSupport() {
+        FinancialFact fact = new FinancialFact(FinancialFact.EvidenceType.NEWS, "新闻", "信息", null, null,
+                null, null, null, "来源", "https://example.test/news", Instant.now(), null, null,
+                FinancialFact.TemporalStatus.UNKNOWN);
+        EvidencePack pack = new EvidencePack(null, Map.of(FinancialFact.EvidenceType.NEWS, List.of(fact)),
+                List.of(), List.of(), null, "hash", "");
+        assertThat(guard.validate("利润增长 20%。[evidence:" + fact.evidenceId() + "]", pack).valid()).isFalse();
+    }
+
+    @Test
     void shouldAcceptNumericAndDateClaimsWithEvidenceFromCurrentPack() {
         ClaimEvidenceGuard.Validation validation = guard.validate(
                 "- 收盘价为 1500 元，数据日期 2025-12-31。[evidence:ev-price]", pack("ev-price"));

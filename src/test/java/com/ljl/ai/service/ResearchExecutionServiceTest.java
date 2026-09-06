@@ -9,12 +9,15 @@ import com.ljl.ai.observability.RunEvent;
 import com.ljl.ai.research.AnalysisContext;
 import com.ljl.ai.workflow.ExecutionState;
 import com.ljl.ai.workflow.ExecutionStateStore;
+import com.ljl.ai.workflow.WorkflowStatus;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -35,7 +38,7 @@ class ResearchExecutionServiceTest {
     @Test
     void shouldPreallocateExecutionAndSessionBeforeRunningDeepResearch() throws Exception {
         ChatService chatService = mock(ChatService.class);
-        ExecutionStateStore stateStore = mock(ExecutionStateStore.class);
+        RecordingExecutionStateStore stateStore = new RecordingExecutionStateStore();
         InMemoryRunEventPublisher events = new InMemoryRunEventPublisher();
         CountDownLatch called = new CountDownLatch(1);
         when(chatService.createSession("user-1", null)).thenReturn(
@@ -52,16 +55,41 @@ class ResearchExecutionServiceTest {
             assertThat(response.executionId()).isNotBlank();
             assertThat(response.sessionId()).isEqualTo("session-created");
             assertThat(response.status()).isEqualTo(ResearchExecutionResponse.Status.ACCEPTED);
+            ExecutionState accepted = service.findOwned(response.executionId(), "user-1").orElseThrow();
+            assertThat(accepted.getSessionId()).isEqualTo("session-created");
+            assertThat(accepted.getOriginalQuestion()).isEqualTo("深度分析 600519.SH");
+            assertThat(accepted.getWorkflowStatus()).isEqualTo(WorkflowStatus.PLANNED);
+            assertThat(accepted.getTasks()).isEmpty();
             assertThat(called.await(2, TimeUnit.SECONDS)).isTrue();
             ArgumentCaptor<ChatRequest> request = ArgumentCaptor.forClass(ChatRequest.class);
             verify(chatService).chat(request.capture(), eq(response.executionId()));
             assertThat(request.getValue().getSessionId()).isEqualTo("session-created");
             assertThat(events.snapshot(response.executionId())).extracting(RunEvent::eventType)
-                    .startsWith(RunEvent.EventType.DEEP_RESEARCH_STARTED);
+                    .startsWith(RunEvent.EventType.EXECUTION_ACCEPTED);
         } finally {
             service.close();
         }
         assertThat(service.isShutdown()).isTrue();
+    }
+
+    @Test
+    void shouldPreallocateCanonicalExecutionQuestionWhenOrderIdIsSeparate() {
+        ChatService chatService = mock(ChatService.class);
+        RecordingExecutionStateStore stateStore = new RecordingExecutionStateStore();
+        ResearchExecutionService service = new ResearchExecutionService(
+                chatService, stateStore, new InMemoryRunEventPublisher(), 1, 1);
+        ChatRequest request = deepRequest("session-1");
+        request.setMessage("分析技术面");
+        request.setOrderId("600519");
+
+        try {
+            ResearchExecutionResponse response = service.start(request);
+
+            assertThat(service.findOwned(response.executionId(), "user-1").orElseThrow().getOriginalQuestion())
+                    .isEqualTo("分析技术面\n当前用户正在咨询股票：600519");
+        } finally {
+            service.close();
+        }
     }
 
     @Test
@@ -84,6 +112,7 @@ class ResearchExecutionServiceTest {
     @Test
     void shouldRejectWithStableErrorWhenBoundedQueueIsFull() throws Exception {
         ChatService chatService = mock(ChatService.class);
+        RecordingExecutionStateStore stateStore = new RecordingExecutionStateStore();
         CountDownLatch running = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
         doAnswer(invocation -> {
@@ -92,16 +121,22 @@ class ResearchExecutionServiceTest {
             return ChatResponse.builder().success(true).build();
         }).when(chatService).chat(any(ChatRequest.class), anyString());
         ResearchExecutionService service = new ResearchExecutionService(
-                chatService, mock(ExecutionStateStore.class), new InMemoryRunEventPublisher(), 1, 1);
+                chatService, stateStore, new InMemoryRunEventPublisher(), 1, 1);
 
         try {
             service.start(deepRequest("session-1"));
             assertThat(running.await(2, TimeUnit.SECONDS)).isTrue();
             service.start(deepRequest("session-1"));
+            Set<String> acceptedIds = stateStore.executionIds();
 
             assertThatThrownBy(() -> service.start(deepRequest("session-1")))
                     .isInstanceOf(IllegalStateException.class)
                     .hasMessage("RESEARCH_EXECUTION_QUEUE_FULL");
+            assertThat(stateStore.executionIds()).hasSize(acceptedIds.size() + 1);
+            assertThat(stateStore.statesNotIn(acceptedIds))
+                    .singleElement()
+                    .extracting(ExecutionState::getWorkflowStatus)
+                    .isEqualTo(WorkflowStatus.FAILED);
         } finally {
             release.countDown();
             service.close();
@@ -152,5 +187,31 @@ class ResearchExecutionServiceTest {
                 .enableRag(true)
                 .enableTools(true)
                 .build();
+    }
+
+    private static final class RecordingExecutionStateStore implements ExecutionStateStore {
+        private final ConcurrentHashMap<String, ExecutionState> states = new ConcurrentHashMap<>();
+
+        @Override
+        public Optional<ExecutionState> load(String executionId) {
+            return Optional.ofNullable(states.get(executionId));
+        }
+
+        @Override
+        public ExecutionState save(ExecutionState state, long expectedVersion) {
+            states.put(state.getExecutionId(), state);
+            return state;
+        }
+
+        Set<String> executionIds() {
+            return Set.copyOf(states.keySet());
+        }
+
+        List<ExecutionState> statesNotIn(Set<String> executionIds) {
+            return states.entrySet().stream()
+                    .filter(entry -> !executionIds.contains(entry.getKey()))
+                    .map(java.util.Map.Entry::getValue)
+                    .toList();
+        }
     }
 }

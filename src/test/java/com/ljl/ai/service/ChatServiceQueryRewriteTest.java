@@ -14,9 +14,20 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class ChatServiceQueryRewriteTest {
+
+    @Test
+    void shouldBuildOneCanonicalExecutionQuestionFromMessageAndOrderId() {
+        assertEquals("分析技术面\n当前用户正在咨询股票：600519",
+                ChatService.executionQuestion("分析技术面", "600519"));
+        assertEquals("分析600519技术面",
+                ChatService.executionQuestion("分析600519技术面", "600519"));
+        assertEquals("分析 600519.SH 技术面",
+                ChatService.executionQuestion("分析 600519.SH 技术面", "600519.SH"));
+    }
 
     @Test
     void shouldRewriteQueryWithShortTermSummaryAndUseItForLongTermRecall() {
@@ -78,13 +89,11 @@ class ChatServiceQueryRewriteTest {
     }
 
     @Test
-    void explicitStockCodeShouldProtectTopicBoundaryWhenRewriteFails() {
+    void explicitStockCodeShouldResolveLocallyWithoutCallingRewriteModel() {
         ChatService service = new ChatService();
         QueryRewriteAssistant rewriter = mock(QueryRewriteAssistant.class);
         ConversationTopicStore.TopicState topicState = new ConversationTopicStore.TopicState(
                 "600519", List.of("600519"));
-        when(rewriter.rewrite(anyString(), anyString(), anyString(), anyString()))
-                .thenThrow(new IllegalStateException("model unavailable"));
         ReflectionTestUtils.setField(service, "queryRewriteAssistant", rewriter);
 
         ConversationQuery resolved = service.resolveRetrievalQuery(
@@ -92,5 +101,7 @@ class ChatServiceQueryRewriteTest {
 
         assertEquals("300750", resolved.topicKey());
         assertEquals(ConversationQuery.TopicRelation.SWITCH, resolved.topicRelation());
+        assertEquals("改看300750的技术面", resolved.standaloneQuery());
+        verifyNoInteractions(rewriter);
     }
 }

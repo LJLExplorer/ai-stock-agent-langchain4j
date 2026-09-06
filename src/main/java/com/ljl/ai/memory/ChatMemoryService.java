@@ -2,6 +2,7 @@ package com.ljl.ai.memory;
 
 import com.ljl.ai.model.entity.ChatMessage;
 import com.ljl.ai.model.entity.ChatSession;
+import com.ljl.ai.model.entity.KnowledgeSource;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Sort;
@@ -265,22 +266,33 @@ public class ChatMemoryService {
      * 保存AI回复消息
      */
     public ChatMessage saveAssistantMessage(String sessionId, String content) {
+        return saveAssistantMessage(sessionId, content, List.of());
+    }
+
+    public ChatMessage saveAssistantMessage(String sessionId, String content,
+                                            List<KnowledgeSource> knowledgeSources) {
         if (content == null || content.trim().isEmpty()) {
             log.warn("尝试保存空内容的AI消息, sessionId: {}", sessionId);
             return null;
         }
-        return saveMessage(sessionId, "ASSISTANT", content);
+        return saveMessage(sessionId, "ASSISTANT", content, knowledgeSources);
     }
 
     /**
      * 保存消息到MongoDB
      */
     private ChatMessage saveMessage(String sessionId, String role, String content) {
+        return saveMessage(sessionId, role, content, List.of());
+    }
+
+    private ChatMessage saveMessage(String sessionId, String role, String content,
+                                    List<KnowledgeSource> knowledgeSources) {
         ChatMessage message = ChatMessage.builder()
                 .messageId(UUID.randomUUID().toString())
                 .sessionId(sessionId)
                 .role(role)
                 .content(content)
+                .knowledgeSources(knowledgeSources == null ? List.of() : List.copyOf(knowledgeSources))
                 .createTime(LocalDateTime.now())
                 .build();
 
