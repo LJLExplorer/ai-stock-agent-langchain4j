@@ -32,9 +32,9 @@
 
 ## 4. Planner 快速路径
 
-`ChatService.planForExecution` 先检查用户原文能否由 `PlannerTextParser` 解析出明确股票代码及任务。解析结果仍进入 `PlanValidator`；验证成功就直接执行，不调用模型。解析失败或验证失败时继续现有模型 Planner 与文本兜底流程。
+`ChatService.resolveRetrievalQuery` 先检查用户原文是否已有明确六位股票代码；命中时保留原问题并本地确定话题边界，不调用 Query Rewrite。`planForExecution` 再由 `PlannerTextParser` 解析股票代码及任务。解析结果仍进入 `PlanValidator`；验证成功就直接执行，不调用 Planner。解析失败或验证失败时继续现有模型 Planner 与文本兜底流程。
 
-该方案复用现有受限解析器和白名单，不引入新的自由文本执行能力。它直接覆盖日志中的“600519 + 技术分析”请求，并减少一次约 25 秒的无效模型调用。
+该方案复用现有受限解析器和白名单，不引入新的自由文本执行能力。它直接覆盖日志中的“600519 + 技术分析”请求，并消除 Query Rewrite 与 Planner 两次不必要模型调用。
 
 ## 5. Judge 诊断
 
@@ -57,11 +57,20 @@ Milvus 连接失败发生在依赖未就绪阶段，随后服务启动并成功�
 
 LLM 请求 180 秒超时来自外部 MaaS 接口，LangChain4j 内部重试后成功。本次不统一缩短共享模型超时，避免让耗时较长的深度角色更易失败。最终报告会明确这两项需要通过服务编排、健康检查、网络或模型供应商配置处理。
 
-## 7. 测试策略
+## 7. 真实进度语义
+
+异步接收使用独立的 `EXECUTION_ACCEPTED` 事件；只有工作流实际进入深度研究节点才发送 `DEEP_RESEARCH_STARTED`。六个角色和 Judge 在调用前后发送 `ROLE_STARTED/ROLE_COMPLETED`，事件只包含角色、状态和稳定原因码。
+
+前端总步数为“计划 1 + 已规划工具任务数 + 证据包 1 + 角色/Judge 7 + 答案 1”。工具和角色按 node 去重，SSE 重放不会重复计数；`WORKFLOW_COMPLETED` 才能把进度置为 100%。阶段标签仍用于归类，但状态与百分比完全由真实事件派生。
+
+## 8. 测试策略
 
 - `ResearchExecutionServiceTest`：后台未开始时占位状态已可读取；队列拒绝后状态失败。
 - `WorkflowRunnerTest`：合法占位状态被替换；非占位状态拒绝覆盖；同步首次插入保持不变。
 - `ResearchExecutionControllerTest`：SSE 缺失 execution 在全局异常处理器参与时返回干净 404。
 - `ChatServicePlannerTest`：明确代码走本地计划且 Planner 零调用；无法本地解析时仍调用 Planner。
+- `ChatServiceQueryRewriteTest`：明确代码走本地查询解析且 Query Rewrite 零调用。
 - `DeepResearchServiceTest`：Judge 空响应、无 JSON、非法字段产生对应降级原因。
+- `DeepResearchServiceTest`：每个角色及 Judge 都发布成对的开始/完成事件。
+- `researchExecution.test.js`：接收事件不提前激活审议，真实完成单元去重计数且仅成功终态达到 100%。
 - 最后执行完整 Maven 测试、前端测试与生产构建。

@@ -1,6 +1,7 @@
 const EXECUTION_BASE = '/api/research/executions'
 
 export const RUN_EVENT_TYPES = Object.freeze([
+  'EXECUTION_ACCEPTED',
   'PLAN_CREATED',
   'NODE_STARTED',
   'NODE_COMPLETED',
@@ -10,6 +11,7 @@ export const RUN_EVENT_TYPES = Object.freeze([
   'WORKFLOW_RETRYING',
   'EVIDENCE_PACK_READY',
   'DEEP_RESEARCH_STARTED',
+  'ROLE_STARTED',
   'ROLE_COMPLETED',
   'ANSWER_READY',
   'WORKFLOW_COMPLETED',
@@ -25,6 +27,7 @@ const PHASES = Object.freeze([
   ['RESEARCH', '多角色审议'],
   ['ANSWER', '结论生成']
 ])
+const RESEARCH_UNITS = 7
 
 export function buildResearchRequest(mode, payload) {
   const normalizedMode = mode === 'DEEP' ? 'DEEP' : 'STANDARD'
@@ -45,6 +48,15 @@ export function createResearchProgress(executionId) {
   return {
     executionId: requireExecutionId(executionId),
     phases: PHASES.map(([id, label]) => ({ id, label, status: 'pending' })),
+    plannedTaskCount: null,
+    completedToolNodes: [],
+    completedRoleNodes: [],
+    planCompleted: false,
+    evidenceReady: false,
+    answerReady: false,
+    completedSteps: 0,
+    totalSteps: null,
+    percent: 0,
     lastSequence: 0,
     retryCount: 0,
     missingItems: [],
@@ -73,29 +85,67 @@ export function reduceResearchProgress(progress, rawEvent) {
       : index === target ? { ...phase, status: 'active' } : phase)
   }
 
-  if (event.eventType === 'PLAN_CREATED') activate('PLAN')
+  let plannedTaskCount = progress.plannedTaskCount
+  let completedToolNodes = new Set(progress.completedToolNodes || [])
+  let completedRoleNodes = new Set(progress.completedRoleNodes || [])
+  let planCompleted = progress.planCompleted || false
+  let evidenceReady = progress.evidenceReady || false
+  let answerReady = progress.answerReady || false
+
+  if (event.eventType === 'EXECUTION_ACCEPTED') activate('PLAN')
+  if (event.eventType === 'PLAN_CREATED') {
+    planCompleted = true
+    plannedTaskCount = parseTaskCount(event.summary)
+    completeThrough('PLAN')
+    activate('DATA')
+  }
   if (['NODE_STARTED', 'TOOL_STARTED', 'TOOL_COMPLETED', 'TOOL_FAILED'].includes(event.eventType)) {
     if (event.node === 'DEEP_RESEARCH') activate('RESEARCH')
     else if (event.node === 'ANSWER') activate('ANSWER')
     else if (!['PLAN', 'INIT', 'CRITIC', 'REFLECTOR'].includes(event.node)) activate('DATA')
   }
-  if (event.eventType === 'EVIDENCE_PACK_READY') completeThrough('DATA')
-  if (event.eventType === 'DEEP_RESEARCH_STARTED' || event.eventType === 'ROLE_COMPLETED') activate('RESEARCH')
-  if (event.eventType === 'ANSWER_READY') completeThrough('ANSWER')
+  if (['TOOL_COMPLETED', 'TOOL_FAILED'].includes(event.eventType) && event.node) {
+    completedToolNodes.add(event.node)
+  }
+  if (event.eventType === 'EVIDENCE_PACK_READY') {
+    evidenceReady = true
+    completeThrough('DATA')
+  }
+  if (event.eventType === 'DEEP_RESEARCH_STARTED') activate('RESEARCH')
+  if (event.eventType === 'ROLE_STARTED') activate('RESEARCH')
+  if (event.eventType === 'ROLE_COMPLETED') {
+    if (event.node) completedRoleNodes.add(event.node)
+    if (completedRoleNodes.size >= RESEARCH_UNITS) {
+      completeThrough('RESEARCH')
+      activate('ANSWER')
+    } else {
+      activate('RESEARCH')
+    }
+  }
+  if (event.eventType === 'ANSWER_READY') {
+    answerReady = true
+    completeThrough('ANSWER')
+  }
   if (event.eventType === 'WORKFLOW_COMPLETED') completeThrough('ANSWER')
   if (event.eventType === 'WORKFLOW_FAILED') {
     phases = phases.map((phase) => phase.status === 'active' ? { ...phase, status: 'failed' } : phase)
   }
-  return {
+  return withProgressMetrics({
     ...progress,
     phases,
+    plannedTaskCount,
+    completedToolNodes: [...completedToolNodes],
+    completedRoleNodes: [...completedRoleNodes],
+    planCompleted,
+    evidenceReady,
+    answerReady,
     lastSequence: event.sequence,
     retryCount: progress.retryCount + (event.eventType === 'WORKFLOW_RETRYING' ? 1 : 0),
     connection: isTerminalRunEvent(event) ? 'terminal' : 'connected',
     canReconnect: false,
     lastEvent: { eventType: event.eventType, node: event.node, summary: event.summary },
     error: event.eventType === 'WORKFLOW_FAILED' ? '研究任务执行失败' : progress.error
-  }
+  }, event.eventType === 'WORKFLOW_COMPLETED')
 }
 
 export function applyStatusCompensation(progress, status) {
@@ -103,15 +153,50 @@ export function applyStatusCompensation(progress, status) {
     throw new Error('状态补偿 executionId 不匹配')
   }
   const terminal = ['COMPLETED', 'FAILED'].includes(status.workflowStatus)
-  return {
+  const tasks = Array.isArray(status.tasks) ? status.tasks : []
+  const completedToolNodes = tasks
+    .filter((task) => ['COMPLETED', 'FAILED'].includes(task.status))
+    .map((task) => String(task.taskType || task.taskId || ''))
+    .filter(Boolean)
+  const hasConclusion = Boolean(status.researchConclusion)
+  return withProgressMetrics({
     ...progress,
+    plannedTaskCount: tasks.length || progress.plannedTaskCount,
+    completedToolNodes,
+    completedRoleNodes: hasConclusion
+      ? ['FUNDAMENTAL', 'TECHNICAL', 'NEWS', 'BULL', 'BEAR', 'RISK', 'JUDGE']
+      : progress.completedRoleNodes,
+    planCompleted: Boolean(status.plan) || progress.planCompleted,
+    evidenceReady: Boolean(status.evidencePack) || progress.evidenceReady,
+    answerReady: Boolean(status.finalAnswer) || progress.answerReady,
     missingItems: Array.isArray(status.evidencePack?.missingItems)
       ? status.evidencePack.missingItems.map(String) : [],
     connection: terminal ? 'terminal' : 'disconnected',
     canReconnect: !terminal,
     error: status.workflowStatus === 'FAILED'
       ? String(status.errorMessage || '研究任务执行失败') : progress.error
-  }
+  }, status.workflowStatus === 'COMPLETED')
+}
+
+function parseTaskCount(summary) {
+  const match = String(summary || '').match(/(?:^|;)taskCount=(\d+)(?:;|$)/)
+  return match ? Number(match[1]) : 0
+}
+
+function withProgressMetrics(progress, completed) {
+  const taskCount = Number.isSafeInteger(progress.plannedTaskCount)
+    ? Math.max(0, progress.plannedTaskCount) : null
+  const totalSteps = taskCount == null ? null : taskCount + 10
+  const toolCount = taskCount == null ? 0 : progress.evidenceReady
+    ? taskCount : Math.min(taskCount, new Set(progress.completedToolNodes || []).size)
+  const completedSteps = (progress.planCompleted ? 1 : 0)
+    + toolCount
+    + (progress.evidenceReady ? 1 : 0)
+    + Math.min(RESEARCH_UNITS, new Set(progress.completedRoleNodes || []).size)
+    + (progress.answerReady ? 1 : 0)
+  const percent = completed ? 100 : totalSteps
+    ? Math.min(99, Math.floor(completedSteps * 100 / totalSteps)) : 0
+  return { ...progress, completedSteps, totalSteps, percent }
 }
 
 export function mapTerminalResearchResult(status) {

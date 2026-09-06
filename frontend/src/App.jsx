@@ -461,8 +461,10 @@ function SourceItem({ source }) {
 function Muted({ children }) { return <p className="muted">{children}</p> }
 function ResearchProgress({ run, onReconnect }) {
   return <div className={`research-progress ${run.connection}`}>
-    <div className="research-progress-head"><span>执行 ID：<code>{run.executionId}</code></span><em>{run.connection === 'terminal' ? '已结束' : run.connection === 'disconnected' ? '连接中断' : '运行中'}</em></div>
+    <div className="research-progress-head"><span>执行 ID：<code>{run.executionId}</code></span><em>{run.connection === 'terminal' ? '已结束' : run.connection === 'disconnected' ? '连接中断' : run.totalSteps == null ? '正在制定计划' : `${run.completedSteps}/${run.totalSteps} 步 · ${run.percent}%`}</em></div>
+    <div className="research-progress-track" role="progressbar" aria-label="深度投研真实进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow={run.percent || 0}><i style={{ width: `${run.percent || 0}%` }} /></div>
     <div className="research-timeline">{run.phases.map((phase) => <div key={phase.id} className={`research-phase ${phase.status}`}><i /> <span>{phase.label}</span></div>)}</div>
+    {run.lastEvent ? <div className="research-current">最新事件：{run.lastEvent.node || run.lastEvent.eventType}</div> : null}
     {run.retryCount > 0 || run.missingItems?.length ? <div className="research-notices">{run.retryCount > 0 ? <span>已受控重试 {run.retryCount} 次</span> : null}{run.missingItems?.map((item) => <span key={item}>数据缺失：{item}</span>)}</div> : null}
     {run.connection === 'disconnected' ? <div className="research-reconnect"><span>{run.error || '已通过状态接口完成补偿读取，请按需重新连接事件流。'}</span>{run.canReconnect ? <button type="button" onClick={onReconnect}>重新连接</button> : null}</div> : null}
   </div>

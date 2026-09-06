@@ -116,6 +116,7 @@ class WorkflowRunnerTest {
         assertEquals("ANSWER", state.getLastCompletedNode());
         List<RunEvent> published = events.snapshot(state.getExecutionId());
         assertEquals(RunEvent.EventType.PLAN_CREATED, published.getFirst().eventType());
+        assertTrue(published.getFirst().summary().contains("taskCount=1"));
         assertEquals(RunEvent.EventType.WORKFLOW_COMPLETED, published.getLast().eventType());
         assertEquals(LongStream.rangeClosed(1, published.size()).boxed().toList(),
                 published.stream().map(RunEvent::sequence).toList());

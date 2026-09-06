@@ -79,8 +79,8 @@ public class ResearchExecutionService implements AutoCloseable {
         }
 
         try {
-            eventPublisher.publish(executionId, null, RunEvent.EventType.DEEP_RESEARCH_STARTED,
-                    "DEEP_RESEARCH", "status=accepted");
+            eventPublisher.publish(executionId, null, RunEvent.EventType.EXECUTION_ACCEPTED,
+                    "EXECUTION", "status=accepted");
             return new ResearchExecutionResponse(executionId, sessionId,
                     ResearchExecutionResponse.Status.ACCEPTED, Instant.now());
         } finally {

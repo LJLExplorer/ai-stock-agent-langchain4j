@@ -14,6 +14,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class ChatServiceQueryRewriteTest {
@@ -78,13 +79,11 @@ class ChatServiceQueryRewriteTest {
     }
 
     @Test
-    void explicitStockCodeShouldProtectTopicBoundaryWhenRewriteFails() {
+    void explicitStockCodeShouldResolveLocallyWithoutCallingRewriteModel() {
         ChatService service = new ChatService();
         QueryRewriteAssistant rewriter = mock(QueryRewriteAssistant.class);
         ConversationTopicStore.TopicState topicState = new ConversationTopicStore.TopicState(
                 "600519", List.of("600519"));
-        when(rewriter.rewrite(anyString(), anyString(), anyString(), anyString()))
-                .thenThrow(new IllegalStateException("model unavailable"));
         ReflectionTestUtils.setField(service, "queryRewriteAssistant", rewriter);
 
         ConversationQuery resolved = service.resolveRetrievalQuery(
@@ -92,5 +91,7 @@ class ChatServiceQueryRewriteTest {
 
         assertEquals("300750", resolved.topicKey());
         assertEquals(ConversationQuery.TopicRelation.SWITCH, resolved.topicRelation());
+        assertEquals("改看300750的技术面", resolved.standaloneQuery());
+        verifyNoInteractions(rewriter);
     }
 }

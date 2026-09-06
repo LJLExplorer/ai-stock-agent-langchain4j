@@ -32,18 +32,33 @@ test('routes standard synchronously and deep research asynchronously with explic
 
 test('maps controlled events into a phase timeline without exposing payload bodies', () => {
   let progress = createResearchProgress('exec-1')
-  progress = reduceResearchProgress(progress, { executionId: 'exec-1', sequence: 1, eventType: 'PLAN_CREATED', node: 'PLAN', summary: '' })
-  progress = reduceResearchProgress(progress, { executionId: 'exec-1', sequence: 2, eventType: 'TOOL_STARTED', node: 'MARKET_DATA', summary: 'attempt=1' })
-  progress = reduceResearchProgress(progress, { executionId: 'exec-1', sequence: 3, eventType: 'WORKFLOW_RETRYING', node: 'RETRY', summary: 'status=retrying' })
-  progress = reduceResearchProgress(progress, { executionId: 'exec-1', sequence: 4, eventType: 'EVIDENCE_PACK_READY', node: 'EVIDENCE_PACK', summary: 'evidenceHash=hash' })
-  progress = reduceResearchProgress(progress, { executionId: 'exec-1', sequence: 5, eventType: 'DEEP_RESEARCH_STARTED', node: 'DEEP_RESEARCH', summary: '' })
-  progress = reduceResearchProgress(progress, { executionId: 'exec-1', sequence: 6, eventType: 'ANSWER_READY', node: 'ANSWER', summary: '' })
+  progress = reduceResearchProgress(progress, { executionId: 'exec-1', sequence: 1, eventType: 'EXECUTION_ACCEPTED', node: 'EXECUTION', summary: 'status=accepted' })
+  assert.equal(progress.percent, 0)
+  assert.equal(progress.phases.find(({ id }) => id === 'RESEARCH').status, 'pending')
+  progress = reduceResearchProgress(progress, { executionId: 'exec-1', sequence: 2, eventType: 'PLAN_CREATED', node: 'PLAN', summary: 'graphVersion=v1;taskCount=1' })
+  assert.equal(progress.completedSteps, 1)
+  assert.equal(progress.totalSteps, 11)
+  progress = reduceResearchProgress(progress, { executionId: 'exec-1', sequence: 3, eventType: 'TOOL_STARTED', node: 'MARKET_DATA', summary: 'attempt=1' })
+  progress = reduceResearchProgress(progress, { executionId: 'exec-1', sequence: 4, eventType: 'TOOL_COMPLETED', node: 'MARKET_DATA', summary: 'status=completed' })
+  progress = reduceResearchProgress(progress, { executionId: 'exec-1', sequence: 5, eventType: 'WORKFLOW_RETRYING', node: 'RETRY', summary: 'status=retrying' })
+  progress = reduceResearchProgress(progress, { executionId: 'exec-1', sequence: 6, eventType: 'EVIDENCE_PACK_READY', node: 'EVIDENCE_PACK', summary: 'evidenceHash=hash' })
+  progress = reduceResearchProgress(progress, { executionId: 'exec-1', sequence: 7, eventType: 'DEEP_RESEARCH_STARTED', node: 'DEEP_RESEARCH', summary: 'status=started' })
+  for (const [index, role] of ['FUNDAMENTAL', 'TECHNICAL', 'NEWS', 'BULL', 'BEAR', 'RISK', 'JUDGE'].entries()) {
+    progress = reduceResearchProgress(progress, { executionId: 'exec-1', sequence: 8 + index * 2, eventType: 'ROLE_STARTED', node: role, summary: 'status=started' })
+    progress = reduceResearchProgress(progress, { executionId: 'exec-1', sequence: 9 + index * 2, eventType: 'ROLE_COMPLETED', node: role, summary: 'status=completed' })
+  }
+  assert.equal(progress.completedSteps, 10)
+  assert.equal(progress.percent, 90)
+  progress = reduceResearchProgress(progress, { executionId: 'exec-1', sequence: 22, eventType: 'ANSWER_READY', node: 'ANSWER', summary: 'answer=ready' })
+  progress = reduceResearchProgress(progress, { executionId: 'exec-1', sequence: 23, eventType: 'WORKFLOW_COMPLETED', node: 'ANSWER', summary: 'status=COMPLETED' })
 
   assert.deepEqual(progress.phases.map(({ id, status }) => [id, status]), [
     ['PLAN', 'completed'], ['DATA', 'completed'], ['RESEARCH', 'completed'], ['ANSWER', 'completed']
   ])
   assert.equal(progress.retryCount, 1)
-  assert.equal(progress.lastSequence, 6)
+  assert.equal(progress.lastSequence, 23)
+  assert.equal(progress.percent, 100)
+  assert.equal(progress.completedSteps, 11)
   assert.equal('prompt' in progress, false)
 })
 

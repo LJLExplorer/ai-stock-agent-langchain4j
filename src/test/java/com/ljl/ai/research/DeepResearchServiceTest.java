@@ -1,6 +1,8 @@
 package com.ljl.ai.research;
 
 import com.ljl.ai.agent.DeepResearchAssistant;
+import com.ljl.ai.observability.InMemoryRunEventPublisher;
+import com.ljl.ai.observability.RunEvent;
 import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
 import org.mockito.ArgumentCaptor;
@@ -60,6 +62,23 @@ class DeepResearchServiceTest {
         ordered.verify(assistant).risk(eq(pack.modelView()), anyString());
         ordered.verify(assistant).judge(eq(pack.modelView()), anyString());
         verify(assistant, times(1)).judge(anyString(), anyString());
+    }
+
+    @Test
+    void shouldPublishActualCompletionForEveryResearchRoleAndJudge() {
+        DeepResearchAssistant assistant = successfulAssistant();
+        InMemoryRunEventPublisher events = new InMemoryRunEventPublisher();
+
+        new DeepResearchService(assistant, events).research(contextualPack());
+
+        assertThat(events.snapshot("exec-current"))
+                .filteredOn(event -> event.eventType() == RunEvent.EventType.ROLE_STARTED)
+                .extracting(RunEvent::node)
+                .containsExactly("FUNDAMENTAL", "TECHNICAL", "NEWS", "BULL", "BEAR", "RISK", "JUDGE");
+        assertThat(events.snapshot("exec-current"))
+                .filteredOn(event -> event.eventType() == RunEvent.EventType.ROLE_COMPLETED)
+                .extracting(RunEvent::node)
+                .containsExactly("FUNDAMENTAL", "TECHNICAL", "NEWS", "BULL", "BEAR", "RISK", "JUDGE");
     }
 
     @Test

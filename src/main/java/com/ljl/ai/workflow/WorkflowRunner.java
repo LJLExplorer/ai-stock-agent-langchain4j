@@ -44,7 +44,7 @@ public class WorkflowRunner {
         initializeMetadata(state);
         stateStore.save(state, initialExpectedVersion(state));
         publish(state, RunEvent.EventType.PLAN_CREATED, "PLAN",
-                "graphVersion=" + state.getGraphVersion());
+                "graphVersion=" + state.getGraphVersion() + ";taskCount=" + state.getTasks().size());
         return execute(state);
     }
 

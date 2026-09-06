@@ -669,6 +669,10 @@ public class ChatService {
             return new ConversationQuery(query, topicState.activeTopicKey(),
                     ConversationQuery.TopicRelation.CONTINUE, 0D);
         }
+        if (STOCK_CODE.matcher(query).find()) {
+            log.info("query_rewrite_skipped traceId={}, reason=EXPLICIT_STOCK_CODE", MDC.get("traceId"));
+            return fallbackQuery(query, topicState);
+        }
         try {
             String rewritten = queryRewriteAssistant.rewrite(
                     query,

@@ -65,7 +65,7 @@ class ResearchExecutionServiceTest {
             verify(chatService).chat(request.capture(), eq(response.executionId()));
             assertThat(request.getValue().getSessionId()).isEqualTo("session-created");
             assertThat(events.snapshot(response.executionId())).extracting(RunEvent::eventType)
-                    .startsWith(RunEvent.EventType.DEEP_RESEARCH_STARTED);
+                    .startsWith(RunEvent.EventType.EXECUTION_ACCEPTED);
         } finally {
             service.close();
         }

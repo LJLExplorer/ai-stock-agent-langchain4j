@@ -4,6 +4,7 @@ import com.ljl.ai.config.AgentToolConfig;
 import com.ljl.ai.memory.RedisChatMemoryProvider;
 import com.ljl.ai.observability.TraceLoggingConfig;
 import com.ljl.ai.observability.TracingChatLanguageModel;
+import com.ljl.ai.observability.RunEventPublisher;
 import com.ljl.ai.research.DeepResearchService;
 import com.ljl.ai.tools.FinancialAnalysisTool;
 import com.ljl.ai.tools.MarketDataTool;
@@ -161,8 +162,9 @@ public class AgentConfig {
     }
 
     @Bean
-    public DeepResearchService deepResearchService(DeepResearchAssistant assistant) {
-        return new DeepResearchService(assistant);
+    public DeepResearchService deepResearchService(DeepResearchAssistant assistant,
+                                                   RunEventPublisher eventPublisher) {
+        return new DeepResearchService(assistant, eventPublisher);
     }
 
     /**

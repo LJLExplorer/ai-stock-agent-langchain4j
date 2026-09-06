@@ -3,6 +3,8 @@ package com.ljl.ai.research;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
 import com.ljl.ai.agent.DeepResearchAssistant;
+import com.ljl.ai.observability.RunEvent;
+import com.ljl.ai.observability.RunEventPublisher;
 import lombok.extern.slf4j.Slf4j;
 
 import java.time.LocalDate;
@@ -22,9 +24,15 @@ public class DeepResearchService {
     private static final int UPSTREAM_BUDGET = 10_000;
 
     private final DeepResearchAssistant assistant;
+    private final RunEventPublisher eventPublisher;
 
     public DeepResearchService(DeepResearchAssistant assistant) {
+        this(assistant, null);
+    }
+
+    public DeepResearchService(DeepResearchAssistant assistant, RunEventPublisher eventPublisher) {
         this.assistant = assistant;
+        this.eventPublisher = eventPublisher;
     }
 
     public ResearchConclusion research(EvidencePack evidencePack) {
@@ -48,13 +56,16 @@ public class DeepResearchService {
         List<String> limitations = new ArrayList<>();
         for (Role role : Role.values()) {
             String upstream = upstream(results);
+            publishRoleEvent(evidencePack, RunEvent.EventType.ROLE_STARTED, role.name(), "status=started");
             try {
                 String output = invoke(role, evidence, upstream);
                 results.add(new RoleResult(role, truncate(value(output), ROLE_OUTPUT_BUDGET)));
+                publishRoleEvent(evidencePack, RunEvent.EventType.ROLE_COMPLETED, role.name(), "status=completed");
             } catch (RuntimeException exception) {
                 String limitation = "ROLE_FAILED:" + role.name();
                 limitations.add(limitation);
                 results.add(new RoleResult(role, limitation));
+                publishRoleEvent(evidencePack, RunEvent.EventType.ROLE_COMPLETED, role.name(), "status=failed");
                 log.warn("deep_research_role_failed role={}, errorType={}",
                         role, exception.getClass().getSimpleName());
             }
@@ -62,9 +73,11 @@ public class DeepResearchService {
 
         LocalDate cutoff = dataAsOf(evidencePack);
         String rawJudge = null;
+        publishRoleEvent(evidencePack, RunEvent.EventType.ROLE_STARTED, "JUDGE", "status=started");
         try {
             rawJudge = assistant.judge(evidence, upstream(results));
             ResearchConclusion judged = parseJudge(rawJudge, evidencePack, cutoff);
+            publishRoleEvent(evidencePack, RunEvent.EventType.ROLE_COMPLETED, "JUDGE", "status=completed");
             if (limitations.isEmpty()) {
                 return judged;
             }
@@ -74,6 +87,8 @@ public class DeepResearchService {
             String reason = exception instanceof JudgeValidationException validation
                     ? validation.code : "JUDGE_FAILED";
             limitations.add(reason);
+            publishRoleEvent(evidencePack, RunEvent.EventType.ROLE_COMPLETED, "JUDGE",
+                    "status=failed;reason=" + reason);
             log.warn("deep_research_judge_failed errorType={}, reason={}, responseLength={}",
                     exception.getClass().getSimpleName(), reason, rawJudge == null ? 0 : rawJudge.length());
             return fallback(cutoff, limitations);
@@ -239,6 +254,21 @@ public class DeepResearchService {
                 .map(result -> "[" + result.role().name() + "]\n" + result.output())
                 .reduce((left, right) -> left + "\n\n" + right).orElse("");
         return truncate(content, UPSTREAM_BUDGET);
+    }
+
+    private void publishRoleEvent(EvidencePack pack, RunEvent.EventType eventType,
+                                  String role, String summary) {
+        if (eventPublisher == null || pack.context() == null
+                || value(pack.context().executionId()).isEmpty()) {
+            return;
+        }
+        try {
+            eventPublisher.publish(pack.context().executionId(), pack.context().traceId(),
+                    eventType, role, summary);
+        } catch (RuntimeException exception) {
+            log.warn("deep_research_progress_publish_failed role={}, errorType={}",
+                    role, exception.getClass().getSimpleName());
+        }
     }
 
     private String truncate(String content, int maxLength) {

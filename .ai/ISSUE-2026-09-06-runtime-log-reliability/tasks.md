@@ -131,6 +131,58 @@ Expected: PASS。
 
 - 填写 Red/Green Evidence，将状态改为 `completed`。
 
+## Task 6: 消除首次模型阻塞并展示真实事件进度
+
+**状态：** completed
+
+**Red Evidence：** 首次执行后端定向测试在 testCompile 失败，缺少 `DeepResearchService(assistant, publisher)` 和 `EXECUTION_ACCEPTED`；前端 9 tests 中 1 failure，拒绝未知 `EXECUTION_ACCEPTED`。补充角色开始事件测试后，后端再次因缺少 `ROLE_STARTED` 编译失败、前端再次因未知事件 1 failure；均与预期一致（yes）。
+
+**Green Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=ChatServiceQueryRewriteTest,ResearchExecutionServiceTest,DeepResearchServiceTest,WorkflowRunnerTest test'` 全部通过；`npm test` 9 tests 全部通过。随后后端全量 `mvn -q test` 与前端 `npm run build` 均 exit 0。
+
+**涉及文件：**
+- Modify: `src/main/java/com/ljl/ai/service/ChatService.java`
+- Modify: `src/main/java/com/ljl/ai/research/DeepResearchService.java`
+- Modify: `src/main/java/com/ljl/ai/agent/AgentConfig.java`
+- Modify: `src/main/java/com/ljl/ai/observability/RunEvent.java`
+- Modify: `src/main/java/com/ljl/ai/service/ResearchExecutionService.java`
+- Modify: `src/main/java/com/ljl/ai/workflow/WorkflowRunner.java`
+- Modify: `frontend/src/researchExecution.js`
+- Modify: `frontend/src/App.jsx`
+- Modify: `frontend/src/styles.css`
+- Test: `src/test/java/com/ljl/ai/service/ChatServiceQueryRewriteTest.java`
+- Test: `src/test/java/com/ljl/ai/research/DeepResearchServiceTest.java`
+- Test: `src/test/java/com/ljl/ai/service/ResearchExecutionServiceTest.java`
+- Test: `src/test/java/com/ljl/ai/workflow/WorkflowRunnerTest.java`
+- Test: `frontend/src/researchExecution.test.js`
+
+**步骤 1：编写失败测试**
+
+- 明确六位股票代码时，查询解析直接使用原问题并且不调用 `QueryRewriteAssistant`。
+- 异步请求接收事件使用 `EXECUTION_ACCEPTED`，不得提前宣称已进入多角色审议。
+- Deep Research 每个角色及 Judge 开始、完成时分别发布 `ROLE_STARTED`、`ROLE_COMPLETED` 事件。
+- 前端基于计划任务数、工具终态、证据包、7 个审议单元和答案就绪事件计算完成步数与百分比；终态成功才显示 100%。
+
+**步骤 2：运行测试确认失败**
+
+Run: `zsh -ic 'jdk21 && mvn -q -Dtest=ChatServiceQueryRewriteTest,ResearchExecutionServiceTest,DeepResearchServiceTest test'` 以及 `npm test`
+
+Expected: FAIL；当前显式代码仍同步调用改写模型，接收事件误用 `DEEP_RESEARCH_STARTED`，没有真实角色完成事件或百分比。
+
+**步骤 3：编写最小实现**
+
+- 在 `resolveRetrievalQuery` 最前面识别原问题中的六位股票代码并走确定性 `fallbackQuery`。
+- 新增 `EXECUTION_ACCEPTED` 事件类型；实际进入深度研究节点时才发布 `DEEP_RESEARCH_STARTED`。
+- `DeepResearchService` 注入可选 `RunEventPublisher`，每个角色以及 Judge 开始、完成/降级时发布无正文的受控元数据事件。
+- `PLAN_CREATED` 携带 `taskCount`，前端以去重后的真实完成单元计算进度条。
+
+**步骤 4：运行测试确认通过**
+
+Run: 同步骤 2，并执行后端全量测试和前端生产构建。
+
+**步骤 5：回写执行证据并标记完成**
+
+- 填写 Red/Green Evidence，将状态改为 `completed`。
+
 ## Task 3: SSE 404 使用无响应体异常映射
 
 **状态：** completed

@@ -32,6 +32,7 @@ public record RunEvent(
     }
 
     public enum EventType {
+        EXECUTION_ACCEPTED,
         PLAN_CREATED,
         NODE_STARTED,
         NODE_COMPLETED,
@@ -41,6 +42,7 @@ public record RunEvent(
         WORKFLOW_RETRYING,
         EVIDENCE_PACK_READY,
         DEEP_RESEARCH_STARTED,
+        ROLE_STARTED,
         ROLE_COMPLETED,
         ANSWER_READY,
         WORKFLOW_COMPLETED,
