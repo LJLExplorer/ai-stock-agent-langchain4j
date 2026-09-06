@@ -392,6 +392,15 @@ public class ChatService {
 
     Optional<PlanValidator.ValidatedPlan> planForExecution(String userMessage) {
         try {
+            AgentPlan localPlan = PlannerTextParser.parse("", userMessage);
+            if (localPlan != null) {
+                PlanValidator.ValidatedPlan localValidated = planValidator.validate(localPlan);
+                if (localValidated.valid()) {
+                    log.info("planner_local_plan_succeeded traceId={}, plan={}", MDC.get("traceId"),
+                            JSON.toJSONString(localValidated.plan()));
+                    return Optional.of(localValidated);
+                }
+            }
             if (agentPlannerAssistant == null) {
                 return Optional.empty();
             }

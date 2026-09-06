@@ -4,6 +4,7 @@ import com.ljl.ai.agent.AgentPlannerAssistant;
 import com.ljl.ai.model.entity.KnowledgeSource;
 import com.ljl.ai.model.entity.ToolInvocation;
 import com.ljl.ai.planner.PlanValidator;
+import com.ljl.ai.planner.StockAnalysisTask;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -11,6 +12,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
@@ -29,6 +32,20 @@ class ChatServicePlannerTest {
 
         assertEquals("600519.SH", result.plan().getSymbol());
         assertEquals(2, result.toolNames().size());
+        verify(planner).plan("分析贵州茅台最近为什么跌");
+    }
+
+    @Test
+    void shouldPlanExplicitStockCodeLocallyWithoutCallingPlanner() {
+        ChatService chatService = new ChatService();
+        AgentPlannerAssistant planner = mock(AgentPlannerAssistant.class);
+        ReflectionTestUtils.setField(chatService, "agentPlannerAssistant", planner);
+
+        PlanValidator.ValidatedPlan result = chatService.planForExecution("请对600519做技术分析").orElseThrow();
+
+        assertEquals("600519.SH", result.plan().getSymbol());
+        assertEquals(List.of(StockAnalysisTask.TECHNICAL_ANALYSIS), result.plan().getTasks());
+        verifyNoInteractions(planner);
     }
 
     @Test
@@ -73,7 +90,7 @@ class ChatServicePlannerTest {
     }
 
     @Test
-    void shouldParseRealMarkdownPlannerResponseAndKeepAllSupportedTasks() {
+    void shouldPreferRestrictedUserIntentOverVerbosePlannerResponse() {
         ChatService chatService = new ChatService();
         AgentPlannerAssistant planner = mock(AgentPlannerAssistant.class);
         when(planner.plan("查询600511并给出购买建议")).thenReturn(
@@ -86,7 +103,8 @@ class ChatServicePlannerTest {
         PlanValidator.ValidatedPlan result = chatService.planForExecution("查询600511并给出购买建议").orElseThrow();
 
         assertEquals("600511.SH", result.plan().getSymbol());
-        assertEquals(4, result.plan().getTasks().size());
+        assertEquals(List.of(StockAnalysisTask.NEWS_ANALYSIS), result.plan().getTasks());
+        verifyNoInteractions(planner);
     }
 
     @Test
