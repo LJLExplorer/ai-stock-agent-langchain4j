@@ -66,6 +66,7 @@ public class ChatService {
     private static final int ROUTING_HISTORY_LIMIT = 30;
     private static final Pattern STOCK_CODE = Pattern.compile("(?<!\\d)(\\d{6})(?:\\.(?:SH|SZ|BJ|HK))?(?!\\d)",
             Pattern.CASE_INSENSITIVE);
+    private static final Pattern SAFE_ERROR_CODE = Pattern.compile("[A-Z][A-Z0-9_.:-]{2,127}");
 
     private static final Map<String, String> TOOL_DISPLAY_NAMES = Map.ofEntries(
             Map.entry("getRealtimeQuote", "查询实时行情"),
@@ -214,11 +215,7 @@ public class ChatService {
                     request.getUserId());
             String baseMemoryId = memoryId(request.getUserId(), sessionId);
             String originalUserMessage = request.getMessage();
-            String userMessage = originalUserMessage;
-
-            if (StringUtils.isNotBlank(request.getOrderId())) {
-                userMessage = userMessage + "\n当前用户正在咨询股票：" + request.getOrderId();
-            }
+            String userMessage = executionQuestion(originalUserMessage, request.getOrderId());
             ConversationTopicStore.TopicState topicState = currentTopicState(baseMemoryId);
             String activeTopicMemoryId = ConversationTopicStore.topicMemoryId(
                     baseMemoryId, topicState.activeTopicKey());
@@ -360,7 +357,8 @@ public class ChatService {
                     .build();
 
         } catch (Exception e) {
-            log.error("对话处理失败, errorType={}", e.getClass().getSimpleName());
+            log.error("对话处理失败, errorType={}, errorCode={}",
+                    e.getClass().getSimpleName(), diagnosticErrorCode(e));
 
             boolean toolLoopExceeded = hasMessage(e, "exceeded") && hasMessage(e, "sequential tool executions");
             String content = "抱歉，处理您的请求时出现了问题，请稍后重试或联系人工投研助手。";
@@ -654,6 +652,39 @@ public class ChatService {
 
     static String memoryId(String userId, String sessionId) {
         return userId + ":" + sessionId;
+    }
+
+    static String executionQuestion(String message, String orderId) {
+        String question = StringUtils.defaultString(message);
+        String order = StringUtils.trimToEmpty(orderId);
+        if (order.isEmpty()) {
+            return question;
+        }
+        Matcher orderCode = STOCK_CODE.matcher(order);
+        if (orderCode.find()) {
+            String expectedCode = orderCode.group(1);
+            Matcher questionCode = STOCK_CODE.matcher(question);
+            while (questionCode.find()) {
+                if (expectedCode.equals(questionCode.group(1))) {
+                    return question;
+                }
+            }
+        } else if (StringUtils.containsIgnoreCase(question, order)) {
+            return question;
+        }
+        return question + "\n当前用户正在咨询股票：" + order;
+    }
+
+    private String diagnosticErrorCode(Throwable throwable) {
+        Throwable current = throwable;
+        while (current != null) {
+            String message = StringUtils.trimToEmpty(current.getMessage());
+            if (SAFE_ERROR_CODE.matcher(message).matches()) {
+                return message;
+            }
+            current = current.getCause();
+        }
+        return "UNCLASSIFIED";
     }
 
     String rewriteRetrievalQuery(String query, String shortTermSummary) {

@@ -183,6 +183,45 @@ Run: 同步骤 2，并执行后端全量测试和前端生产构建。
 
 - 填写 Red/Green Evidence，将状态改为 `completed`。
 
+## Task 7: 统一异步占位与正式执行问题
+
+**状态：** completed
+
+**Red Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=ChatServiceQueryRewriteTest,ResearchExecutionServiceTest test'` 在 testCompile 失败，报告缺少统一的 `ChatService.executionQuestion(message, orderId)`；与预期一致（yes）。
+
+**Green Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=ChatServiceQueryRewriteTest,ResearchExecutionServiceTest,WorkflowRunnerTest test'` 全部通过（exit 0），覆盖独立 orderId 追加、已有同代码不重复追加及严格占位接管；`zsh -ic 'jdk21 && mvn -q test'` 后端全量测试通过（exit 0）。
+
+**涉及文件：**
+- Modify: `src/main/java/com/ljl/ai/service/ChatService.java`
+- Modify: `src/main/java/com/ljl/ai/service/ResearchExecutionService.java`
+- Test: `src/test/java/com/ljl/ai/service/ChatServiceQueryRewriteTest.java`
+- Test: `src/test/java/com/ljl/ai/service/ResearchExecutionServiceTest.java`
+
+**步骤 1：编写失败测试**
+
+- `orderId` 未出现在消息中时，占位状态与正式状态都使用追加股票上下文后的同一执行问题。
+- 消息已经包含同一股票代码时不重复追加。
+
+**步骤 2：运行测试确认失败**
+
+Run: `zsh -ic 'jdk21 && mvn -q -Dtest=ChatServiceQueryRewriteTest,ResearchExecutionServiceTest test'`
+
+Expected: FAIL；当前占位状态保存原消息，正式状态保存追加 `orderId` 后的消息，导致严格占位校验拒绝。
+
+**步骤 3：编写最小实现**
+
+- 提取包内可见的确定性 `executionQuestion(message, orderId)`。
+- `ChatService` 和 `ResearchExecutionService` 共同使用该函数。
+- 日志补充受限稳定 `errorCode`，便于下次直接识别占位冲突。
+
+**步骤 4：运行测试确认通过**
+
+Run: 同步骤 2，并执行后端全量测试。
+
+**步骤 5：回写执行证据并标记完成**
+
+- 填写 Red/Green Evidence，将状态改为 `completed`。
+
 ## Task 3: SSE 404 使用无响应体异常映射
 
 **状态：** completed

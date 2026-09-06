@@ -73,6 +73,26 @@ class ResearchExecutionServiceTest {
     }
 
     @Test
+    void shouldPreallocateCanonicalExecutionQuestionWhenOrderIdIsSeparate() {
+        ChatService chatService = mock(ChatService.class);
+        RecordingExecutionStateStore stateStore = new RecordingExecutionStateStore();
+        ResearchExecutionService service = new ResearchExecutionService(
+                chatService, stateStore, new InMemoryRunEventPublisher(), 1, 1);
+        ChatRequest request = deepRequest("session-1");
+        request.setMessage("分析技术面");
+        request.setOrderId("600519");
+
+        try {
+            ResearchExecutionResponse response = service.start(request);
+
+            assertThat(service.findOwned(response.executionId(), "user-1").orElseThrow().getOriginalQuestion())
+                    .isEqualTo("分析技术面\n当前用户正在咨询股票：600519");
+        } finally {
+            service.close();
+        }
+    }
+
+    @Test
     void shouldOnlyAcceptDeepResearchMode() {
         ResearchExecutionService service = new ResearchExecutionService(
                 mock(ChatService.class), mock(ExecutionStateStore.class),

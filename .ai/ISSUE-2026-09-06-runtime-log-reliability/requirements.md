@@ -20,6 +20,7 @@
 ### 异步执行状态
 
 - `ResearchExecutionService.start` 在提交后台工作前保存包含 executionId、sessionId、userId、原问题与 `PLANNED` 状态的占位记录。
+- 占位状态与正式执行状态必须使用同一规范化执行问题；`orderId` 已出现在消息中时不得重复追加。
 - 队列拒绝或后台失败时，占位记录必须转换为 `FAILED`，不能永久停留在 `PLANNED`。
 - `WorkflowRunner.run` 仅允许替换同 executionId、同 userId、同 sessionId、无计划且仍为 `PLANNED` 的占位记录。
 - 已存在的非占位记录必须拒绝覆盖。
@@ -65,6 +66,7 @@
 
 - 后台线程被阻塞时，异步启动返回前已能通过 `findOwned` 读取占位状态。
 - 后台规划完成后，占位状态被完整工作流状态替换，且乐观锁版本正确。
+- 独立传入 `orderId` 和消息已含代码两种请求都能通过严格占位校验。
 - SSE 缺失 execution 的 MockMvc 请求返回 404，无二次媒体类型异常。
 - 明确代码请求不调用模型 Planner，生成的任务仍受白名单校验。
 - 明确代码请求不调用 Query Rewrite；异步接收不会提前显示进入多角色审议。

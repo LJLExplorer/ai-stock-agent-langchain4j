@@ -67,7 +67,8 @@ public class ResearchExecutionService implements AutoCloseable {
         String executionId = UUID.randomUUID().toString();
         ChatRequest executionRequest = copyForSession(request, sessionId);
         ExecutionState acceptedState = ExecutionState.planned(
-                executionId, sessionId, request.getMessage(), List.of());
+                executionId, sessionId,
+                ChatService.executionQuestion(request.getMessage(), request.getOrderId()), List.of());
         acceptedState.setUserId(request.getUserId());
         stateStore.save(acceptedState, -1);
         CountDownLatch accepted = new CountDownLatch(1);

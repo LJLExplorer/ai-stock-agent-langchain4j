@@ -20,3 +20,5 @@
 - 将异步句柄接收事件从误导性的 `DEEP_RESEARCH_STARTED` 拆成 `EXECUTION_ACCEPTED`，真正进入审议节点时才发送 `DEEP_RESEARCH_STARTED`。
 - 六个研究角色和 Judge 均发送真实 `ROLE_STARTED/ROLE_COMPLETED` 事件；前端显示当前角色，并仅按计划、实际工具终态、证据包、7 个审议单元和答案就绪计算完成步数与百分比。
 - 新进度条不使用计时器或随机增长：任务数由 `PLAN_CREATED.taskCount` 给出，去重后的后端完成事件推进百分比，成功终态才到 100%。
+- 复查 13:17:24 的即时失败：异步占位保存 39 字原问题，`ChatService` 又按 `orderId` 追加股票上下文形成 57 字正式问题，触发严格占位校验的 `EXECUTION_STATE_ALREADY_EXISTS`。
+- 提取统一的执行问题构造函数供异步入口与聊天主链路共用；消息已包含同一股票代码时不重复追加。对话失败日志同时输出受限稳定 `errorCode`，不再只显示笼统的 `IllegalStateException`。

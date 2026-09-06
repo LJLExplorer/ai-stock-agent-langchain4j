@@ -20,6 +20,16 @@ import static org.mockito.Mockito.when;
 class ChatServiceQueryRewriteTest {
 
     @Test
+    void shouldBuildOneCanonicalExecutionQuestionFromMessageAndOrderId() {
+        assertEquals("分析技术面\n当前用户正在咨询股票：600519",
+                ChatService.executionQuestion("分析技术面", "600519"));
+        assertEquals("分析600519技术面",
+                ChatService.executionQuestion("分析600519技术面", "600519"));
+        assertEquals("分析 600519.SH 技术面",
+                ChatService.executionQuestion("分析 600519.SH 技术面", "600519.SH"));
+    }
+
+    @Test
     void shouldRewriteQueryWithShortTermSummaryAndUseItForLongTermRecall() {
         ChatService service = new ChatService();
         QueryRewriteAssistant rewriter = mock(QueryRewriteAssistant.class);

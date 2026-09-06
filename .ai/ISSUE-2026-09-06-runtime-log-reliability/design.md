@@ -24,6 +24,8 @@
 
 `WorkflowRunner.run` 在首次保存前读取同 ID 状态：不存在时执行原有 `insert`；存在时只接受严格占位状态，复制其版本并按版本条件替换。所有者、会话、状态、plan/tasks 均参与占位校验，防止覆盖真实 Checkpoint。
 
+异步入口与 `ChatService` 共用同一个确定性执行问题构造函数：仅当消息尚未包含 `orderId` 对应股票代码时追加上下文。这样占位记录与完整执行状态的 `originalQuestion` 始终一致，同时避免前端已拼接股票代码后端又重复追加。
+
 ## 3. SSE 异常处理
 
 `GlobalExceptionHandler` 增加 `ResponseStatusException` 专用处理器，返回原状态和空 body。因为没有 JSON body，Spring 无需为 `text/event-stream` 请求查找 JSON converter，原始 404 可以干净结束。
