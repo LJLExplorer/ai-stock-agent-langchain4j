@@ -22,6 +22,8 @@ import com.ljl.ai.planner.PlannerTextParser;
 import com.ljl.ai.research.AnalysisContext;
 import com.ljl.ai.research.AnalysisContextResolver;
 import com.ljl.ai.research.DecisionReviewService;
+import com.ljl.ai.research.EvidencePack;
+import com.ljl.ai.research.FinancialFact;
 import com.ljl.ai.research.ResearchConclusion;
 import com.ljl.ai.research.ResearchDecisionService;
 import com.ljl.ai.workflow.ExecutionState;
@@ -314,10 +316,13 @@ public class ChatService {
                     collectToolInvocations(modelMemoryId, previousToolInvocationIds));
             toolInvocations.addAll(workflowToolInvocations);
             knowledgeSources = mergeKnowledgeSources(knowledgeSources, extractWebSources(workflowToolInvocations));
+            knowledgeSources = mergeKnowledgeSources(knowledgeSources,
+                    completedExecution == null ? List.of()
+                            : extractEvidenceSources(completedExecution.getEvidencePack()));
 
             // 4. 保存用户消息和AI回复到业务层（chat_messages 集合，用于前端展示）
             chatMemoryService.saveUserMessage(sessionId, originalUserMessage);
-            ChatMessage assistantMessage = chatMemoryService.saveAssistantMessage(sessionId, aiResponse);
+            ChatMessage assistantMessage = chatMemoryService.saveAssistantMessage(sessionId, aiResponse, knowledgeSources);
             if (assistantMessage == null) {
                 log.warn("保存助手消息失败, sessionId: {}", sessionId);
             }
@@ -480,6 +485,30 @@ public class ChatService {
         return sources;
     }
 
+    static List<KnowledgeSource> extractEvidenceSources(EvidencePack evidencePack) {
+        if (evidencePack == null || evidencePack.evidenceByType() == null) {
+            return List.of();
+        }
+        return evidencePack.evidenceByType().values().stream()
+                .flatMap(List::stream)
+                .filter(java.util.Objects::nonNull)
+                .filter(fact -> fact.temporalStatus() != FinancialFact.TemporalStatus.REJECTED)
+                .map(fact -> KnowledgeSource.builder()
+                        .documentId(fact.evidenceId())
+                        .documentTitle(StringUtils.defaultIfBlank(fact.sourceName(), "数据证据"))
+                        .documentType("EVIDENCE")
+                        .contentSnippet(evidenceSnippet(fact))
+                        .documentUrl(fact.sourceUrl())
+                        .location(fact.evidenceType() + (fact.asOf() == null ? "" : " · " + fact.asOf()))
+                        .build())
+                .toList();
+    }
+
+    private static String evidenceSnippet(FinancialFact fact) {
+        String unit = StringUtils.isBlank(fact.unit()) ? "" : " " + fact.unit();
+        return fact.metric() + "：" + StringUtils.defaultString(fact.value()) + unit;
+    }
+
     static List<ToolInvocation> workflowToolInvocations(ExecutionState state) {
         if (state == null || state.getTasks() == null) {
             return Collections.emptyList();
@@ -518,6 +547,9 @@ public class ChatService {
     }
 
     private String sourceKey(KnowledgeSource source) {
+        if ("EVIDENCE".equals(source.getDocumentType())) {
+            return StringUtils.defaultString(source.getDocumentId());
+        }
         return StringUtils.defaultIfBlank(source.getDocumentUrl(), source.getDocumentId());
     }
 

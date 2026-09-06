@@ -44,7 +44,7 @@ public class EvidencePackBuilder {
             case MARKET_DATA -> mapMarket(data, context);
             case TECHNICAL_ANALYSIS -> mapText(FinancialFact.EvidenceType.TECHNICAL,
                     "technical_analysis", data.toString(), extractDate(DATA_CUTOFF, data.toString()),
-                    null, "Tencent Finance", null, context);
+                    null, "Tencent Finance", quoteUrl(context.symbol()), context);
             case FINANCIAL_ANALYSIS -> mapFinancial(data.toString(), context);
             case NEWS_ANALYSIS -> mapNews(data, context);
         };
@@ -215,6 +215,17 @@ public class EvidencePackBuilder {
 
     private Instant toInstant(LocalDateTime value) {
         return value == null ? null : value.atZone(ZoneId.of("Asia/Shanghai")).toInstant();
+    }
+
+    private String quoteUrl(String symbol) {
+        String normalized = value(symbol).trim().toUpperCase(java.util.Locale.ROOT);
+        String code = normalized.replaceAll("[^0-9]", "");
+        if (code.length() != 6) {
+            return "https://gu.qq.com";
+        }
+        String market = normalized.endsWith(".SZ") ? "sz"
+                : normalized.endsWith(".BJ") ? "bj" : "sh";
+        return "https://gu.qq.com/" + market + code + "/gp";
     }
 
     private Instant factTimestamp(FinancialFact fact) {

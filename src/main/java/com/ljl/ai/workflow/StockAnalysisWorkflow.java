@@ -217,7 +217,8 @@ public class StockAnalysisWorkflow {
         if (!shouldRunDeepResearch(state)) {
             return;
         }
-        publish(state, RunEvent.EventType.DEEP_RESEARCH_STARTED, "DEEP_RESEARCH", "status=started");
+        publish(state, RunEvent.EventType.DEEP_RESEARCH_STARTED, "DEEP_RESEARCH",
+                "status=started;roleCount=" + deepResearchService.plannedRoleCount(state.getEvidencePack()));
         try {
             ResearchConclusion conclusion = state.getDecisionReviews() == null || state.getDecisionReviews().isEmpty()
                     ? deepResearchService.research(state.getEvidencePack())

@@ -59,13 +59,21 @@ Milvus 连接失败发生在依赖未就绪阶段，随后服务启动并成功�
 
 LLM 请求 180 秒超时来自外部 MaaS 接口，LangChain4j 内部重试后成功。本次不统一缩短共享模型超时，避免让耗时较长的深度角色更易失败。最终报告会明确这两项需要通过服务编排、健康检查、网络或模型供应商配置处理。
 
-## 7. 真实进度语义
+## 7. 证据范围审议与真实进度
 
-异步接收使用独立的 `EXECUTION_ACCEPTED` 事件；只有工作流实际进入深度研究节点才发送 `DEEP_RESEARCH_STARTED`。六个角色和 Judge 在调用前后发送 `ROLE_STARTED/ROLE_COMPLETED`，事件只包含角色、状态和稳定原因码。
+异步接收使用独立的 `EXECUTION_ACCEPTED` 事件；只有工作流实际进入深度研究节点才发送 `DEEP_RESEARCH_STARTED`。领域专家由 EvidencePack 类型决定：FINANCIAL 对应 FUNDAMENTAL，TECHNICAL/MARKET 对应 TECHNICAL，NEWS 对应 NEWS；BULL、BEAR、RISK 始终保留。独立专家通过专用虚拟线程执行器并行运行且不互相读取未完成输出，全部结束后按固定角色顺序组装摘要，Judge 最后单次裁决。
 
-前端总步数为“计划 1 + 已规划工具任务数 + 证据包 1 + 角色/Judge 7 + 答案 1”。工具和角色按 node 去重，SSE 重放不会重复计数；`WORKFLOW_COMPLETED` 才能把进度置为 100%。阶段标签仍用于归类，但状态与百分比完全由真实事件派生。
+`DEEP_RESEARCH_STARTED` 携带实际 `roleCount`，前端总步数为“计划 1 + 已规划工具任务数 + 证据包 1 + 实际角色/Judge 数 + 答案 1”。工具和角色按 node 去重，SSE 重放不会重复计数；`WORKFLOW_COMPLETED` 才能把进度置为 100%。界面的秒数只展示真实墙钟耗时，不驱动百分比，同时展示当前并行活动角色。
 
-## 8. 测试策略
+模型调用正文继续由 `TracingChatLanguageModel` 输出 `<redacted>`。角色边界和耗时改由 `deep_research_role_started/finished` 日志表达，既能定位慢角色，也不泄漏用户问题、RAG 内容或模型响应。所有角色上下文前置权威分析日期、数据截止日与实际证据类型，明确不晚于分析日期的数据不是未来数据；风险字段只允许描述标的投资风险，不接受角色质量或流水线问题。
+
+## 8. 可点击证据
+
+工作流 EvidencePack 的有效 `FinancialFact` 映射到既有 `KnowledgeSource` 结构：`documentId` 保存 evidenceId，`documentType=EVIDENCE`，其余字段保存来源名、指标摘要、时点和 URL。技术分析补充腾讯行情原文地址。ChatResponse 和持久化助手消息都携带这些来源。
+
+前端把裸 `[evidence:ev-...]` 转成“证据：来源名”的 Markdown 链接；有可信 HTTP(S) URL 时打开原文，否则定位到右侧来源项。来源 URL 只接受 HTTP(S)，避免把不受控协议写入链接。
+
+## 9. 测试策略
 
 - `ResearchExecutionServiceTest`：后台未开始时占位状态已可读取；队列拒绝后状态失败。
 - `WorkflowRunnerTest`：合法占位状态被替换；非占位状态拒绝覆盖；同步首次插入保持不变。
@@ -73,6 +81,7 @@ LLM 请求 180 秒超时来自外部 MaaS 接口，LangChain4j 内部重试后�
 - `ChatServicePlannerTest`：明确代码走本地计划且 Planner 零调用；无法本地解析时仍调用 Planner。
 - `ChatServiceQueryRewriteTest`：明确代码走本地查询解析且 Query Rewrite 零调用。
 - `DeepResearchServiceTest`：Judge 空响应、无 JSON、非法字段产生对应降级原因。
-- `DeepResearchServiceTest`：每个角色及 Judge 都发布成对的开始/完成事件。
-- `researchExecution.test.js`：接收事件不提前激活审议，真实完成单元去重计数且仅成功终态达到 100%。
+- `DeepResearchServiceTest`：按证据选择角色，专家可并发到达屏障，实际角色及 Judge 发布成对事件。
+- `researchExecution.test.js`：按实际 roleCount 去重计数、跟踪活动角色并生成安全的可读证据链接。
+- `ChatServicePlannerTest` 与 `ChatMemoryServiceTest`：证据事实映射为来源并随助手消息持久化。
 - 最后执行完整 Maven 测试、前端测试与生产构建。

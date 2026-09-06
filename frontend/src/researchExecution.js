@@ -27,8 +27,6 @@ const PHASES = Object.freeze([
   ['RESEARCH', '多角色审议'],
   ['ANSWER', '结论生成']
 ])
-const RESEARCH_UNITS = 7
-
 export function buildResearchRequest(mode, payload) {
   const normalizedMode = mode === 'DEEP' ? 'DEEP' : 'STANDARD'
   const deep = normalizedMode === 'DEEP'
@@ -49,8 +47,10 @@ export function createResearchProgress(executionId) {
     executionId: requireExecutionId(executionId),
     phases: PHASES.map(([id, label]) => ({ id, label, status: 'pending' })),
     plannedTaskCount: null,
+    plannedRoleCount: null,
     completedToolNodes: [],
     completedRoleNodes: [],
+    activeRoleNodes: [],
     planCompleted: false,
     evidenceReady: false,
     answerReady: false,
@@ -86,8 +86,10 @@ export function reduceResearchProgress(progress, rawEvent) {
   }
 
   let plannedTaskCount = progress.plannedTaskCount
+  let plannedRoleCount = progress.plannedRoleCount
   let completedToolNodes = new Set(progress.completedToolNodes || [])
   let completedRoleNodes = new Set(progress.completedRoleNodes || [])
+  let activeRoleNodes = new Set(progress.activeRoleNodes || [])
   let planCompleted = progress.planCompleted || false
   let evidenceReady = progress.evidenceReady || false
   let answerReady = progress.answerReady || false
@@ -111,11 +113,20 @@ export function reduceResearchProgress(progress, rawEvent) {
     evidenceReady = true
     completeThrough('DATA')
   }
-  if (event.eventType === 'DEEP_RESEARCH_STARTED') activate('RESEARCH')
-  if (event.eventType === 'ROLE_STARTED') activate('RESEARCH')
+  if (event.eventType === 'DEEP_RESEARCH_STARTED') {
+    plannedRoleCount = parseRoleCount(event.summary)
+    activate('RESEARCH')
+  }
+  if (event.eventType === 'ROLE_STARTED') {
+    if (event.node) activeRoleNodes.add(event.node)
+    activate('RESEARCH')
+  }
   if (event.eventType === 'ROLE_COMPLETED') {
-    if (event.node) completedRoleNodes.add(event.node)
-    if (completedRoleNodes.size >= RESEARCH_UNITS) {
+    if (event.node) {
+      activeRoleNodes.delete(event.node)
+      completedRoleNodes.add(event.node)
+    }
+    if (plannedRoleCount != null && completedRoleNodes.size >= plannedRoleCount) {
       completeThrough('RESEARCH')
       activate('ANSWER')
     } else {
@@ -134,8 +145,10 @@ export function reduceResearchProgress(progress, rawEvent) {
     ...progress,
     phases,
     plannedTaskCount,
+    plannedRoleCount,
     completedToolNodes: [...completedToolNodes],
     completedRoleNodes: [...completedRoleNodes],
+    activeRoleNodes: [...activeRoleNodes],
     planCompleted,
     evidenceReady,
     answerReady,
@@ -154,6 +167,7 @@ export function applyStatusCompensation(progress, status) {
   }
   const terminal = ['COMPLETED', 'FAILED'].includes(status.workflowStatus)
   const tasks = Array.isArray(status.tasks) ? status.tasks : []
+  const roleNames = roleNamesFromPack(status.evidencePack)
   const completedToolNodes = tasks
     .filter((task) => ['COMPLETED', 'FAILED'].includes(task.status))
     .map((task) => String(task.taskType || task.taskId || ''))
@@ -162,10 +176,12 @@ export function applyStatusCompensation(progress, status) {
   return withProgressMetrics({
     ...progress,
     plannedTaskCount: tasks.length || progress.plannedTaskCount,
+    plannedRoleCount: roleNames.length || progress.plannedRoleCount,
     completedToolNodes,
     completedRoleNodes: hasConclusion
-      ? ['FUNDAMENTAL', 'TECHNICAL', 'NEWS', 'BULL', 'BEAR', 'RISK', 'JUDGE']
+      ? roleNames
       : progress.completedRoleNodes,
+    activeRoleNodes: hasConclusion ? [] : progress.activeRoleNodes,
     planCompleted: Boolean(status.plan) || progress.planCompleted,
     evidenceReady: Boolean(status.evidencePack) || progress.evidenceReady,
     answerReady: Boolean(status.finalAnswer) || progress.answerReady,
@@ -183,16 +199,23 @@ function parseTaskCount(summary) {
   return match ? Number(match[1]) : 0
 }
 
+function parseRoleCount(summary) {
+  const match = String(summary || '').match(/(?:^|;)roleCount=(\d+)(?:;|$)/)
+  return match ? Number(match[1]) : null
+}
+
 function withProgressMetrics(progress, completed) {
   const taskCount = Number.isSafeInteger(progress.plannedTaskCount)
     ? Math.max(0, progress.plannedTaskCount) : null
-  const totalSteps = taskCount == null ? null : taskCount + 10
+  const roleCount = Number.isSafeInteger(progress.plannedRoleCount)
+    ? Math.max(0, progress.plannedRoleCount) : null
+  const totalSteps = taskCount == null || roleCount == null ? null : taskCount + roleCount + 3
   const toolCount = taskCount == null ? 0 : progress.evidenceReady
     ? taskCount : Math.min(taskCount, new Set(progress.completedToolNodes || []).size)
   const completedSteps = (progress.planCompleted ? 1 : 0)
     + toolCount
     + (progress.evidenceReady ? 1 : 0)
-    + Math.min(RESEARCH_UNITS, new Set(progress.completedRoleNodes || []).size)
+    + Math.min(roleCount || 0, new Set(progress.completedRoleNodes || []).size)
     + (progress.answerReady ? 1 : 0)
   const percent = completed ? 100 : totalSteps
     ? Math.min(99, Math.floor(completedSteps * 100 / totalSteps)) : 0
@@ -209,8 +232,61 @@ export function mapTerminalResearchResult(status) {
     answer: success ? String(status.finalAnswer || '') : '',
     error: workflowStatus === 'FAILED' ? String(status.errorMessage || '研究任务执行失败') : '',
     missingItems: Array.isArray(status?.evidencePack?.missingItems)
-      ? status.evidencePack.missingItems.map(String) : []
+      ? status.evidencePack.missingItems.map(String) : [],
+    sources: evidenceSourcesFromPack(status?.evidencePack)
   }
+}
+
+export function evidenceSourcesFromPack(evidencePack) {
+  const grouped = evidencePack?.evidenceByType
+  if (!grouped || typeof grouped !== 'object') return []
+  const sources = new Map()
+  Object.values(grouped).flatMap((facts) => Array.isArray(facts) ? facts : []).forEach((fact) => {
+    const evidenceId = String(fact?.evidenceId || '').trim()
+    if (!evidenceId || fact?.temporalStatus === 'REJECTED' || sources.has(evidenceId)) return
+    const title = String(fact.sourceName || '数据证据').trim() || '数据证据'
+    const metric = String(fact.metric || '事实').trim() || '事实'
+    const unit = String(fact.unit || '').trim()
+    const value = String(fact.value || '').trim()
+    const type = String(fact.evidenceType || 'EVIDENCE').trim()
+    const asOf = String(fact.asOf || '').trim()
+    sources.set(evidenceId, {
+      documentId: evidenceId,
+      documentTitle: title,
+      documentType: 'EVIDENCE',
+      contentSnippet: `${metric}：${value}${unit ? ` ${unit}` : ''}`,
+      documentUrl: safeHttpUrl(fact.sourceUrl),
+      location: [type, asOf].filter(Boolean).join(' · ')
+    })
+  })
+  return [...sources.values()]
+}
+
+export function formatEvidenceCitations(content, sources = []) {
+  const byId = new Map((Array.isArray(sources) ? sources : [])
+    .filter((source) => source?.documentId)
+    .map((source) => [String(source.documentId), source]))
+  return String(content || '').replace(/\[evidence:(ev-[A-Za-z0-9._-]+)]/g, (_, evidenceId) => {
+    const source = byId.get(evidenceId)
+    const title = String(source?.documentTitle || '数据来源').replace(/[\[\]\\]/g, '').trim() || '数据来源'
+    const target = safeHttpUrl(source?.documentUrl) || `#evidence-${evidenceId}`
+    return `[证据：${title}](${target})`
+  })
+}
+
+function roleNamesFromPack(evidencePack) {
+  const types = new Set(Object.keys(evidencePack?.evidenceByType || {}))
+  return [
+    ...(types.has('FINANCIAL') ? ['FUNDAMENTAL'] : []),
+    ...(types.has('TECHNICAL') || types.has('MARKET') ? ['TECHNICAL'] : []),
+    ...(types.has('NEWS') ? ['NEWS'] : []),
+    'BULL', 'BEAR', 'RISK', 'JUDGE'
+  ]
+}
+
+function safeHttpUrl(value) {
+  const url = String(value || '').trim()
+  return /^https?:\/\//i.test(url) ? url : null
 }
 
 export async function startResearch(request, { fetchImpl = globalThis.fetch } = {}) {

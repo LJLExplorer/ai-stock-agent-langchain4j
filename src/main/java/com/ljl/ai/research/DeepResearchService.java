@@ -6,6 +6,7 @@ import com.ljl.ai.agent.DeepResearchAssistant;
 import com.ljl.ai.observability.RunEvent;
 import com.ljl.ai.observability.RunEventPublisher;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
 
 import java.time.LocalDate;
 import java.time.ZoneOffset;
@@ -15,8 +16,11 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
+import java.util.concurrent.ForkJoinPool;
 
-/** 固定顺序、固定调用上限的深度研究编排器。 */
+/** 按证据范围选择专家，并行生成独立观点后交由单次 Judge 裁决。 */
 @Slf4j
 public class DeepResearchService {
     private static final int EVIDENCE_BUDGET = 12_000;
@@ -25,21 +29,28 @@ public class DeepResearchService {
 
     private final DeepResearchAssistant assistant;
     private final RunEventPublisher eventPublisher;
+    private final Executor roleExecutor;
 
     public DeepResearchService(DeepResearchAssistant assistant) {
-        this(assistant, null);
+        this(assistant, null, ForkJoinPool.commonPool());
     }
 
     public DeepResearchService(DeepResearchAssistant assistant, RunEventPublisher eventPublisher) {
+        this(assistant, eventPublisher, ForkJoinPool.commonPool());
+    }
+
+    public DeepResearchService(DeepResearchAssistant assistant, RunEventPublisher eventPublisher,
+                               Executor roleExecutor) {
         this.assistant = assistant;
         this.eventPublisher = eventPublisher;
+        this.roleExecutor = Objects.requireNonNull(roleExecutor, "roleExecutor 不能为空");
     }
 
     public ResearchConclusion research(EvidencePack evidencePack) {
         if (evidencePack == null) {
             throw new IllegalArgumentException("EvidencePack 不能为空");
         }
-        String evidence = truncate(evidencePack.modelView(), EVIDENCE_BUDGET);
+        String evidence = researchContext(evidencePack, List.of());
         return research(evidencePack, evidence);
     }
 
@@ -52,24 +63,16 @@ public class DeepResearchService {
     }
 
     private ResearchConclusion research(EvidencePack evidencePack, String evidence) {
-        List<RoleResult> results = new ArrayList<>();
+        List<Role> roles = plannedRoles(evidencePack);
+        String traceId = evidencePack.context() == null ? MDC.get("traceId") : evidencePack.context().traceId();
+        List<CompletableFuture<RoleOutcome>> futures = roles.stream()
+                .map(role -> CompletableFuture.supplyAsync(
+                        () -> runRole(evidencePack, role, evidence, traceId), roleExecutor))
+                .toList();
+        List<RoleOutcome> outcomes = futures.stream().map(CompletableFuture::join).toList();
+        List<RoleResult> results = outcomes.stream().map(RoleOutcome::result).toList();
         List<String> limitations = new ArrayList<>();
-        for (Role role : Role.values()) {
-            String upstream = upstream(results);
-            publishRoleEvent(evidencePack, RunEvent.EventType.ROLE_STARTED, role.name(), "status=started");
-            try {
-                String output = invoke(role, evidence, upstream);
-                results.add(new RoleResult(role, truncate(value(output), ROLE_OUTPUT_BUDGET)));
-                publishRoleEvent(evidencePack, RunEvent.EventType.ROLE_COMPLETED, role.name(), "status=completed");
-            } catch (RuntimeException exception) {
-                String limitation = "ROLE_FAILED:" + role.name();
-                limitations.add(limitation);
-                results.add(new RoleResult(role, limitation));
-                publishRoleEvent(evidencePack, RunEvent.EventType.ROLE_COMPLETED, role.name(), "status=failed");
-                log.warn("deep_research_role_failed role={}, errorType={}",
-                        role, exception.getClass().getSimpleName());
-            }
-        }
+        outcomes.stream().map(RoleOutcome::limitation).filter(Objects::nonNull).forEach(limitations::add);
 
         LocalDate cutoff = dataAsOf(evidencePack);
         String rawJudge = null;
@@ -95,10 +98,74 @@ public class DeepResearchService {
         }
     }
 
+    public int plannedRoleCount(EvidencePack evidencePack) {
+        return plannedRoles(evidencePack).size() + 1;
+    }
+
+    private List<Role> plannedRoles(EvidencePack evidencePack) {
+        Set<FinancialFact.EvidenceType> types = evidencePack == null || evidencePack.evidenceByType() == null
+                ? Set.of() : evidencePack.evidenceByType().keySet();
+        List<Role> roles = new ArrayList<>();
+        if (types.contains(FinancialFact.EvidenceType.FINANCIAL)) {
+            roles.add(Role.FUNDAMENTAL);
+        }
+        if (types.contains(FinancialFact.EvidenceType.TECHNICAL)
+                || types.contains(FinancialFact.EvidenceType.MARKET)) {
+            roles.add(Role.TECHNICAL);
+        }
+        if (types.contains(FinancialFact.EvidenceType.NEWS)) {
+            roles.add(Role.NEWS);
+        }
+        roles.add(Role.BULL);
+        roles.add(Role.BEAR);
+        roles.add(Role.RISK);
+        return List.copyOf(roles);
+    }
+
+    private RoleOutcome runRole(EvidencePack evidencePack, Role role, String evidence, String traceId) {
+        String previousTraceId = MDC.get("traceId");
+        String previousRole = MDC.get("researchRole");
+        if (traceId != null && !traceId.isBlank()) {
+            MDC.put("traceId", traceId);
+        }
+        MDC.put("researchRole", role.name());
+        long started = System.nanoTime();
+        publishRoleEvent(evidencePack, RunEvent.EventType.ROLE_STARTED, role.name(), "status=started");
+        log.info("deep_research_role_started role={}", role);
+        try {
+            String output = invoke(role, evidence, "");
+            publishRoleEvent(evidencePack, RunEvent.EventType.ROLE_COMPLETED, role.name(), "status=completed");
+            log.info("deep_research_role_finished role={}, elapsedMs={}", role, elapsedMillis(started));
+            return new RoleOutcome(new RoleResult(role, truncate(value(output), ROLE_OUTPUT_BUDGET)), null);
+        } catch (RuntimeException exception) {
+            String limitation = "ROLE_FAILED:" + role.name();
+            publishRoleEvent(evidencePack, RunEvent.EventType.ROLE_COMPLETED, role.name(), "status=failed");
+            log.warn("deep_research_role_failed role={}, elapsedMs={}, errorType={}",
+                    role, elapsedMillis(started), exception.getClass().getSimpleName());
+            return new RoleOutcome(new RoleResult(role, limitation), limitation);
+        } finally {
+            restoreMdc("traceId", previousTraceId);
+            restoreMdc("researchRole", previousRole);
+        }
+    }
+
+    private long elapsedMillis(long started) {
+        return Math.max(0L, (System.nanoTime() - started) / 1_000_000L);
+    }
+
+    private void restoreMdc(String key, String value) {
+        if (value == null) {
+            MDC.remove(key);
+        } else {
+            MDC.put(key, value);
+        }
+    }
+
     private String researchContext(EvidencePack pack, List<ResearchDecision> reviews) {
+        String currentEvidence = scopeContext(pack);
         List<ResearchDecision> visible = visibleReviews(pack, reviews);
         if (visible.isEmpty()) {
-            return truncate(pack.modelView(), EVIDENCE_BUDGET);
+            return truncate(currentEvidence, EVIDENCE_BUDGET);
         }
         String reviewText = visible.stream()
                 .map(decision -> "- 决策日=" + decision.getAnalysisDate()
@@ -106,9 +173,22 @@ public class DeepResearchService {
                         + "；原评级=" + decision.getRating()
                         + "；确定性复盘=" + oneLine(decision.getReflection()))
                 .reduce((left, right) -> left + "\n" + right).orElse("");
-        return truncate("【本轮 EvidencePack（唯一事实依据）】\n" + value(pack.modelView())
+        return truncate("【本轮 EvidencePack（唯一事实依据）】\n" + currentEvidence
                 + "\n\n【历史复盘参考（仅用于校准，不得覆盖本轮事实或充当 evidenceId）】\n"
                 + reviewText, EVIDENCE_BUDGET);
+    }
+
+    private String scopeContext(EvidencePack pack) {
+        String evidenceTypes = pack.evidenceByType().keySet().stream()
+                .map(Enum::name).sorted().reduce((left, right) -> left + "," + right).orElse("NONE");
+        LocalDate analysisDate = pack.context() == null || pack.context().analysisDate() == null
+                ? dataAsOf(pack) : pack.context().analysisDate();
+        return "【权威分析边界】分析日期=" + analysisDate
+                + "；数据截止日=" + dataAsOf(pack)
+                + "；本轮证据范围=" + evidenceTypes
+                + "；未出现的板块不属于本次分析范围，不得报告为缺失或损坏；"
+                + "不晚于分析日期的数据不得称为未来数据。\n"
+                + value(pack.modelView());
     }
 
     private List<ResearchDecision> visibleReviews(EvidencePack pack, List<ResearchDecision> reviews) {
@@ -290,6 +370,9 @@ public class DeepResearchService {
     }
 
     private record RoleResult(Role role, String output) {
+    }
+
+    private record RoleOutcome(RoleResult result, String limitation) {
     }
 
     private static final class JudgeValidationException extends IllegalArgumentException {

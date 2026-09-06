@@ -222,6 +222,61 @@ Run: 同步骤 2，并执行后端全量测试。
 
 - 填写 Red/Green Evidence，将状态改为 `completed`。
 
+## Task 8: 按证据范围并行审议并提供可读证据链接
+
+**状态：** completed
+
+**Red Evidence：** 后端 `zsh -ic 'jdk21 && mvn -q -Dtest=DeepResearchServiceTest,ChatServicePlannerTest,ChatMemoryServiceTest test'` 在 testCompile 失败，明确缺少三参数并发构造器、`plannedRoleCount`、`extractEvidenceSources` 和带来源的 `saveAssistantMessage`；前端 `npm test` 因缺少 `evidenceSourcesFromPack` 导出失败。与预期一致（yes）。
+
+**Green Evidence：** 后端定向命令（额外包含 `StockAnalysisWorkflowTest`）全部通过（exit 0），并发屏障证明 TECHNICAL/BULL/BEAR/RISK 同时执行且 FUNDAMENTAL/NEWS 零调用；前端 `npm test` 11 tests 全通过。随后后端全量 `mvn -q test` 与前端 `npm run build` 均通过（exit 0）。
+
+**补充 Red Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=DeepResearchServiceTest test'` 的 10 tests 中 1 failure：角色上下文只有原 EvidencePack 行，缺少分析日期、实际范围与未出现板块语义；与预期一致（yes）。
+
+**补充 Green Evidence：** 同一 `DeepResearchServiceTest` 命令 10 tests 全部通过（exit 0），验证角色上下文包含权威分析日期、数据截止日、实际证据范围以及未请求板块/流水线问题不得写入风险的约束；补充后再次执行后端全量 `mvn -q test`、前端 11 tests 和生产构建，均通过（exit 0）。
+
+**涉及文件：**
+- Modify: `src/main/java/com/ljl/ai/research/DeepResearchService.java`
+- Modify: `src/main/java/com/ljl/ai/agent/DeepResearchAssistant.java`
+- Modify: `src/main/java/com/ljl/ai/workflow/StockAnalysisWorkflow.java`
+- Modify: `src/main/java/com/ljl/ai/research/EvidencePackBuilder.java`
+- Modify: `src/main/java/com/ljl/ai/service/ChatService.java`
+- Modify: `src/main/java/com/ljl/ai/memory/ChatMemoryService.java`
+- Modify: `frontend/src/researchExecution.js`
+- Modify: `frontend/src/App.jsx`
+- Modify: `frontend/src/styles.css`
+- Test: `src/test/java/com/ljl/ai/research/DeepResearchServiceTest.java`
+- Test: `src/test/java/com/ljl/ai/service/ChatServicePlannerTest.java`
+- Test: `src/test/java/com/ljl/ai/memory/ChatMemoryServiceTest.java`
+- Test: `frontend/src/researchExecution.test.js`
+
+**步骤 1：编写失败测试**
+
+- 仅有技术/行情证据时不调用基本面和新闻角色，只运行技术、多空与风险角色，并证明专家调用可并发到达屏障。
+- 深度研究事件携带本轮实际角色总数；前端按实际角色数计算完成步数，并维护真实的进行中角色集合。
+- 将 EvidencePack 中的 evidenceId、来源名、原文 URL 和摘要映射到来源列表；原始 `[evidence:...]` 显示为可读、可点击的证据标签。
+- 助手消息持久化其来源列表，重新加载会话后仍可查看证据。
+
+**步骤 2：运行测试确认失败**
+
+Run: `zsh -ic 'jdk21 && mvn -q -Dtest=DeepResearchServiceTest,ChatServicePlannerTest,ChatMemoryServiceTest test'` 以及 `npm test`
+
+Expected: FAIL；当前固定串行调用六个角色、前端写死七个审议单元、异步结果不返回证据来源且证据标记为裸 ID。
+
+**步骤 3：编写最小实现**
+
+- 根据 EvidencePack 实际证据类型选择领域专家，始终保留 BULL、BEAR、RISK，专家阶段并行，Judge 在全部专家完成后单次汇总。
+- 发布实际 `roleCount`，记录角色名及耗时；前端显示活动角色和真实已耗时，不用计时器伪造百分比。
+- EvidencePack 证据统一映射成 `KnowledgeSource`，回答内证据标签链接到原文或对应来源项，并随助手消息持久化。
+- 模型正文继续保持 `<redacted>`，避免日志泄露提示词、知识内容和用户数据。
+
+**步骤 4：运行测试确认通过**
+
+Run: 同步骤 2，并执行后端全量测试和前端生产构建。
+
+**步骤 5：回写执行证据并标记完成**
+
+- 填写 Red/Green Evidence，将状态改为 `completed`。
+
 ## Task 3: SSE 404 使用无响应体异常映射
 
 **状态：** completed
