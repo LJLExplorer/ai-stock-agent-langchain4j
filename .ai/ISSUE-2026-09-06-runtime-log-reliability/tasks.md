@@ -19,11 +19,11 @@
 
 ## Task 1: 异步入口先持久化所有者占位状态
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=ResearchExecutionServiceTest test'`；4 tests 中 1 failure、1 error：启动返回后 `findOwned(...).orElseThrow()` 得到 empty，队列拒绝后也没有新增 FAILED 占位状态；与预期一致（yes）。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=ResearchExecutionServiceTest test'`；4 tests 全部通过（exit 0），验证返回前占位状态可查、队列拒绝状态转为 FAILED。
 
 **涉及文件：**
 - Modify: `src/main/java/com/ljl/ai/service/ResearchExecutionService.java:62-92`
@@ -84,11 +84,11 @@ Expected: PASS。
 
 ## Task 2: 工作流安全替换合法占位状态
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=WorkflowRunnerTest test'`；7 tests 中 3 failures：未读取已有状态、合法占位版本未接管、非占位状态未拒绝；与预期一致（yes）。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=WorkflowRunnerTest test'`；7 tests 全部通过（exit 0），覆盖同步 insert、合法占位乐观锁替换、非法已有状态拒绝及原 Checkpoint 冲突行为。
 
 **涉及文件：**
 - Modify: `src/main/java/com/ljl/ai/workflow/WorkflowRunner.java:39-47`
@@ -133,11 +133,11 @@ Expected: PASS。
 
 ## Task 3: SSE 404 使用无响应体异常映射
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** 首次 MockMvc 断言虽 exit 0，但控制台复现了通用处理器 ERROR 与 `HttpMediaTypeNotAcceptableException` WARN，说明仅断言最终 404 不足；加强为直接要求专用 handler 后，`zsh -ic 'jdk21 && mvn -q -Dtest=ResearchExecutionControllerTest test'` 在 testCompile 失败，报告缺少 `handleResponseStatusException`；与预期一致（yes）。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=ResearchExecutionControllerTest test'`；5 tests 全部通过（exit 0），缺失 SSE execution 返回空 body 404，控制台不再出现全局 ERROR 或媒体类型 WARN。
 
 **涉及文件：**
 - Modify: `src/main/java/com/ljl/ai/controller/GlobalExceptionHandler.java:1-95`

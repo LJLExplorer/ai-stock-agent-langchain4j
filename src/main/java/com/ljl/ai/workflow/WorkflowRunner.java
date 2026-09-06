@@ -13,6 +13,8 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Comparator;
 import java.util.HexFormat;
+import java.util.Objects;
+import java.util.Optional;
 
 @Slf4j
 @Service
@@ -40,10 +42,37 @@ public class WorkflowRunner {
         log.info("workflow_execution_started executionId={}, traceId={}, status={}", state.getExecutionId(),
                 state.getTraceId(), state.getWorkflowStatus());
         initializeMetadata(state);
-        stateStore.save(state, -1);
+        stateStore.save(state, initialExpectedVersion(state));
         publish(state, RunEvent.EventType.PLAN_CREATED, "PLAN",
                 "graphVersion=" + state.getGraphVersion());
         return execute(state);
+    }
+
+    private long initialExpectedVersion(ExecutionState state) {
+        Optional<ExecutionState> existing = stateStore.load(state.getExecutionId());
+        if (existing.isEmpty()) {
+            return -1;
+        }
+        ExecutionState placeholder = existing.get();
+        if (!isAcceptedPlaceholder(placeholder, state)) {
+            throw new IllegalStateException("EXECUTION_STATE_ALREADY_EXISTS");
+        }
+        state.setVersion(placeholder.getVersion());
+        return placeholder.getVersion();
+    }
+
+    private boolean isAcceptedPlaceholder(ExecutionState existing, ExecutionState replacement) {
+        return existing.getWorkflowStatus() == WorkflowStatus.PLANNED
+                && existing.getPlan() == null
+                && (existing.getTasks() == null || existing.getTasks().isEmpty())
+                && existing.getGraphVersion() == null
+                && existing.getPlanHash() == null
+                && existing.getCurrentNode() == null
+                && existing.getLastCompletedNode() == null
+                && Objects.equals(existing.getExecutionId(), replacement.getExecutionId())
+                && Objects.equals(existing.getUserId(), replacement.getUserId())
+                && Objects.equals(existing.getSessionId(), replacement.getSessionId())
+                && Objects.equals(existing.getOriginalQuestion(), replacement.getOriginalQuestion());
     }
 
     public ExecutionState resume(String executionId) {

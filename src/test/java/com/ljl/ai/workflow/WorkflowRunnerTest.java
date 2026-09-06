@@ -8,6 +8,7 @@ import com.ljl.ai.planner.AgentPlan;
 import com.ljl.ai.planner.StockAnalysisTask;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.stream.LongStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -43,7 +44,49 @@ class WorkflowRunnerTest {
         }).when(workflow).run(eq(state), any());
 
         assertThrows(CheckpointConflictException.class, () -> runner.run(state));
-        verify(stateStore, never()).load("exec-1");
+        verify(stateStore).load("exec-1");
+    }
+
+    @Test
+    void shouldReplaceAcceptedPlaceholderUsingItsVersion() {
+        StockAnalysisWorkflow workflow = mock(StockAnalysisWorkflow.class);
+        ExecutionStateStore stateStore = mock(ExecutionStateStore.class);
+        ExecutionState placeholder = ExecutionState.planned("exec-accepted", "session-1", "分析贵州茅台", List.of());
+        placeholder.setUserId("user-1");
+        placeholder.setVersion(3);
+        ExecutionState planned = ExecutionState.planned("exec-accepted", "session-1", "分析贵州茅台", List.of());
+        planned.setUserId("user-1");
+        planned.setPlan(plan());
+        when(stateStore.load("exec-accepted")).thenReturn(Optional.of(placeholder));
+        when(stateStore.save(planned, 3)).thenReturn(planned);
+        when(workflow.run(eq(planned), any())).thenReturn(planned);
+
+        new WorkflowRunner(workflow, stateStore).run(planned);
+
+        assertEquals(3, planned.getVersion());
+        verify(stateStore).save(planned, 3);
+        verify(stateStore, never()).save(planned, -1);
+        verify(workflow).run(eq(planned), any());
+    }
+
+    @Test
+    void shouldRejectOverwritingExistingNonPlaceholderExecution() {
+        StockAnalysisWorkflow workflow = mock(StockAnalysisWorkflow.class);
+        ExecutionStateStore stateStore = mock(ExecutionStateStore.class);
+        ExecutionState existing = ExecutionState.planned("exec-existing", "session-1", "分析贵州茅台", List.of());
+        existing.setUserId("user-1");
+        existing.setPlan(plan());
+        ExecutionState planned = ExecutionState.planned("exec-existing", "session-1", "分析贵州茅台", List.of());
+        planned.setUserId("user-1");
+        planned.setPlan(plan());
+        when(stateStore.load("exec-existing")).thenReturn(Optional.of(existing));
+
+        IllegalStateException error = assertThrows(IllegalStateException.class,
+                () -> new WorkflowRunner(workflow, stateStore).run(planned));
+
+        assertEquals("EXECUTION_STATE_ALREADY_EXISTS", error.getMessage());
+        verify(stateStore, never()).save(any(), anyLong());
+        verify(workflow, never()).run(any(), any());
     }
 
     @Test
