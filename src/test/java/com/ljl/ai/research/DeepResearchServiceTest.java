@@ -27,6 +27,26 @@ import static org.mockito.Mockito.when;
 class DeepResearchServiceTest {
 
     @Test
+    void shouldDiscardInvalidRoleBodyBeforeJudge() {
+        DeepResearchAssistant assistant = successfulAssistant();
+        when(assistant.bear(anyString(), anyString())).thenReturn("志同道合".repeat(9));
+
+        ResearchConclusion conclusion = new DeepResearchService(assistant).research(pack());
+
+        ArgumentCaptor<String> upstream = ArgumentCaptor.forClass(String.class);
+        verify(assistant).judge(anyString(), upstream.capture());
+        assertThat(upstream.getValue()).doesNotContain("志同道合");
+        assertThat(conclusion.limitations()).contains("ROLE_INVALID:BEAR:REPETITIVE_OUTPUT");
+    }
+
+    @Test
+    void shouldRejectDegeneratedJudgeSummaryAndMissingEvidence() {
+        assertJudgeFailure(judgeJson("ev-price").replace("证据多空交织", "志同道合".repeat(9)),
+                "JUDGE_INVALID_CONTENT:REPETITIVE_OUTPUT");
+        assertJudgeFailure(judgeJson("ev-price").replace("[\"ev-price\"]", "[]"), "JUDGE_MISSING_EVIDENCE");
+    }
+
+    @Test
     void shouldValidateConclusionRatingConfidenceEvidenceIdsAndDataAsOf() {
         LocalDate date = LocalDate.of(2025, 12, 31);
 

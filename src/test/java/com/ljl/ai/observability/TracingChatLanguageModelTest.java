@@ -4,6 +4,10 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import dev.langchain4j.model.chat.ChatLanguageModel;
+import dev.langchain4j.data.message.AiMessage;
+import dev.langchain4j.data.message.UserMessage;
+import dev.langchain4j.model.chat.request.ChatRequest;
+import dev.langchain4j.model.chat.response.ChatResponse;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.slf4j.LoggerFactory;
@@ -17,9 +21,11 @@ import static org.mockito.Mockito.when;
 class TracingChatLanguageModelTest {
 
     @Test
-    void shouldHideModelRequestAndResponseContentByDefault() {
+    void shouldLogActualModelRequestAndResponseContentByDefault() {
         ChatLanguageModel delegate = Mockito.mock(ChatLanguageModel.class);
-        when(delegate.doChat(null)).thenReturn(null);
+        ChatRequest request = ChatRequest.builder().messages(UserMessage.from("测试请求正文")).build();
+        ChatResponse response = ChatResponse.builder().aiMessage(AiMessage.from("测试响应正文")).build();
+        when(delegate.chat(request)).thenReturn(response);
         TraceLoggingConfig config = new TraceLoggingConfig();
         TracingChatLanguageModel model = new TracingChatLanguageModel(delegate, config);
         Logger logger = (Logger) LoggerFactory.getLogger(TracingChatLanguageModel.class);
@@ -29,19 +35,30 @@ class TracingChatLanguageModelTest {
         MDC.put("traceId", "trace-model-test");
 
         try {
-            model.doChat(null);
+            assertThat(model.chat(request)).isSameAs(response);
         } finally {
             MDC.clear();
             logger.detachAppender(appender);
         }
 
-        verify(delegate).doChat(null);
+        verify(delegate).chat(request);
         assertThat(appender.list)
                 .extracting(ILoggingEvent::getFormattedMessage)
                 .anySatisfy(message -> assertThat(message)
-                        .contains("model_call_started", "trace-model-test", "request=<redacted>"))
+                        .contains("model_call_started", "trace-model-test", "测试请求正文"))
                 .anySatisfy(message -> assertThat(message)
-                        .contains("model_call_finished", "trace-model-test", "response=<redacted>"));
+                        .contains("model_call_finished", "trace-model-test", "测试响应正文"));
+    }
+
+    @Test
+    void shouldAllowDisablingAllContentLogging() {
+        TraceLoggingConfig config = new TraceLoggingConfig();
+        config.setIncludeContent(false);
+        TracingChatLanguageModel model = new TracingChatLanguageModel(Mockito.mock(ChatLanguageModel.class), config);
+
+        String content = ReflectionTestUtils.invokeMethod(model, "contentOf", "sensitive-model-content");
+
+        assertThat(content).isEqualTo("<redacted>");
     }
 
     @Test

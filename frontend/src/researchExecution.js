@@ -1,5 +1,16 @@
 const EXECUTION_BASE = '/api/research/executions'
 
+export function taskDurationMs(task) {
+  if (!task?.startedAt || !task?.completedAt) return null
+  const duration = Date.parse(task.completedAt) - Date.parse(task.startedAt)
+  return Number.isFinite(duration) && duration >= 0 ? duration : null
+}
+
+export function formatToolDuration(duration) {
+  return typeof duration === 'number' && Number.isFinite(duration) && duration >= 0
+    ? `${duration} ms` : '耗时未记录'
+}
+
 export const RUN_EVENT_TYPES = Object.freeze([
   'EXECUTION_ACCEPTED',
   'PLAN_CREATED',
@@ -185,8 +196,7 @@ export function applyStatusCompensation(progress, status) {
     planCompleted: Boolean(status.plan) || progress.planCompleted,
     evidenceReady: Boolean(status.evidencePack) || progress.evidenceReady,
     answerReady: Boolean(status.finalAnswer) || progress.answerReady,
-    missingItems: Array.isArray(status.evidencePack?.missingItems)
-      ? status.evidencePack.missingItems.map(String) : [],
+    missingItems: evidenceLimitations(status.evidencePack),
     connection: terminal ? 'terminal' : 'disconnected',
     canReconnect: !terminal,
     error: status.workflowStatus === 'FAILED'
@@ -231,8 +241,7 @@ export function mapTerminalResearchResult(status) {
     success,
     answer: success ? String(status.finalAnswer || '') : '',
     error: workflowStatus === 'FAILED' ? String(status.errorMessage || '研究任务执行失败') : '',
-    missingItems: Array.isArray(status?.evidencePack?.missingItems)
-      ? status.evidencePack.missingItems.map(String) : [],
+    missingItems: evidenceLimitations(status?.evidencePack),
     sources: evidenceSourcesFromPack(status?.evidencePack)
   }
 }
@@ -256,10 +265,28 @@ export function evidenceSourcesFromPack(evidencePack) {
       documentType: 'EVIDENCE',
       contentSnippet: `${metric}：${value}${unit ? ` ${unit}` : ''}`,
       documentUrl: safeHttpUrl(fact.sourceUrl),
-      location: [type, asOf].filter(Boolean).join(' · ')
+      location: [type, asOf, fact.temporalStatus === 'UNKNOWN' ? '时间未核实，不用于结论' : ''].filter(Boolean).join(' · ')
     })
   })
   return [...sources.values()]
+}
+
+export function evidenceLimitations(pack) {
+  const facts = Object.values(pack?.evidenceByType || {}).flatMap((items) => Array.isArray(items) ? items : [])
+  const labels = {
+    NEWS_ANALYSIS: '未找到可核验的近期相关新闻或公告；不采用教程、skill 或无日期材料',
+    TECHNICAL_ANALYSIS: '技术指标数据不可用',
+    FINANCIAL_ANALYSIS: '财务报告数据不可用',
+    MARKET_DATA: '行情数据不可用'
+  }
+  return (Array.isArray(pack?.missingItems) ? pack.missingItems : []).map((item) => {
+    const value = String(item)
+    const match = value.match(/^时间未知:\s*(ev-[A-Za-z0-9._-]+)$/)
+    if (!match) return labels[value] || value
+    const fact = facts.find((entry) => entry?.evidenceId === match[1])
+    const title = fact?.evidenceType === 'NEWS' ? fact.metric : fact?.sourceName
+    return `${title ? `《${title}》` : '一项来源材料'}的发布时间或数据日期未核实，不用于结论；可在来源信息中核对`
+  })
 }
 
 export function formatEvidenceCitations(content, sources = []) {

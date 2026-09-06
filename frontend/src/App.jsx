@@ -9,6 +9,8 @@ import {
   buildResearchRequest,
   createResearchProgress,
   formatEvidenceCitations,
+  formatToolDuration,
+  taskDurationMs,
   getResearchStatus,
   mapTerminalResearchResult,
   reduceResearchProgress,
@@ -226,7 +228,7 @@ function ChatPage() {
       toolName: task.taskType || task.taskId || '工作流任务',
       success: task.status === 'COMPLETED',
       errorMessage: task.errorMessage || null,
-      executionTime: 0
+      executionTime: taskDurationMs(task)
     })) : []
     setDetails({ tools: taskTools, sources: result.sources, duration: Math.round(performance.now() - started) })
     setConnection(result.success ? 'ready' : 'error')
@@ -452,7 +454,7 @@ function SessionItem({ session, active, pinned, deleting, onClick, onPin, onDele
   </div>
 }
 function formatSessionTime(value) { if (!value) return ''; const date = new Date(value); return Number.isNaN(date.getTime()) ? '' : date.toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) }
-function ToolItem({ tool }) { return <div className="tool-item"><div><span className={`tool-dot ${tool.success ? 'done' : 'fail'}`} />{tool.toolName || '工具调用'}{tool.success ? <CheckCircle2 className="tool-icon done" size={13} /> : <XCircle className="tool-icon fail" size={13} />}</div><small>{tool.errorMessage || `${tool.executionTime || 0} ms`}</small></div> }
+function ToolItem({ tool }) { return <div className="tool-item"><div><span className={`tool-dot ${tool.success ? 'done' : 'fail'}`} />{tool.toolName || '工具调用'}{tool.success ? <CheckCircle2 className="tool-icon done" size={13} /> : <XCircle className="tool-icon fail" size={13} />}</div><small>{tool.errorMessage || formatToolDuration(tool.executionTime)}</small></div> }
 function SourceItem({ source }) {
   const evidence = source.documentType === 'EVIDENCE'
   const sourceId = evidence && source.documentId ? `evidence-${source.documentId}` : undefined
@@ -482,7 +484,7 @@ function ResearchProgress({ run, onReconnect }) {
     <div className="research-progress-track" role="progressbar" aria-label="深度投研真实进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow={run.percent || 0}><i style={{ width: `${run.percent || 0}%` }} /></div>
     <div className="research-timeline">{run.phases.map((phase) => <div key={phase.id} className={`research-phase ${phase.status}`}><i /> <span>{phase.label}</span></div>)}</div>
     {current ? <div className="research-current">{current}</div> : null}
-    {run.retryCount > 0 || run.missingItems?.length ? <div className="research-notices">{run.retryCount > 0 ? <span>已受控重试 {run.retryCount} 次</span> : null}{run.missingItems?.map((item) => <span key={item}>数据缺失：{item}</span>)}</div> : null}
+    {run.retryCount > 0 || run.missingItems?.length ? <div className="research-notices">{run.retryCount > 0 ? <span>已受控重试 {run.retryCount} 次</span> : null}{run.missingItems?.map((item) => <span key={item}>数据限制：{item}</span>)}</div> : null}
     {run.connection === 'disconnected' ? <div className="research-reconnect"><span>{run.error || '已通过状态接口完成补偿读取，请按需重新连接事件流。'}</span>{run.canReconnect ? <button type="button" onClick={onReconnect}>重新连接</button> : null}</div> : null}
   </div>
 }

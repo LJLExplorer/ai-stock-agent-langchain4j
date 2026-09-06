@@ -21,8 +21,30 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class EvidencePackBuilderTest {
 
     private final EvidencePackBuilder builder = new EvidencePackBuilder();
+
+    @Test
+    void shouldPreserveFinancialProviderUrlWithoutSubstitutingQuotePage() {
+        var facts = builder.map(StockAnalysisTask.FINANCIAL_ANALYSIS,
+                "报告期：2025-09-30\n披露日期：2025-10-25\n来源链接：https://datacenter-web.eastmoney.com/api/data/v1/get?reportName=test&filter=600519\n指标：营收",
+                context);
+        assertEquals("https://datacenter-web.eastmoney.com/api/data/v1/get?reportName=test&filter=600519", facts.getFirst().sourceUrl());
+    }
     private final AnalysisContext context = new AnalysisContext("600519.SH", LocalDate.of(2025, 12, 31),
             AnalysisContext.ResearchMode.STANDARD, "execution-1", "trace-1", "user-1", "session-1");
+
+    @Test
+    void shouldKeepUnknownTimeSourceForInspectionButExcludeItsBodyFromModelEvidence() {
+        FinancialFact unknown = new FinancialFact(FinancialFact.EvidenceType.NEWS, "日期不明的资讯",
+                "未经时间核实的内容不能提供给模型", null, null, null, null, null,
+                "来源", "https://example.test/news", Instant.now(), null, null, FinancialFact.TemporalStatus.UNKNOWN);
+
+        EvidencePack pack = builder.build(context, List.of(completed("news", List.of(unknown))));
+
+        assertTrue(pack.missingItems().contains("时间未知: " + unknown.evidenceId()));
+        assertFalse(pack.modelView().contains(unknown.value()));
+        assertEquals(unknown, pack.evidenceByType().get(FinancialFact.EvidenceType.NEWS).get(0));
+        assertEquals(null, pack.dataAsOf());
+    }
 
     @Test
     void mapsOnlyValuesActuallyReturnedByTools() {

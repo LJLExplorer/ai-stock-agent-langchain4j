@@ -8,6 +8,33 @@ import static org.assertj.core.api.Assertions.assertThat;
 class AnswerQualityGuardTest {
 
     @Test
+    void shouldRejectChineseAndEnglishRepetitiveOutputWithoutMarkdown() {
+        AnswerQualityGuard guard = new AnswerQualityGuard();
+        assertThat(guard.validate("趋势分析。" + "志同道合".repeat(9)).reason())
+                .isEqualTo(AnswerQualityGuard.Reason.REPETITIVE_OUTPUT);
+        assertThat(guard.validate("Trend confirmed. ".repeat(10)).reason())
+                .isEqualTo(AnswerQualityGuard.Reason.REPETITIVE_OUTPUT);
+    }
+
+    @Test
+    void shouldRejectRunawayChineseProseEvenWithoutRepeatingPhrases() {
+        StringBuilder text = new StringBuilder("GMMA与趋势强度量化评估\n\n");
+        for (int codePoint = 0x4e00; codePoint < 0x4e00 + 350; codePoint++) {
+            text.appendCodePoint(codePoint);
+        }
+        assertThat(new AnswerQualityGuard().validate(text.toString()).reason())
+                .isEqualTo(AnswerQualityGuard.Reason.RUNAWAY_PROSE);
+    }
+
+    @Test
+    void shouldAllowNormalFinancialAnalysisWithRepeatedCitations() {
+        String text = "价格保持震荡，成交量尚未确认突破。[evidence:ev-price]\n"
+                + "均线提供参考，但不能保证未来走势。[evidence:ev-price]\n"
+                + "证据不足时不提供评级，也不把指标方法当作已计算的结果。";
+        assertThat(new AnswerQualityGuard().validate(text).valid()).isTrue();
+    }
+
+    @Test
     void shouldBeRegisteredAsSpringComponent() {
         assertThat(AnswerQualityGuard.class).hasAnnotation(Component.class);
     }

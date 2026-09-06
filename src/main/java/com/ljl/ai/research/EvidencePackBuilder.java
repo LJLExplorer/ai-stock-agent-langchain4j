@@ -94,7 +94,9 @@ public class EvidencePackBuilder {
                 byType.put(type, typed);
             }
         }
-        Instant dataAsOf = facts.stream().map(this::factTimestamp).filter(java.util.Objects::nonNull)
+        Instant dataAsOf = facts.stream()
+                .filter(fact -> fact.temporalStatus() == FinancialFact.TemporalStatus.VERIFIED)
+                .map(this::factTimestamp).filter(java.util.Objects::nonNull)
                 .max(Comparator.naturalOrder()).orElse(null);
         String evidenceHash = hash(facts.stream().map(FinancialFact::evidenceId).toList());
         return new EvidencePack(context, byType, sortedMissing, sortedFailures, dataAsOf, evidenceHash,
@@ -128,8 +130,9 @@ public class EvidencePackBuilder {
         FinancialFact.TemporalStatus status = status(publishedDate, supplied, context);
         Instant publishedAt = publishedDate == null ? null
                 : publishedDate.atStartOfDay(ZoneId.of("Asia/Shanghai")).toInstant();
+        Matcher sourceUrl = Pattern.compile("来源链接[：:]\\s*(https?://[^\\s]+)").matcher(text);
         return mapText(FinancialFact.EvidenceType.FINANCIAL, "financial_report", text, reportDate,
-                publishedAt, "Eastmoney Data Center", null, context, status);
+                publishedAt, "Eastmoney Data Center", sourceUrl.find() ? sourceUrl.group(1) : null, context, status);
     }
 
     private List<FinancialFact> mapNews(Object data, AnalysisContext context) {
@@ -238,6 +241,10 @@ public class EvidencePackBuilder {
     private String modelView(List<FinancialFact> facts, List<String> missing) {
         StringBuilder view = new StringBuilder();
         for (FinancialFact fact : facts) {
+            // 未核实时间的材料仅保留为待核实来源，不进入模型事实上下文。
+            if (fact.temporalStatus() != FinancialFact.TemporalStatus.VERIFIED) {
+                continue;
+            }
             String line = "[" + fact.evidenceId() + "] " + fact.evidenceType() + "/" + fact.metric()
                     + "=" + fact.value() + " | asOf=" + value(fact.asOf())
                     + " | status=" + fact.temporalStatus() + " | source=" + value(fact.sourceName()) + "\n";

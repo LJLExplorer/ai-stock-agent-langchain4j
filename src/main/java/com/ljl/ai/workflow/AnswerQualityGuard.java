@@ -20,6 +20,8 @@ public final class AnswerQualityGuard {
         INVALID_GFM_TABLE,
         EXCESSIVE_MARKDOWN_PUNCTUATION,
         REPETITIVE_OUTPUT,
+        RUNAWAY_PROSE,
+        OUTPUT_TOO_LONG,
         SUSPICIOUS_ENDING
     }
 
@@ -37,6 +39,9 @@ public final class AnswerQualityGuard {
         if (answer == null || answer.isBlank()) {
             return Validation.reject(Reason.EMPTY);
         }
+        if (answer.length() > 12_000) {
+            return Validation.reject(Reason.OUTPUT_TOO_LONG);
+        }
 
         String[] lines = answer.replace("\r\n", "\n").replace('\r', '\n').split("\n", -1);
         if (hasUnclosedCodeFence(lines)) {
@@ -50,6 +55,10 @@ public final class AnswerQualityGuard {
         }
         if (hasRepetitiveFragment(answer)) {
             return Validation.reject(Reason.REPETITIVE_OUTPUT);
+        }
+        // 正常中文分析应有分句；超长连续汉字常见于成语接龙式退化。
+        if (java.util.regex.Pattern.compile("[\\p{IsHan}]{300,}").matcher(answer).find()) {
+            return Validation.reject(Reason.RUNAWAY_PROSE);
         }
         if (hasSuspiciousEnding(answer)) {
             return Validation.reject(Reason.SUSPICIOUS_ENDING);
@@ -121,7 +130,7 @@ public final class AnswerQualityGuard {
 
     private boolean hasRepetitiveFragment(String answer) {
         String normalized = answer.replaceAll("\\s+", " ");
-        for (int length = 2; length <= 8; length++) {
+        for (int length = 2; length <= 80; length++) {
             for (int start = 0; start + length * REPETITIVE_FRAGMENT_REPETITIONS <= normalized.length(); start++) {
                 String fragment = normalized.substring(start, start + length);
                 int end = start + length;
@@ -131,7 +140,9 @@ public final class AnswerQualityGuard {
                     repetitions++;
                     end += length;
                 }
-                if (repetitions >= REPETITIVE_FRAGMENT_REPETITIONS && containsMarkdownPunctuation(fragment)) {
+                if (repetitions >= REPETITIVE_FRAGMENT_REPETITIONS
+                        && (containsMarkdownPunctuation(fragment)
+                        || fragment.codePoints().anyMatch(Character::isLetter))) {
                     return true;
                 }
             }

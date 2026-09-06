@@ -134,7 +134,7 @@ class WorkflowAnswerGeneratorTest {
     }
 
     @Test
-    void shouldFallBackToStandardAnswerWhenJudgeConclusionIsInsufficient() {
+    void shouldStopInsteadOfCallingAnotherModelWhenJudgeConclusionIsInsufficient() {
         WorkflowAnswerAssistant assistant = mock(WorkflowAnswerAssistant.class);
         when(assistant.generate(anyString(), anyString())).thenReturn("## 结论\n\n- 当前证据不足。");
         WorkflowAnswerGenerator generator = generator(assistant);
@@ -146,7 +146,62 @@ class WorkflowAnswerGeneratorTest {
         generator.generate(state);
 
         assertThat(state.getFinalAnswer()).contains("当前证据不足");
-        verify(assistant).generate(anyString(), anyString());
+        verify(assistant, never()).generate(anyString(), anyString());
+        verify(assistant, never()).rewrite(anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void shouldNotPersistIdiomChainReturnedByRewrite() {
+        WorkflowAnswerAssistant assistant = mock(WorkflowAnswerAssistant.class);
+        when(assistant.generate(anyString(), anyString())).thenReturn("错误引用 [evidence:ev-not-in-pack]");
+        when(assistant.rewrite(anyString(), anyString(), anyString())).thenReturn(
+                "GMMA与趋势强度量化评估\n\n趋势确认后建议积极持仓。" + "志同道合".repeat(9));
+        ExecutionState state = completedStateWithEvidence();
+
+        generator(assistant).generate(state);
+
+        assertThat(state.getFinalAnswer()).contains("最终摘要生成异常").doesNotContain("志同道合", "积极持仓");
+    }
+
+    @Test
+    void shouldRejectMalformedStructuredConclusionWithoutStandardModelBypass() {
+        WorkflowAnswerAssistant assistant = mock(WorkflowAnswerAssistant.class);
+        ExecutionState state = completedStateWithEvidence();
+        state.setResearchConclusion(new ResearchConclusion(ResearchConclusion.Rating.BULLISH, 0.7,
+                "志同道合".repeat(9), List.of("ev-price"), List.of(), LocalDate.of(2025, 12, 31), false, List.of()));
+
+        generator(assistant).generate(state);
+
+        assertThat(state.getFinalAnswer()).contains("未通过校验").doesNotContain("志同道合", "BULLISH");
+        assertThat(state.getResearchConclusion().rating()).isEqualTo(ResearchConclusion.Rating.INSUFFICIENT_DATA);
+        verify(assistant, never()).generate(anyString(), anyString());
+        verify(assistant, never()).rewrite(anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void shouldNotBypassMissingConclusionInDeepMode() {
+        WorkflowAnswerAssistant assistant = mock(WorkflowAnswerAssistant.class);
+        ExecutionState state = completedStateWithEvidence();
+        state.setAnalysisContext(new com.ljl.ai.research.AnalysisContext("600519.SH", LocalDate.of(2025, 12, 31),
+                com.ljl.ai.research.AnalysisContext.ResearchMode.DEEP, "exec-1", "trace", "user", "session"));
+
+        generator(assistant).generate(state);
+
+        assertThat(state.getFinalAnswer()).contains("未通过校验");
+        assertThat(state.getResearchConclusion().rating()).isEqualTo(ResearchConclusion.Rating.INSUFFICIENT_DATA);
+        verify(assistant, never()).generate(anyString(), anyString());
+    }
+
+    @Test
+    void shouldNotReintroduceRawTaskOutputWhenVerifiedEvidenceViewIsEmpty() {
+        WorkflowAnswerAssistant assistant = mock(WorkflowAnswerAssistant.class);
+        when(assistant.generate(anyString(), anyString())).thenReturn("当前证据不足。");
+        ExecutionState state = completedState();
+        state.setEvidencePack(new EvidencePack(null, Map.of(), List.of(), List.of(), null, "hash", ""));
+
+        generator(assistant).generate(state);
+
+        verify(assistant).generate(anyString(), eq("当前没有通过校验的事实证据；只能说明证据不足，不得给出评级、数值或仓位建议。"));
     }
 
     private WorkflowAnswerGenerator generator(WorkflowAnswerAssistant assistant) {

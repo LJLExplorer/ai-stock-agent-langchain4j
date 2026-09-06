@@ -6,7 +6,10 @@ import {
   buildResearchRequest,
   createResearchProgress,
   evidenceSourcesFromPack,
+  evidenceLimitations,
   formatEvidenceCitations,
+  formatToolDuration,
+  taskDurationMs,
   getResearchStatus,
   isTerminalRunEvent,
   mapTerminalResearchResult,
@@ -15,6 +18,32 @@ import {
   startResearch,
   subscribeResearch
 } from './researchExecution.js'
+
+test('explains source date problems with titles instead of opaque evidence identifiers', () => {
+  const pack = {
+    evidenceByType: { NEWS: [{ evidenceId: 'ev-unknown', evidenceType: 'NEWS', metric: '公司分红公告', temporalStatus: 'UNKNOWN' }] },
+    missingItems: ['时间未知: ev-unknown', 'NEWS_ANALYSIS']
+  }
+  const notices = evidenceLimitations(pack)
+  assert.match(notices[0], /公司分红公告.*未核实.*不用于结论/)
+  assert.ok(notices.every((notice) => !notice.includes('ev-unknown')))
+  assert.match(notices[1], /未找到可核验/)
+  assert.match(evidenceSourcesFromPack(pack)[0].location, /不用于结论/)
+})
+
+test('uses recorded task timestamps and does not invent zero duration for missing data', () => {
+  const duration = taskDurationMs({ startedAt: '2026-09-06T13:50:01.665123', completedAt: '2026-09-06T13:50:01.912456' })
+  assert.equal(duration, 247)
+  assert.equal(formatToolDuration(duration), '247 ms')
+  for (const task of [null, {}, { startedAt: '2026-09-06T13:50:01' },
+    { startedAt: 'invalid', completedAt: 'invalid' },
+    { startedAt: '2026-09-06T13:50:02', completedAt: '2026-09-06T13:50:01' }]) {
+    assert.equal(taskDurationMs(task), null)
+    assert.equal(formatToolDuration(taskDurationMs(task)), '耗时未记录')
+  }
+  assert.equal(formatToolDuration(0), '0 ms')
+  assert.equal(formatToolDuration(undefined), '耗时未记录')
+})
 
 test('routes standard synchronously and deep research asynchronously with explicit modes', () => {
   const payload = { userId: 'user-1', message: '分析600519', enableTools: false }
