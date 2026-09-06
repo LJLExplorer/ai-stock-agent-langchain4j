@@ -188,11 +188,11 @@ Expected: PASS。
 
 ## Task 4: 明确股票代码使用受限本地规划
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=ChatServicePlannerTest test'`；8 tests 中 2 failures：明确代码请求仍进入 Planner，冗长 Planner 文本将单一 `NEWS_ANALYSIS` 扩张为全部 4 个任务；与预期一致（yes）。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=ChatServicePlannerTest test'`；8 tests 全部通过（exit 0），明确六位代码请求由受限本地解析器生成计划且 Planner 无交互，公司名请求仍调用 Planner。
 
 **涉及文件：**
 - Modify: `src/main/java/com/ljl/ai/service/ChatService.java:393-429`
@@ -235,11 +235,11 @@ Expected: PASS。
 
 ## Task 5: Judge 降级输出稳定原因码
 
-**状态：** pending
+**状态：** completed
 
-**Red Evidence：** 待填写
+**Red Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=DeepResearchServiceTest test'`；7 tests 中 2 failures：空响应和无 JSON 文本仍统一返回 `JUDGE_FAILED`；与预期一致（yes）。
 
-**Green Evidence：** 待填写
+**Green Evidence：** `zsh -ic 'jdk21 && mvn -q -Dtest=DeepResearchServiceTest test'`；7 tests 全部通过（exit 0），空响应、无 JSON、非法 JSON/rating/confidence/date 均产生稳定原因码并安全降级，Judge 每次只调用一次。
 
 **涉及文件：**
 - Modify: `src/main/java/com/ljl/ai/research/DeepResearchService.java:63-188`

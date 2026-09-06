@@ -98,7 +98,20 @@ class DeepResearchServiceTest {
         assertThat(conclusion.rating()).isEqualTo(ResearchConclusion.Rating.INSUFFICIENT_DATA);
         assertThat(conclusion.confidence()).isZero();
         assertThat(conclusion.degraded()).isTrue();
-        assertThat(conclusion.limitations()).contains("JUDGE_FAILED");
+        assertThat(conclusion.limitations()).contains("JUDGE_MISSING_JSON_OBJECT");
+        verify(assistant, times(1)).judge(anyString(), anyString());
+    }
+
+    @Test
+    void shouldReportSpecificJudgeValidationReasons() {
+        assertJudgeFailure("", "JUDGE_EMPTY_RESPONSE");
+        assertJudgeFailure("{not-json}", "JUDGE_INVALID_JSON");
+        assertJudgeFailure(judgeJson("ev-price").replace("NEUTRAL", "SIDEWAYS"),
+                "JUDGE_INVALID_RATING");
+        assertJudgeFailure(judgeJson("ev-price").replace("0.72", "1.2"),
+                "JUDGE_INVALID_CONFIDENCE");
+        assertJudgeFailure(judgeJson("ev-price").replace("2025-12-31", "not-a-date"),
+                "JUDGE_INVALID_DATA_AS_OF");
     }
 
     @Test
@@ -131,6 +144,18 @@ class DeepResearchServiceTest {
         when(assistant.risk(anyString(), anyString())).thenReturn("风险摘要");
         when(assistant.judge(anyString(), anyString())).thenReturn(judgeJson("ev-price"));
         return assistant;
+    }
+
+    private void assertJudgeFailure(String rawJudge, String expectedReason) {
+        DeepResearchAssistant assistant = successfulAssistant();
+        when(assistant.judge(anyString(), anyString())).thenReturn(rawJudge);
+
+        ResearchConclusion conclusion = new DeepResearchService(assistant).research(pack());
+
+        assertThat(conclusion.rating()).isEqualTo(ResearchConclusion.Rating.INSUFFICIENT_DATA);
+        assertThat(conclusion.degraded()).isTrue();
+        assertThat(conclusion.limitations()).contains(expectedReason);
+        verify(assistant, times(1)).judge(anyString(), anyString());
     }
 
     private String judgeJson(String evidenceId) {

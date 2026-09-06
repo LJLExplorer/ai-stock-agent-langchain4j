@@ -61,8 +61,9 @@ public class DeepResearchService {
         }
 
         LocalDate cutoff = dataAsOf(evidencePack);
+        String rawJudge = null;
         try {
-            String rawJudge = assistant.judge(evidence, upstream(results));
+            rawJudge = assistant.judge(evidence, upstream(results));
             ResearchConclusion judged = parseJudge(rawJudge, evidencePack, cutoff);
             if (limitations.isEmpty()) {
                 return judged;
@@ -73,8 +74,8 @@ public class DeepResearchService {
             String reason = exception instanceof JudgeValidationException validation
                     ? validation.code : "JUDGE_FAILED";
             limitations.add(reason);
-            log.warn("deep_research_judge_failed errorType={}, reason={}",
-                    exception.getClass().getSimpleName(), reason);
+            log.warn("deep_research_judge_failed errorType={}, reason={}, responseLength={}",
+                    exception.getClass().getSimpleName(), reason, rawJudge == null ? 0 : rawJudge.length());
             return fallback(cutoff, limitations);
         }
     }
@@ -128,22 +129,64 @@ public class DeepResearchService {
     }
 
     private ResearchConclusion parseJudge(String raw, EvidencePack pack, LocalDate cutoff) {
-        JSONObject json = JSON.parseObject(extractJson(raw));
-        ResearchConclusion.Rating rating = ResearchConclusion.Rating.valueOf(
-                value(json.getString("rating")).toUpperCase(Locale.ROOT));
-        Double confidence = json.getDouble("confidence");
-        LocalDate conclusionDate = LocalDate.parse(value(json.getString("dataAsOf")));
+        JSONObject json;
+        try {
+            json = JSON.parseObject(extractJson(raw));
+        } catch (JudgeValidationException exception) {
+            throw exception;
+        } catch (RuntimeException exception) {
+            throw new JudgeValidationException("JUDGE_INVALID_JSON", exception);
+        }
+        if (json == null) {
+            throw new JudgeValidationException("JUDGE_INVALID_JSON");
+        }
+
+        ResearchConclusion.Rating rating;
+        try {
+            rating = ResearchConclusion.Rating.valueOf(
+                    value(json.getString("rating")).toUpperCase(Locale.ROOT));
+        } catch (RuntimeException exception) {
+            throw new JudgeValidationException("JUDGE_INVALID_RATING", exception);
+        }
+
+        Double confidence;
+        try {
+            confidence = json.getDouble("confidence");
+        } catch (RuntimeException exception) {
+            throw new JudgeValidationException("JUDGE_INVALID_CONFIDENCE", exception);
+        }
+        if (confidence == null || !Double.isFinite(confidence) || confidence < 0 || confidence > 1) {
+            throw new JudgeValidationException("JUDGE_INVALID_CONFIDENCE");
+        }
+
+        String summary = value(json.getString("summary"));
+        if (summary.isEmpty()) {
+            throw new JudgeValidationException("JUDGE_INVALID_JSON");
+        }
+
+        LocalDate conclusionDate;
+        try {
+            conclusionDate = LocalDate.parse(value(json.getString("dataAsOf")));
+        } catch (RuntimeException exception) {
+            throw new JudgeValidationException("JUDGE_INVALID_DATA_AS_OF", exception);
+        }
         if (conclusionDate.isAfter(cutoff)) {
             throw new JudgeValidationException("DATE_AFTER_DATA_AS_OF");
         }
-        List<String> evidenceIds = stringList(json, "evidenceIds");
+        List<String> evidenceIds;
+        List<String> risks;
+        try {
+            evidenceIds = stringList(json, "evidenceIds");
+            risks = stringList(json, "risks");
+        } catch (RuntimeException exception) {
+            throw new JudgeValidationException("JUDGE_INVALID_JSON", exception);
+        }
         Set<String> available = availableEvidenceIds(pack);
         List<String> unknown = evidenceIds.stream().filter(id -> !available.contains(id)).sorted().toList();
         if (!unknown.isEmpty()) {
             throw new JudgeValidationException("UNKNOWN_EVIDENCE_ID:" + String.join(",", unknown));
         }
-        return new ResearchConclusion(rating, confidence == null ? Double.NaN : confidence,
-                json.getString("summary"), evidenceIds, stringList(json, "risks"),
+        return new ResearchConclusion(rating, confidence, summary, evidenceIds, risks,
                 conclusionDate, false, List.of());
     }
 
@@ -163,10 +206,13 @@ public class DeepResearchService {
 
     private String extractJson(String raw) {
         String value = value(raw);
+        if (value.isEmpty()) {
+            throw new JudgeValidationException("JUDGE_EMPTY_RESPONSE");
+        }
         int start = value.indexOf('{');
         int end = value.lastIndexOf('}');
         if (start < 0 || end < start) {
-            throw new JudgeValidationException("JUDGE_FAILED");
+            throw new JudgeValidationException("JUDGE_MISSING_JSON_OBJECT");
         }
         return value.substring(start, end + 1);
     }
@@ -221,6 +267,11 @@ public class DeepResearchService {
 
         private JudgeValidationException(String code) {
             super(code);
+            this.code = code;
+        }
+
+        private JudgeValidationException(String code, Throwable cause) {
+            super(code, cause);
             this.code = code;
         }
     }
