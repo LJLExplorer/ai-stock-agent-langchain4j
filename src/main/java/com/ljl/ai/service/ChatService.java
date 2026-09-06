@@ -198,6 +198,20 @@ public class ChatService {
         return chatMemoryService.createSession(userId.trim(), StringUtils.trimToNull(orderId));
     }
 
+    ChatSession requireSessionForExecution(String sessionId, String userId) {
+        ChatSession session = chatMemoryService.getSession(sessionId);
+        if (session == null) {
+            throw new IllegalArgumentException("会话不存在，请新建会话后重新发起研究");
+        }
+        if (!java.util.Objects.equals(userId, session.getUserId())) {
+            throw new SecurityException("无权访问该会话");
+        }
+        if ("CLOSED".equalsIgnoreCase(session.getStatus())) {
+            throw new IllegalStateException("会话已关闭");
+        }
+        return session;
+    }
+
     private ChatResponse chatInternal(ChatRequest request, String preallocatedExecutionId) {
         log.info("处理对话请求, userId: {}, sessionId: {}", request.getUserId(), request.getSessionId());
         String activeSessionId = request.getSessionId();
@@ -205,11 +219,11 @@ public class ChatService {
 
         try {
             // 1. 获取或创建会话
-            ChatSession session = chatMemoryService.getOrCreateSession(
-                    request.getSessionId(),
-                    request.getUserId(),
-                    request.getOrderId()
-            );
+            // 异步句柄已绑定会话；接单后即使会话被删除，也不能悄悄另建会话。
+            ChatSession session = preallocatedExecutionId != null
+                    ? requireSessionForExecution(request.getSessionId(), request.getUserId())
+                    : chatMemoryService.getOrCreateSession(
+                            request.getSessionId(), request.getUserId(), request.getOrderId());
 
             String sessionId = session.getSessionId();
             activeSessionId = sessionId;
@@ -366,6 +380,7 @@ public class ChatService {
                     e.getClass().getSimpleName(), diagnosticErrorCode(e));
 
             boolean toolLoopExceeded = hasMessage(e, "exceeded") && hasMessage(e, "sequential tool executions");
+            boolean memoryCleared = false;
             String content = "抱歉，处理您的请求时出现了问题，请稍后重试或联系人工投研助手。";
 
             // 模型在工具调用中断（连接异常）或反复调用工具未收敛（超出循环上限）时，
@@ -373,22 +388,30 @@ public class ChatService {
             if (StringUtils.isNotBlank(activeSessionId) && (hasMessage(e, "url error") || toolLoopExceeded)) {
                 String memoryToClear = StringUtils.defaultIfBlank(activeModelMemoryId,
                         memoryId(request.getUserId(), activeSessionId));
-                chatMemoryProvider.clearMemory(memoryToClear);
-                log.warn("已清理异常会话的模型记忆，可使用同一会话重试, sessionId: {}", activeSessionId);
+                try {
+                    chatMemoryProvider.clearMemory(memoryToClear);
+                    memoryCleared = true;
+                    log.warn("已清理异常会话的模型记忆，可使用同一会话重试, sessionId: {}", activeSessionId);
+                } catch (RuntimeException cleanupException) {
+                    log.warn("异常会话模型记忆清理失败, sessionId={}, errorType={}",
+                            activeSessionId, cleanupException.getClass().getSimpleName());
+                }
             }
 
             if (toolLoopExceeded) {
-                content = "抱歉，这个问题需要反复调用工具但没有得到明确结果，已重置本次会话的对话上下文。"
-                        + "请换一种更具体的问法重新提问（例如明确股票代码或分析维度）。";
+                content = "抱歉，这个问题需要反复调用工具但没有得到明确结果。"
+                        + (memoryCleared
+                        ? "已重置本次会话的对话上下文，请换一种更具体的问法重新提问（例如明确股票代码或分析维度）。"
+                        : "暂时无法清理本次会话的对话上下文，请稍后新建会话再试。");
             }
 
             return ChatResponse.builder()
-                    .sessionId(request.getSessionId())
+                    .sessionId(activeSessionId)
                     .messageId(UUID.randomUUID().toString())
                     .content(content)
                     .responseTime(LocalDateTime.now())
                     .success(false)
-                    .errorMessage(e.getMessage())
+                    .errorMessage("对话处理失败，请稍后重试")
                     .build();
         }
     }

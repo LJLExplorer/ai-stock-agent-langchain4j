@@ -1,5 +1,9 @@
 package com.ljl.ai.controller;
 
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
+
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -22,6 +26,7 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(ResponseStatusException.class)
     public ResponseEntity<Void> handleResponseStatusException(ResponseStatusException ex) {
+        // SSE 请求不接受 JSON；保留原始状态码，避免错误响应的内容协商再失败。
         return ResponseEntity.status(ex.getStatusCode()).build();
     }
 
@@ -34,7 +39,7 @@ public class GlobalExceptionHandler {
 
         Map<String, String> errors = new HashMap<>();
         ex.getBindingResult().getAllErrors().forEach((error) -> {
-            String fieldName = ((FieldError) error).getField();
+            String fieldName = error instanceof FieldError fieldError ? fieldError.getField() : error.getObjectName();
             String errorMessage = error.getDefaultMessage();
             errors.put(fieldName, errorMessage);
         });
@@ -44,6 +49,7 @@ public class GlobalExceptionHandler {
         return ResponseEntity.badRequest().body(Map.of(
                 "success", false,
                 "error", "参数校验失败",
+                "errorMessage", "参数校验失败",
                 "details", errors,
                 "timestamp", LocalDateTime.now().toString()
         ));
@@ -58,31 +64,32 @@ public class GlobalExceptionHandler {
 
         log.warn("业务异常: {}", ex.getMessage());
 
-        return ResponseEntity.badRequest().body(Map.of(
-                "success", false,
-                "error", ex.getMessage(),
-                "timestamp", LocalDateTime.now().toString()
-        ));
+        return ResponseEntity.badRequest().body(errorBody(ex.getMessage()));
     }
 
     @ExceptionHandler(SecurityException.class)
     public ResponseEntity<Map<String, Object>> handleSecurityException(SecurityException ex) {
         log.warn("会话权限校验失败: {}", ex.getMessage());
-        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of(
-                "success", false,
-                "error", ex.getMessage(),
-                "timestamp", LocalDateTime.now().toString()
-        ));
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(errorBody(ex.getMessage()));
     }
 
     @ExceptionHandler(IllegalStateException.class)
     public ResponseEntity<Map<String, Object>> handleIllegalStateException(IllegalStateException ex) {
         log.warn("业务状态不允许当前操作: {}", ex.getMessage());
-        return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of(
-                "success", false,
-                "error", ex.getMessage(),
-                "timestamp", LocalDateTime.now().toString()
-        ));
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(errorBody(ex.getMessage()));
+    }
+
+    @ExceptionHandler({HttpMessageNotReadableException.class,
+            MethodArgumentTypeMismatchException.class,
+            MissingServletRequestParameterException.class})
+    public ResponseEntity<Map<String, Object>> handleMalformedRequest(Exception ex) {
+        return ResponseEntity.badRequest().body(errorBody("请求参数格式错误"));
+    }
+
+    private Map<String, Object> errorBody(String message) {
+        String safeMessage = message == null || message.isBlank() ? "请求未能完成" : message;
+        return Map.of("success", false, "error", safeMessage, "errorMessage", safeMessage,
+                "timestamp", LocalDateTime.now().toString());
     }
 
     /**
@@ -92,10 +99,7 @@ public class GlobalExceptionHandler {
     public ResponseEntity<Map<String, Object>> handleException(Exception ex) {
         log.error("系统异常", ex);
 
-        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of(
-                "success", false,
-                "error", "系统内部错误，请稍后重试",
-                "timestamp", LocalDateTime.now().toString()
-        ));
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(errorBody("系统内部错误，请稍后重试"));
     }
 }

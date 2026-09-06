@@ -11,9 +11,15 @@ public record RunEvent(
         Instant occurredAt,
         EventType eventType,
         String node,
-        String summary
+        String summary,
+        String streamId
 ) {
     public static final int MAX_SUMMARY_LENGTH = 500;
+
+    public RunEvent(String executionId, String traceId, long sequence, Instant occurredAt,
+                    EventType eventType, String node, String summary) {
+        this(executionId, traceId, sequence, occurredAt, eventType, node, summary, null);
+    }
 
     public RunEvent {
         if (executionId == null || executionId.isBlank()) {

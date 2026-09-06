@@ -19,9 +19,63 @@ import {
   subscribeResearch
 } from './researchExecution.js'
 
+test('accepts a new stream below the old cursor but still ignores duplicates in that stream', () => {
+  for (const previousStreamId of [null, 'before-restart']) {
+    const old = {
+      ...createResearchProgress('exec-1'),
+      streamId: previousStreamId,
+      lastSequence: 42,
+      evidenceReady: true
+    }
+    const event = {
+      executionId: 'exec-1',
+      streamId: 'after-restart',
+      sequence: 11,
+      eventType: 'ROLE_STARTED',
+      node: 'BULL'
+    }
+    const resumed = reduceResearchProgress(old, event)
+    assert.equal(resumed.lastSequence, 11)
+    assert.equal(resumed.streamId, 'after-restart')
+    assert.equal(resumed.evidenceReady, true)
+    assert.deepEqual(resumed.activeRoleNodes, ['BULL'])
+    assert.equal(reduceResearchProgress(resumed, event), resumed)
+    assert.equal(reduceResearchProgress(resumed, { ...event, sequence: 10 }), resumed)
+    const completed = reduceResearchProgress(resumed, {
+      ...event,
+      sequence: 12,
+      eventType: 'ROLE_COMPLETED'
+    })
+    assert.deepEqual(completed.activeRoleNodes, [])
+    assert.deepEqual(completed.completedRoleNodes, ['BULL'])
+  }
+})
+
+test('terminal checkpoint compensation is accepted even below uncheckpointed events', () => {
+  const progress = { ...createResearchProgress('exec-1'), streamId: 'old', lastSequence: 42 }
+  const completed = reduceResearchProgress(progress, {
+    executionId: 'exec-1',
+    streamId: 'checkpoint:7',
+    sequence: 11,
+    eventType: 'WORKFLOW_COMPLETED',
+    node: 'CHECKPOINT'
+  })
+  assert.equal(completed.percent, 100)
+  assert.equal(completed.connection, 'terminal')
+})
+
 test('explains source date problems with titles instead of opaque evidence identifiers', () => {
   const pack = {
-    evidenceByType: { NEWS: [{ evidenceId: 'ev-unknown', evidenceType: 'NEWS', metric: '公司分红公告', temporalStatus: 'UNKNOWN' }] },
+    evidenceByType: {
+      NEWS: [
+        {
+          evidenceId: 'ev-unknown',
+          evidenceType: 'NEWS',
+          metric: '公司分红公告',
+          temporalStatus: 'UNKNOWN'
+        }
+      ]
+    },
     missingItems: ['时间未知: ev-unknown', 'NEWS_ANALYSIS']
   }
   const notices = evidenceLimitations(pack)
@@ -32,12 +86,19 @@ test('explains source date problems with titles instead of opaque evidence ident
 })
 
 test('uses recorded task timestamps and does not invent zero duration for missing data', () => {
-  const duration = taskDurationMs({ startedAt: '2026-09-06T13:50:01.665123', completedAt: '2026-09-06T13:50:01.912456' })
+  const duration = taskDurationMs({
+    startedAt: '2026-09-06T13:50:01.665123',
+    completedAt: '2026-09-06T13:50:01.912456'
+  })
   assert.equal(duration, 247)
   assert.equal(formatToolDuration(duration), '247 ms')
-  for (const task of [null, {}, { startedAt: '2026-09-06T13:50:01' },
+  for (const task of [
+    null,
+    {},
+    { startedAt: '2026-09-06T13:50:01' },
     { startedAt: 'invalid', completedAt: 'invalid' },
-    { startedAt: '2026-09-06T13:50:02', completedAt: '2026-09-06T13:50:01' }]) {
+    { startedAt: '2026-09-06T13:50:02', completedAt: '2026-09-06T13:50:01' }
+  ]) {
     assert.equal(taskDurationMs(task), null)
     assert.equal(formatToolDuration(taskDurationMs(task)), '耗时未记录')
   }
@@ -52,41 +113,117 @@ test('routes standard synchronously and deep research asynchronously with explic
   const deep = buildResearchRequest('DEEP', payload)
 
   assert.deepEqual(standard, {
-    mode: 'STANDARD', asynchronous: false, endpoint: '/api/chat/send',
+    mode: 'STANDARD',
+    asynchronous: false,
+    endpoint: '/api/chat/send',
     payload: { ...payload, researchMode: 'STANDARD' }
   })
   assert.deepEqual(deep, {
-    mode: 'DEEP', asynchronous: true, endpoint: '/api/research/executions',
+    mode: 'DEEP',
+    asynchronous: true,
+    endpoint: '/api/research/executions',
     payload: { ...payload, enableTools: true, researchMode: 'DEEP' }
   })
 })
 
 test('maps controlled events into a phase timeline without exposing payload bodies', () => {
   let progress = createResearchProgress('exec-1')
-  progress = reduceResearchProgress(progress, { executionId: 'exec-1', sequence: 1, eventType: 'EXECUTION_ACCEPTED', node: 'EXECUTION', summary: 'status=accepted' })
+  progress = reduceResearchProgress(progress, {
+    executionId: 'exec-1',
+    sequence: 1,
+    eventType: 'EXECUTION_ACCEPTED',
+    node: 'EXECUTION',
+    summary: 'status=accepted'
+  })
   assert.equal(progress.percent, 0)
   assert.equal(progress.phases.find(({ id }) => id === 'RESEARCH').status, 'pending')
-  progress = reduceResearchProgress(progress, { executionId: 'exec-1', sequence: 2, eventType: 'PLAN_CREATED', node: 'PLAN', summary: 'graphVersion=v1;taskCount=1' })
+  progress = reduceResearchProgress(progress, {
+    executionId: 'exec-1',
+    sequence: 2,
+    eventType: 'PLAN_CREATED',
+    node: 'PLAN',
+    summary: 'graphVersion=v1;taskCount=1'
+  })
   assert.equal(progress.completedSteps, 1)
   assert.equal(progress.totalSteps, null)
-  progress = reduceResearchProgress(progress, { executionId: 'exec-1', sequence: 3, eventType: 'TOOL_STARTED', node: 'MARKET_DATA', summary: 'attempt=1' })
-  progress = reduceResearchProgress(progress, { executionId: 'exec-1', sequence: 4, eventType: 'TOOL_COMPLETED', node: 'MARKET_DATA', summary: 'status=completed' })
-  progress = reduceResearchProgress(progress, { executionId: 'exec-1', sequence: 5, eventType: 'WORKFLOW_RETRYING', node: 'RETRY', summary: 'status=retrying' })
-  progress = reduceResearchProgress(progress, { executionId: 'exec-1', sequence: 6, eventType: 'EVIDENCE_PACK_READY', node: 'EVIDENCE_PACK', summary: 'evidenceHash=hash' })
-  progress = reduceResearchProgress(progress, { executionId: 'exec-1', sequence: 7, eventType: 'DEEP_RESEARCH_STARTED', node: 'DEEP_RESEARCH', summary: 'status=started;roleCount=5' })
+  progress = reduceResearchProgress(progress, {
+    executionId: 'exec-1',
+    sequence: 3,
+    eventType: 'TOOL_STARTED',
+    node: 'MARKET_DATA',
+    summary: 'attempt=1'
+  })
+  progress = reduceResearchProgress(progress, {
+    executionId: 'exec-1',
+    sequence: 4,
+    eventType: 'TOOL_COMPLETED',
+    node: 'MARKET_DATA',
+    summary: 'status=completed'
+  })
+  progress = reduceResearchProgress(progress, {
+    executionId: 'exec-1',
+    sequence: 5,
+    eventType: 'WORKFLOW_RETRYING',
+    node: 'RETRY',
+    summary: 'status=retrying'
+  })
+  progress = reduceResearchProgress(progress, {
+    executionId: 'exec-1',
+    sequence: 6,
+    eventType: 'EVIDENCE_PACK_READY',
+    node: 'EVIDENCE_PACK',
+    summary: 'evidenceHash=hash'
+  })
+  progress = reduceResearchProgress(progress, {
+    executionId: 'exec-1',
+    sequence: 7,
+    eventType: 'DEEP_RESEARCH_STARTED',
+    node: 'DEEP_RESEARCH',
+    summary: 'status=started;roleCount=5'
+  })
   for (const [index, role] of ['TECHNICAL', 'BULL', 'BEAR', 'RISK', 'JUDGE'].entries()) {
-    progress = reduceResearchProgress(progress, { executionId: 'exec-1', sequence: 8 + index * 2, eventType: 'ROLE_STARTED', node: role, summary: 'status=started' })
-    progress = reduceResearchProgress(progress, { executionId: 'exec-1', sequence: 9 + index * 2, eventType: 'ROLE_COMPLETED', node: role, summary: 'status=completed' })
+    progress = reduceResearchProgress(progress, {
+      executionId: 'exec-1',
+      sequence: 8 + index * 2,
+      eventType: 'ROLE_STARTED',
+      node: role,
+      summary: 'status=started'
+    })
+    progress = reduceResearchProgress(progress, {
+      executionId: 'exec-1',
+      sequence: 9 + index * 2,
+      eventType: 'ROLE_COMPLETED',
+      node: role,
+      summary: 'status=completed'
+    })
   }
   assert.equal(progress.completedSteps, 8)
   assert.equal(progress.totalSteps, 9)
   assert.equal(progress.percent, 88)
-  progress = reduceResearchProgress(progress, { executionId: 'exec-1', sequence: 18, eventType: 'ANSWER_READY', node: 'ANSWER', summary: 'answer=ready' })
-  progress = reduceResearchProgress(progress, { executionId: 'exec-1', sequence: 19, eventType: 'WORKFLOW_COMPLETED', node: 'ANSWER', summary: 'status=COMPLETED' })
+  progress = reduceResearchProgress(progress, {
+    executionId: 'exec-1',
+    sequence: 18,
+    eventType: 'ANSWER_READY',
+    node: 'ANSWER',
+    summary: 'answer=ready'
+  })
+  progress = reduceResearchProgress(progress, {
+    executionId: 'exec-1',
+    sequence: 19,
+    eventType: 'WORKFLOW_COMPLETED',
+    node: 'ANSWER',
+    summary: 'status=COMPLETED'
+  })
 
-  assert.deepEqual(progress.phases.map(({ id, status }) => [id, status]), [
-    ['PLAN', 'completed'], ['DATA', 'completed'], ['RESEARCH', 'completed'], ['ANSWER', 'completed']
-  ])
+  assert.deepEqual(
+    progress.phases.map(({ id, status }) => [id, status]),
+    [
+      ['PLAN', 'completed'],
+      ['DATA', 'completed'],
+      ['RESEARCH', 'completed'],
+      ['ANSWER', 'completed']
+    ]
+  )
   assert.equal(progress.retryCount, 1)
   assert.equal(progress.lastSequence, 19)
   assert.equal(progress.percent, 100)
@@ -96,21 +233,56 @@ test('maps controlled events into a phase timeline without exposing payload bodi
 
 test('tracks the actual concurrently active research roles', () => {
   let progress = createResearchProgress('exec-1')
-  progress = reduceResearchProgress(progress, { executionId: 'exec-1', sequence: 1, eventType: 'DEEP_RESEARCH_STARTED', node: 'DEEP_RESEARCH', summary: 'status=started;roleCount=5' })
-  progress = reduceResearchProgress(progress, { executionId: 'exec-1', sequence: 2, eventType: 'ROLE_STARTED', node: 'TECHNICAL', summary: 'status=started' })
-  progress = reduceResearchProgress(progress, { executionId: 'exec-1', sequence: 3, eventType: 'ROLE_STARTED', node: 'BULL', summary: 'status=started' })
-  progress = reduceResearchProgress(progress, { executionId: 'exec-1', sequence: 4, eventType: 'ROLE_COMPLETED', node: 'TECHNICAL', summary: 'status=completed' })
+  progress = reduceResearchProgress(progress, {
+    executionId: 'exec-1',
+    sequence: 1,
+    eventType: 'DEEP_RESEARCH_STARTED',
+    node: 'DEEP_RESEARCH',
+    summary: 'status=started;roleCount=5'
+  })
+  progress = reduceResearchProgress(progress, {
+    executionId: 'exec-1',
+    sequence: 2,
+    eventType: 'ROLE_STARTED',
+    node: 'TECHNICAL',
+    summary: 'status=started'
+  })
+  progress = reduceResearchProgress(progress, {
+    executionId: 'exec-1',
+    sequence: 3,
+    eventType: 'ROLE_STARTED',
+    node: 'BULL',
+    summary: 'status=started'
+  })
+  progress = reduceResearchProgress(progress, {
+    executionId: 'exec-1',
+    sequence: 4,
+    eventType: 'ROLE_COMPLETED',
+    node: 'TECHNICAL',
+    summary: 'status=completed'
+  })
 
   assert.deepEqual(progress.activeRoleNodes, ['BULL'])
   assert.equal(progress.plannedRoleCount, 5)
 })
 
 test('renders evidence ids as readable links and maps the source inspector data', () => {
-  const pack = { evidenceByType: { TECHNICAL: [{
-    evidenceId: 'ev-technical', evidenceType: 'TECHNICAL', metric: 'technical_analysis',
-    value: 'MA5=1305.09', asOf: '2026-09-04', sourceName: 'Tencent Finance',
-    sourceUrl: 'https://gu.qq.com/sh600519/gp', temporalStatus: 'VERIFIED'
-  }] } }
+  const pack = {
+    evidenceByType: {
+      TECHNICAL: [
+        {
+          evidenceId: 'ev-technical',
+          evidenceType: 'TECHNICAL',
+          metric: 'technical_analysis',
+          value: 'MA5=1305.09',
+          asOf: '2026-09-04',
+          sourceName: 'Tencent Finance',
+          sourceUrl: 'https://gu.qq.com/sh600519/gp',
+          temporalStatus: 'VERIFIED'
+        }
+      ]
+    }
+  }
 
   const sources = evidenceSourcesFromPack(pack)
   const answer = formatEvidenceCitations('趋势向上 [evidence:ev-technical]', sources)
@@ -123,21 +295,34 @@ test('renders evidence ids as readable links and maps the source inspector data'
 
 test('maps stream compensation and terminal execution state for reconnect UI', () => {
   const running = applyStatusCompensation(createResearchProgress('exec-1'), {
-    executionId: 'exec-1', workflowStatus: 'RUNNING', lastCompletedNode: 'MARKET_DATA',
+    executionId: 'exec-1',
+    workflowStatus: 'RUNNING',
+    lastCompletedNode: 'MARKET_DATA',
     evidencePack: { missingItems: ['财务报告缺失'] }
   })
   const completed = mapTerminalResearchResult({
-    executionId: 'exec-1', workflowStatus: 'COMPLETED', finalAnswer: '最终结论',
+    executionId: 'exec-1',
+    workflowStatus: 'COMPLETED',
+    finalAnswer: '最终结论',
     evidencePack: { missingItems: [] }
   })
   const failed = mapTerminalResearchResult({
-    executionId: 'exec-1', workflowStatus: 'FAILED', errorMessage: '工具失败'
+    executionId: 'exec-1',
+    workflowStatus: 'FAILED',
+    errorMessage: '工具失败'
   })
 
   assert.equal(running.connection, 'disconnected')
   assert.equal(running.canReconnect, true)
   assert.deepEqual(running.missingItems, ['财务报告缺失'])
-  assert.deepEqual(completed, { terminal: true, success: true, answer: '最终结论', error: '', missingItems: [], sources: [] })
+  assert.deepEqual(completed, {
+    terminal: true,
+    success: true,
+    answer: '最终结论',
+    error: '',
+    missingItems: [],
+    sources: []
+  })
   assert.equal(failed.success, false)
   assert.equal(failed.error, '工具失败')
 })
@@ -163,18 +348,35 @@ test('starts a deep research execution and validates the returned handle', async
 })
 
 test('parses controlled RunEvent metadata and identifies terminal events', () => {
-  const running = parseRunEvent(JSON.stringify({
-    executionId: 'exec-1', sequence: 3, eventType: 'NODE_COMPLETED', node: 'MARKET_DATA', summary: 'status=completed'
-  }))
+  const running = parseRunEvent(
+    JSON.stringify({
+      executionId: 'exec-1',
+      sequence: 3,
+      eventType: 'NODE_COMPLETED',
+      node: 'MARKET_DATA',
+      summary: 'status=completed'
+    })
+  )
   const completed = parseRunEvent({
-    data: JSON.stringify({ executionId: 'exec-1', sequence: 4, eventType: 'WORKFLOW_COMPLETED', node: 'ANSWER' })
+    data: JSON.stringify({
+      executionId: 'exec-1',
+      sequence: 4,
+      eventType: 'WORKFLOW_COMPLETED',
+      node: 'ANSWER'
+    })
   })
 
   assert.equal(running.sequence, 3)
   assert.equal(isTerminalRunEvent(running), false)
   assert.equal(isTerminalRunEvent(completed), true)
-  assert.throws(() => parseRunEvent('{"executionId":"exec-1","sequence":0,"eventType":"NODE_STARTED"}'), /RunEvent/)
-  assert.throws(() => parseRunEvent('{"executionId":"exec-1","sequence":1,"eventType":"PROMPT_BODY"}'), /eventType/)
+  assert.throws(
+    () => parseRunEvent('{"executionId":"exec-1","sequence":0,"eventType":"NODE_STARTED"}'),
+    /RunEvent/
+  )
+  assert.throws(
+    () => parseRunEvent('{"executionId":"exec-1","sequence":1,"eventType":"PROMPT_BODY"}'),
+    /eventType/
+  )
 })
 
 test('loads owner-filtered execution status', async () => {
@@ -195,14 +397,30 @@ test('closes EventSource on terminal event', () => {
   const received = []
   let terminal
   const subscription = subscribeResearch({
-    executionId: 'exec-1', userId: 'user-1',
-    eventSourceFactory: (url) => { source.url = url; return source },
+    executionId: 'exec-1',
+    userId: 'user-1',
+    eventSourceFactory: (url) => {
+      source.url = url
+      return source
+    },
     onEvent: (event) => received.push(event),
-    onTerminal: (event) => { terminal = event }
+    onTerminal: (event) => {
+      terminal = event
+    }
   })
 
-  source.emit('NODE_STARTED', { executionId: 'exec-1', sequence: 1, eventType: 'NODE_STARTED', node: 'INIT' })
-  source.emit('WORKFLOW_COMPLETED', { executionId: 'exec-1', sequence: 2, eventType: 'WORKFLOW_COMPLETED', node: 'ANSWER' })
+  source.emit('NODE_STARTED', {
+    executionId: 'exec-1',
+    sequence: 1,
+    eventType: 'NODE_STARTED',
+    node: 'INIT'
+  })
+  source.emit('WORKFLOW_COMPLETED', {
+    executionId: 'exec-1',
+    sequence: 2,
+    eventType: 'WORKFLOW_COMPLETED',
+    node: 'ANSWER'
+  })
 
   assert.equal(source.url, '/api/research/executions/exec-1/events?userId=user-1')
   assert.equal(received.length, 2)
@@ -216,11 +434,16 @@ test('closes failed EventSource and performs one status compensation request', a
   let compensated
   let failure
   subscribeResearch({
-    executionId: 'exec-1', userId: 'user-1',
+    executionId: 'exec-1',
+    userId: 'user-1',
     eventSourceFactory: () => source,
     fetchImpl: async () => response(200, { executionId: 'exec-1', workflowStatus: 'RUNNING' }),
-    onStatus: (status) => { compensated = status },
-    onError: (error) => { failure = error }
+    onStatus: (status) => {
+      compensated = status
+    },
+    onError: (error) => {
+      failure = error
+    }
   })
 
   await source.fail(new Error('stream disconnected'))
@@ -235,11 +458,16 @@ test('treats a terminal compensation status as completion instead of a reconnect
   let compensated
   let failure
   subscribeResearch({
-    executionId: 'exec-1', userId: 'user-1',
+    executionId: 'exec-1',
+    userId: 'user-1',
     eventSourceFactory: () => source,
     fetchImpl: async () => response(200, { executionId: 'exec-1', workflowStatus: 'COMPLETED' }),
-    onStatus: (status) => { compensated = status },
-    onError: (error) => { failure = error }
+    onStatus: (status) => {
+      compensated = status
+    },
+    onError: (error) => {
+      failure = error
+    }
   })
 
   await source.fail(new Error('stream closed after terminal event'))
@@ -256,6 +484,48 @@ function response(status, body) {
     json: async () => body
   }
 }
+
+test('cancelling a subscription suppresses in-flight compensation and duplicate errors', async () => {
+  const source = new FakeEventSource()
+  let resolve
+  let requests = 0
+  let callbacks = 0
+  const subscription = subscribeResearch({
+    executionId: 'exec-1',
+    userId: 'user-1',
+    eventSourceFactory: () => source,
+    fetchImpl: () => {
+      requests += 1
+      return new Promise((done) => {
+        resolve = done
+      })
+    },
+    onStatus: () => {
+      callbacks += 1
+    },
+    onError: () => {
+      callbacks += 1
+    },
+    onEvent: () => {
+      callbacks += 1
+    },
+    onTerminal: () => {
+      callbacks += 1
+    }
+  })
+  const pending = source.fail(new Error('disconnected'))
+  await source.fail(new Error('duplicate disconnect'))
+  subscription.close()
+  resolve(response(200, { executionId: 'exec-1', workflowStatus: 'COMPLETED' }))
+  await pending
+  source.emit('WORKFLOW_COMPLETED', {
+    executionId: 'exec-1',
+    sequence: 1,
+    eventType: 'WORKFLOW_COMPLETED'
+  })
+  assert.equal(requests, 1)
+  assert.equal(callbacks, 0)
+})
 
 class FakeEventSource {
   constructor() {

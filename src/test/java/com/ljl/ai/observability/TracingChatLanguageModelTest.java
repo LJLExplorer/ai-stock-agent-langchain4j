@@ -21,12 +21,23 @@ import static org.mockito.Mockito.when;
 class TracingChatLanguageModelTest {
 
     @Test
-    void shouldLogActualModelRequestAndResponseContentByDefault() {
+    void nonPositiveContentLimitMustNotEnableUnlimitedLogging() {
+        TraceLoggingConfig config = new TraceLoggingConfig();
+        config.setIncludeContent(true);
+        config.setMaxContentLength(0);
+        TracingChatLanguageModel model = new TracingChatLanguageModel(Mockito.mock(ChatLanguageModel.class), config);
+        String content = ReflectionTestUtils.invokeMethod(model, "contentOf", "x".repeat(10_000));
+        assertThat(content).hasSize(4096 + "...<truncated>".length()).endsWith("...<truncated>");
+    }
+
+    @Test
+    void shouldLogActualModelRequestAndResponseContentWhenEnabled() {
         ChatLanguageModel delegate = Mockito.mock(ChatLanguageModel.class);
         ChatRequest request = ChatRequest.builder().messages(UserMessage.from("测试请求正文")).build();
         ChatResponse response = ChatResponse.builder().aiMessage(AiMessage.from("测试响应正文")).build();
         when(delegate.chat(request)).thenReturn(response);
         TraceLoggingConfig config = new TraceLoggingConfig();
+        config.setIncludeContent(true);
         TracingChatLanguageModel model = new TracingChatLanguageModel(delegate, config);
         Logger logger = (Logger) LoggerFactory.getLogger(TracingChatLanguageModel.class);
         ListAppender<ILoggingEvent> appender = new ListAppender<>();
@@ -53,7 +64,6 @@ class TracingChatLanguageModelTest {
     @Test
     void shouldAllowDisablingAllContentLogging() {
         TraceLoggingConfig config = new TraceLoggingConfig();
-        config.setIncludeContent(false);
         TracingChatLanguageModel model = new TracingChatLanguageModel(Mockito.mock(ChatLanguageModel.class), config);
 
         String content = ReflectionTestUtils.invokeMethod(model, "contentOf", "sensitive-model-content");

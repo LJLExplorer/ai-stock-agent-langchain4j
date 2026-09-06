@@ -24,7 +24,7 @@ public class TechnicalAnalysisTool {
 
     @Tool(name = "analyzeTechnicalIndicators", value = "基于真实日K计算股票最新收盘、日涨跌、MA5、MA20和均线趋势")
     public ToolResult<String> analyzeTechnicalIndicators(@P("股票代码") String symbol,
-                                             @P("分析周期，如 1d/1h") String period) {
+                                             @P("分析周期，仅支持 1d（日线）") String period) {
         return analyze(symbol, period, LocalDate.now());
     }
 
@@ -39,6 +39,9 @@ public class TechnicalAnalysisTool {
     private ToolResult<String> analyze(String symbol, String period, LocalDate analysisDate) {
         log.info("技术分析, symbol: {}, period: {}, analysisDate: {}", symbol, period, analysisDate);
         return ToolResultExecutor.execute("TECHNICAL_ANALYSIS_ERROR", () -> {
+            if (!"1d".equalsIgnoreCase(period)) {
+                throw new IllegalArgumentException("技术分析仅支持 1d（日线）周期");
+            }
             List<MarketDataClient.DailyBar> bars = marketDataClient.getDailyBars(symbol, 60, analysisDate);
             if (bars.size() < 20) {
                 throw new IllegalStateException("历史K线不足20条");
@@ -47,6 +50,9 @@ public class TechnicalAnalysisTool {
             BigDecimal ma20 = average(bars, 20, 2);
             BigDecimal ma5 = average(bars, 5, 2);
             BigDecimal previous = bars.get(bars.size() - 2).close();
+            if (previous.signum() <= 0) {
+                throw new IllegalStateException("前收盘价必须大于零");
+            }
             BigDecimal change = close.subtract(previous).divide(previous, 4, RoundingMode.HALF_UP).multiply(BigDecimal.valueOf(100));
             return "技术分析（腾讯财经真实日K）\n股票：" + symbol + "，周期：" + period
                     + "，数据截止日：" + bars.get(bars.size() - 1).date()

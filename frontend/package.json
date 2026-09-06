@@ -10,6 +10,8 @@
   "scripts": {
     "dev": "vite",
     "test": "node --test",
+    "format": "prettier --write src package.json .prettierrc.json",
+    "format:check": "prettier --check src package.json .prettierrc.json",
     "build": "vite build",
     "preview": "vite preview"
   },
@@ -23,5 +25,9 @@
     "react-router-dom": "7.18.2",
     "remark-gfm": "4.0.1",
     "vite": "8.2.2"
+  },
+  "devDependencies": {
+    "jsdom": "^30.0.1",
+    "prettier": "^3.9.6"
   }
 }

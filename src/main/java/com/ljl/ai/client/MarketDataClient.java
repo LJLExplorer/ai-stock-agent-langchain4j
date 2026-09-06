@@ -139,8 +139,14 @@ public class MarketDataClient {
     }
 
     public static String normalizeSymbol(String rawSymbol) {
+        if (rawSymbol == null || rawSymbol.isBlank()) {
+            throw new IllegalArgumentException("股票代码不能为空");
+        }
         String code = rawSymbol.trim().toLowerCase(Locale.ROOT);
         if (code.matches("(sh|sz|bj)\\d{6}")) return code;
+        if (code.matches("\\d{6}\\.(sh|sz|bj)")) {
+            return code.substring(7) + code.substring(0, 6);
+        }
         String plain = code.replaceAll("\\.(sh|sz|bj)$", "");
         if (!plain.matches("\\d{6}")) {
             throw new IllegalArgumentException("当前实时行情适配器仅支持 6 位 A 股代码: " + rawSymbol);

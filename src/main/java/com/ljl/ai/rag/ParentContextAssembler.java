@@ -1,5 +1,8 @@
 package com.ljl.ai.rag;
 
+import com.ljl.ai.config.KnowledgeConfig;
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.ljl.ai.model.entity.KnowledgeSection;
 import org.springframework.stereotype.Component;
 
@@ -18,7 +21,18 @@ import java.util.stream.Collectors;
 @Component
 public class ParentContextAssembler {
 
-    private static final int SHORT_PARENT_THRESHOLD = 1_200;
+    public ParentContextAssembler() {
+        this(new KnowledgeConfig());
+    }
+
+    @Autowired
+    public ParentContextAssembler(KnowledgeConfig config) {
+        KnowledgeConfig.ChunkConfig chunk = config.getChunk();
+        chunk.validate();
+        this.shortParentThreshold = chunk.getShortParentThreshold();
+    }
+
+    private final int shortParentThreshold;
 
     public List<RetrievalResult> assemble(List<ChildHit> hits,
                                           Map<SectionVersionKey, KnowledgeSection> sections,
@@ -36,7 +50,7 @@ public class ParentContextAssembler {
         List<AssembledWindow> assembled = new ArrayList<>();
         bySection.forEach((key, sectionHits) -> {
             KnowledgeSection section = sections.get(key);
-            if (contentLength(section) <= SHORT_PARENT_THRESHOLD) {
+            if (contentLength(section) <= shortParentThreshold) {
                 assembled.add(buildWindow(section, sectionHits, sectionRange(section, sectionHits), true));
             } else {
                 assembled.addAll(buildLongParentWindows(section, sectionHits));

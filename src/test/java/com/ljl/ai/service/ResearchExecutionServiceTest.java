@@ -36,15 +36,102 @@ import static org.mockito.Mockito.when;
 class ResearchExecutionServiceTest {
 
     @Test
+    void missingSessionMustBeRejectedBeforeAllocatingAnExecution() {
+        ChatService chat = mock(ChatService.class);
+        ExecutionStateStore store = mock(ExecutionStateStore.class);
+        doThrow(new IllegalArgumentException("会话不存在"))
+                .when(chat).requireSessionForExecution("deleted-session", "user-1");
+        try (ResearchExecutionService service = new ResearchExecutionService(
+                chat, store, new InMemoryRunEventPublisher(), 1, 1)) {
+            assertThatThrownBy(() -> service.start(deepRequest(" deleted-session ")))
+                    .isInstanceOf(IllegalArgumentException.class).hasMessage("会话不存在");
+            org.mockito.Mockito.verifyNoInteractions(store);
+            verify(chat, org.mockito.Mockito.never()).createSession(anyString(), any());
+            verify(chat, org.mockito.Mockito.never()).chat(any(ChatRequest.class), anyString());
+        }
+    }
+
+    @Test
+    void shutdownMustPersistFailureForAcceptedTasksStillInQueue() throws Exception {
+        ChatService chat = mock(ChatService.class);
+        RecordingExecutionStateStore store = new RecordingExecutionStateStore();
+        InMemoryRunEventPublisher events = new InMemoryRunEventPublisher();
+        CountDownLatch running = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        doAnswer(invocation -> {
+            running.countDown();
+            release.await(5, TimeUnit.SECONDS);
+            return ChatResponse.builder().success(true).build();
+        }).when(chat).chat(any(ChatRequest.class), anyString());
+        ResearchExecutionService service = new ResearchExecutionService(chat, store, events, 1, 2);
+        try {
+            service.start(deepRequest("session-1"));
+            assertThat(running.await(2, TimeUnit.SECONDS)).isTrue();
+            ResearchExecutionResponse queued = service.start(deepRequest("session-2"));
+
+            service.close();
+
+            assertThat(store.load(queued.executionId()).orElseThrow().getWorkflowStatus())
+                    .isEqualTo(WorkflowStatus.FAILED);
+            assertThat(events.snapshot(queued.executionId()).getLast().eventType())
+                    .isEqualTo(RunEvent.EventType.WORKFLOW_FAILED);
+            verify(chat, org.mockito.Mockito.never()).chat(any(ChatRequest.class), eq(queued.executionId()));
+        } finally {
+            release.countDown();
+            service.close();
+        }
+    }
+
+    @Test
+    void rejectedAcceptanceEventMustNotLeaveBackgroundResearchRunning() {
+        ChatService chat = mock(ChatService.class);
+        RecordingExecutionStateStore store = new RecordingExecutionStateStore();
+        InMemoryRunEventPublisher events = new InMemoryRunEventPublisher() {
+            @Override
+            public RunEvent publish(String executionId, String traceId, RunEvent.EventType eventType,
+                                    String node, String summary) {
+                if (eventType == RunEvent.EventType.EXECUTION_ACCEPTED) {
+                    throw new IllegalStateException("event capacity exceeded");
+                }
+                return super.publish(executionId, traceId, eventType, node, summary);
+            }
+        };
+        ResearchExecutionService service = new ResearchExecutionService(chat, store, events, 1, 2);
+        try {
+            assertThatThrownBy(() -> service.start(deepRequest("session-1")))
+                    .isInstanceOf(IllegalStateException.class);
+            assertThat(store.statesNotIn(Set.of())).singleElement()
+                    .extracting(ExecutionState::getWorkflowStatus).isEqualTo(WorkflowStatus.FAILED);
+            verify(chat, org.mockito.Mockito.after(100).never()).chat(any(ChatRequest.class), anyString());
+        } finally {
+            service.close();
+        }
+    }
+
+    @Test
+    void stoppedServiceMustRejectBeforeCreatingSessionOrCheckpoint() {
+        ChatService chat = mock(ChatService.class);
+        ExecutionStateStore store = mock(ExecutionStateStore.class);
+        ResearchExecutionService service = new ResearchExecutionService(chat, store, new InMemoryRunEventPublisher(), 1, 1);
+        service.close();
+
+        assertThatThrownBy(() -> service.start(deepRequest(null)))
+                .isInstanceOf(IllegalStateException.class).hasMessage("RESEARCH_EXECUTION_SERVICE_STOPPED");
+        org.mockito.Mockito.verifyNoInteractions(chat, store);
+    }
+
+    @Test
     void shouldPreallocateExecutionAndSessionBeforeRunningDeepResearch() throws Exception {
         ChatService chatService = mock(ChatService.class);
         RecordingExecutionStateStore stateStore = new RecordingExecutionStateStore();
         InMemoryRunEventPublisher events = new InMemoryRunEventPublisher();
         CountDownLatch called = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
         when(chatService.createSession("user-1", null)).thenReturn(
                 ChatSession.builder().sessionId("session-created").userId("user-1").build());
         doAnswer(invocation -> {
             called.countDown();
+            release.await(2, TimeUnit.SECONDS);
             return ChatResponse.builder().success(true).sessionId("session-created").build();
         }).when(chatService).chat(any(ChatRequest.class), anyString());
         ResearchExecutionService service = new ResearchExecutionService(chatService, stateStore, events, 1, 2);
@@ -67,6 +154,7 @@ class ResearchExecutionServiceTest {
             assertThat(events.snapshot(response.executionId())).extracting(RunEvent::eventType)
                     .startsWith(RunEvent.EventType.EXECUTION_ACCEPTED);
         } finally {
+            release.countDown();
             service.close();
         }
         assertThat(service.isShutdown()).isTrue();
@@ -162,7 +250,7 @@ class ResearchExecutionServiceTest {
 
         try {
             ResearchExecutionResponse response = service.start(deepRequest("session-1"));
-            verify(stateStore, timeout(2000)).save(any(ExecutionState.class), eq(0L));
+            verify(stateStore, timeout(2000)).save(any(ExecutionState.class), eq(1L));
 
             ExecutionState failed = failedState.get();
             assertThat(failed.getExecutionId()).isEqualTo(response.executionId());

@@ -66,8 +66,9 @@ public final class TracingChatLanguageModel implements ChatLanguageModel {
                     elapsedMillis(started), contentOf(response));
             return response;
         } catch (RuntimeException exception) {
-            log.error("model_call_failed traceId={}, operation={}, elapsedMs={}, request={}", traceId, operation,
-                    elapsedMillis(started), contentOf(request), exception);
+            log.error("model_call_failed traceId={}, operation={}, elapsedMs={}, errorType={}, request={}, error={}",
+                    traceId, operation, elapsedMillis(started), exception.getClass().getSimpleName(),
+                    contentOf(request), contentOf(exception.getMessage()));
             throw exception;
         }
     }
@@ -83,8 +84,9 @@ public final class TracingChatLanguageModel implements ChatLanguageModel {
         } catch (RuntimeException exception) {
             content = String.valueOf(value);
         }
-        int maxLength = config.getMaxContentLength();
-        return maxLength > 0 && content.length() > maxLength
+        int configuredLength = config.getMaxContentLength();
+        int maxLength = configuredLength <= 0 ? 4096 : Math.min(configuredLength, 65_536);
+        return content.length() > maxLength
                 ? content.substring(0, maxLength) + "...<truncated>" : content;
     }
 

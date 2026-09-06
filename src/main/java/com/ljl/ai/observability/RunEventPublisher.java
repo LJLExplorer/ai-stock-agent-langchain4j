@@ -10,6 +10,9 @@ public interface RunEventPublisher {
 
     List<RunEvent> snapshot(String executionId);
 
+    /** 恢复检查点中的序号下限，不回退当前事件流已使用的序号。 */
+    void restoreSequence(String executionId, long sequence);
+
     Subscription subscribe(String executionId, Consumer<RunEvent> listener);
 
     Subscription subscribeAfter(String executionId, long afterSequence, Consumer<RunEvent> listener);

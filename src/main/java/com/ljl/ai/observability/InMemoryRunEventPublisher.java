@@ -1,5 +1,8 @@
 package com.ljl.ai.observability;
 
+import java.time.Duration;
+import java.util.Comparator;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -10,6 +13,7 @@ import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
 import java.util.Objects;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicLong;
@@ -19,6 +23,8 @@ import java.util.function.Consumer;
 @Component
 public class InMemoryRunEventPublisher implements RunEventPublisher {
     private static final int DEFAULT_CAPACITY = 200;
+    private static final int MAX_EXECUTIONS = 1024;
+    private static final Duration RETENTION = Duration.ofHours(1);
 
     private final int capacity;
     private final Clock clock;
@@ -43,17 +49,42 @@ public class InMemoryRunEventPublisher implements RunEventPublisher {
         if (executionId == null || executionId.isBlank()) {
             throw new IllegalArgumentException("executionId 不能为空");
         }
-        ExecutionEvents execution = executions.computeIfAbsent(executionId, ignored -> new ExecutionEvents());
-        RunEvent event = new RunEvent(executionId, traceId, execution.sequence.incrementAndGet(),
-                Instant.now(clock), eventType, node, summary);
-        synchronized (execution.buffer) {
-            execution.buffer.addLast(event);
-            while (execution.buffer.size() > capacity) {
-                execution.buffer.removeFirst();
+        ExecutionEvents execution = executionFor(executionId);
+        try {
+            synchronized (execution.buffer) {
+                RunEvent event = new RunEvent(executionId, traceId, Math.addExact(execution.sequence.get(), 1),
+                        Instant.now(clock), eventType, node, summary, execution.streamId);
+                execution.sequence.set(event.sequence());
+                execution.updatedAt = event.occurredAt();
+                execution.buffer.addLast(event);
+                while (execution.buffer.size() > capacity) {
+                    execution.buffer.removeFirst();
+                }
+                execution.terminal = eventType == RunEvent.EventType.WORKFLOW_COMPLETED
+                        || eventType == RunEvent.EventType.WORKFLOW_FAILED;
+                execution.pending.addLast(new Delivery(event, List.copyOf(execution.listeners)));
+                drain(execution);
+                return event;
             }
+        } finally {
+            release(executionId, execution);
         }
-        execution.listeners.forEach(listener -> notifySafely(listener, event));
-        return event;
+    }
+
+    @Override
+    public void restoreSequence(String executionId, long sequence) {
+        if (executionId == null || executionId.isBlank() || sequence < 0) {
+            throw new IllegalArgumentException("executionId 不能为空且 sequence 不能小于 0");
+        }
+        if (sequence == 0) return;
+        ExecutionEvents execution = executionFor(executionId);
+        try {
+            synchronized (execution.buffer) {
+                execution.sequence.set(Math.max(execution.sequence.get(), sequence));
+            }
+        } finally {
+            release(executionId, execution);
+        }
     }
 
     @Override
@@ -73,9 +104,15 @@ public class InMemoryRunEventPublisher implements RunEventPublisher {
             throw new IllegalArgumentException("executionId 不能为空");
         }
         Objects.requireNonNull(listener, "listener 不能为空");
-        ExecutionEvents execution = executions.computeIfAbsent(executionId, ignored -> new ExecutionEvents());
-        execution.listeners.add(listener);
-        return () -> execution.listeners.remove(listener);
+        ExecutionEvents execution = executionFor(executionId);
+        try {
+            synchronized (execution.buffer) {
+                execution.listeners.add(listener);
+            }
+            return () -> unsubscribe(executionId, execution, listener);
+        } finally {
+            release(executionId, execution);
+        }
     }
 
     @Override
@@ -87,15 +124,43 @@ public class InMemoryRunEventPublisher implements RunEventPublisher {
             throw new IllegalArgumentException("afterSequence 不能小于 0");
         }
         Objects.requireNonNull(listener, "listener 不能为空");
-        ExecutionEvents execution = executions.computeIfAbsent(executionId, ignored -> new ExecutionEvents());
+        ExecutionEvents execution = executionFor(executionId);
         SequencedListener sequenced = new SequencedListener(afterSequence, listener);
-        synchronized (execution.buffer) {
-            execution.listeners.add(sequenced);
-            execution.buffer.stream()
-                    .filter(event -> event.sequence() > afterSequence)
-                    .forEach(event -> notifySafely(sequenced, event));
+        try {
+            synchronized (execution.buffer) {
+                boolean wasDispatching = execution.dispatching;
+                execution.dispatching = true;
+                execution.listeners.add(sequenced);
+                try {
+                    // 回放期间允许回调发布新事件，但新事件必须排在整个回放之后。
+                    List.copyOf(execution.buffer).stream()
+                            .filter(event -> event.sequence() > afterSequence)
+                            .forEach(event -> notifySafely(sequenced, event));
+                } finally {
+                    execution.dispatching = wasDispatching;
+                    if (!wasDispatching) drain(execution);
+                }
+            }
+            return () -> unsubscribe(executionId, execution, sequenced);
+        } finally {
+            release(executionId, execution);
         }
-        return () -> execution.listeners.remove(sequenced);
+    }
+
+    /** 在单个执行的锁内排队分发，防止监听器重入导致其他监听器先收到后续事件。 */
+    private void drain(ExecutionEvents execution) {
+        if (execution.dispatching) return;
+        execution.dispatching = true;
+        try {
+            while (!execution.pending.isEmpty()) {
+                Delivery delivery = execution.pending.removeFirst();
+                delivery.listeners().forEach(listener -> {
+                    if (execution.listeners.contains(listener)) notifySafely(listener, delivery.event());
+                });
+            }
+        } finally {
+            execution.dispatching = false;
+        }
     }
 
     private void notifySafely(Consumer<RunEvent> listener, RunEvent event) {
@@ -106,9 +171,61 @@ public class InMemoryRunEventPublisher implements RunEventPublisher {
         }
     }
 
+    private synchronized ExecutionEvents executionFor(String executionId) {
+        ExecutionEvents existing = executions.get(executionId);
+        if (existing != null) {
+            existing.inUse++;
+            return existing;
+        }
+        Instant cutoff = Instant.now(clock).minus(RETENTION);
+        executions.entrySet().removeIf(entry -> entry.getValue().inUse == 0 && entry.getValue().terminal
+                && entry.getValue().listeners.isEmpty()
+                && entry.getValue().updatedAt.isBefore(cutoff));
+        if (executions.size() >= MAX_EXECUTIONS) {
+            executions.entrySet().stream()
+                    .filter(entry -> entry.getValue().inUse == 0 && entry.getValue().terminal
+                            && entry.getValue().listeners.isEmpty())
+                    .min(Comparator.comparing(entry -> entry.getValue().updatedAt))
+                    .ifPresent(entry -> executions.remove(entry.getKey(), entry.getValue()));
+        }
+        if (executions.size() >= MAX_EXECUTIONS) {
+            throw new IllegalStateException("事件缓冲区已满，请稍后重试");
+        }
+        ExecutionEvents created = new ExecutionEvents();
+        created.inUse = 1;
+        executions.put(executionId, created);
+        return created;
+    }
+
+    private synchronized void release(String executionId, ExecutionEvents execution) {
+        execution.inUse--;
+        removeEmpty(executionId, execution);
+    }
+
+    private synchronized void unsubscribe(String executionId, ExecutionEvents execution, Consumer<RunEvent> listener) {
+        execution.listeners.remove(listener);
+        removeEmpty(executionId, execution);
+    }
+
+    private void removeEmpty(String executionId, ExecutionEvents execution) {
+        if (execution.inUse == 0 && execution.sequence.get() == 0 && execution.listeners.isEmpty()) {
+            executions.remove(executionId, execution);
+        }
+    }
+
+    private record Delivery(RunEvent event, List<Consumer<RunEvent>> listeners) { }
+
     private static final class ExecutionEvents {
+        // 缓存重建（包括进程重启）后更换标识，前端不能跨事件流比较序号。
+        private final String streamId = UUID.randomUUID().toString();
+        // 仅在注册表锁内访问，保护获取对象到注册监听器之间的窗口不被淘汰。
+        private int inUse;
+        private boolean dispatching;
+        private volatile Instant updatedAt = Instant.EPOCH;
+        private volatile boolean terminal;
         private final AtomicLong sequence = new AtomicLong();
         private final Deque<RunEvent> buffer = new ArrayDeque<>();
+        private final Deque<Delivery> pending = new ArrayDeque<>();
         private final CopyOnWriteArrayList<Consumer<RunEvent>> listeners = new CopyOnWriteArrayList<>();
     }
 

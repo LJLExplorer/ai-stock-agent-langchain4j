@@ -113,6 +113,10 @@ GET  /api/research/executions/{executionId}/events?userId=...   # text/event-str
 
 POST 只接受 `researchMode=DEEP`，返回 HTTP 202 与 `executionId/sessionId/submittedAt`。后台执行器默认使用 2 个工作线程和 32 个有界排队位；队列满时返回稳定错误，不创建无界线程。断线不取消后台任务；前端会关闭旧 `EventSource`、查询一次执行状态，并在未终态时显示手动重连。
 
+当前队列、事件缓存及启动补偿仅支持**单实例部署**，不要让多个应用实例共享同一业务库运行。进程异常退出后，`StartupRecoveryRunner` 在应用就绪前将上次遗留的非终态执行（包括仅接单的占位记录）标记为失败，提示重新发起研究；不会自动重放模型或工具调用。底层 `WorkflowRunner.resume()` 的检查点能力不等于后台自动续跑。启动补偿失败会阻止应用就绪，修复数据库连接后重启可再次补偿。
+
+启动补偿还会将遗留的 `DELETING/DISABLING` 转为 `DELETE_FAILED/DISABLE_FAILED`，保持文档禁用及原始内容、向量 ID 不变；在知识列表点击“重试删除/重试禁用”完成清理。补偿只匹配启动前的记录，保留已完成任务，并推进版本号，防止旧快照覆盖恢复结果。
+
 ### 5. 默认可控，深度投研可选
 
 | 模式 | 入口 | 执行方式 | 适用场景 |
@@ -155,7 +159,7 @@ POST 只接受 `researchMode=DEEP`，返回 HTTP 202 与 `executionId/sessionId/
 - 统一金融时点上下文、EvidencePack 与 Claim–Evidence Guard，防止未来数据和无引用数字进入结论。
 - 默认标准分析与可选多角色深度投研；异步执行通过受控 RunEvent/SSE 展示进度。
 - 独立决策复盘与离线 Agent Eval，分别为历史校准和稳定回归提供可追溯基线。
-- `traceId`、`sessionId`、`executionId` 关联的模型、工作流和工具诊断日志；当前测试配置默认记录模型请求和响应正文，生产环境应关闭。
+- `traceId`、`sessionId`、`executionId` 关联的模型、工作流和工具诊断日志；代码默认隐藏模型请求和响应正文。
 - React + Vite 前端，展示标准/深度模式、执行时间线、会话、证据缺失、知识来源和工具结果。
 
 ## 技术栈
@@ -387,9 +391,20 @@ flowchart TD
 
 - 每次对话生成 `traceId`；工作流继续关联 `executionId`，会话使用 `sessionId`。
 - `TracingChatLanguageModel` 统一记录模型调用开始、结束、耗时与异常。
-- 为方便本地测试，模型请求和响应正文默认可见；设置 `TRACE_LOGGING_INCLUDE_CONTENT=false` 可恢复 `<redacted>`。正文受 `TRACE_LOGGING_MAX_CONTENT_LENGTH` 限制，`0` 表示不截断。配置修改后需重启后端。
+- 模型请求和响应正文默认显示 `<redacted>`；仅在受控诊断时显式设置 `TRACE_LOGGING_INCLUDE_CONTENT=true`。正文默认上限为 4096 字符，非正数回退到默认值，硬上限为 65536 字符。已有配置可覆盖代码默认开关，配置修改后需重启后端。
 - 核心对话、RAG、知识库和工具日志默认只记录标识、长度、数量、状态与错误类型，不直接输出问题、上下文、文档标题或工具结果。
 - 异常栈、第三方 SDK 日志和显式开启的模型正文仍需要部署侧的访问控制、保留周期与集中式脱敏策略。
+
+本地排查模型输入输出时，可在 `src/main/resources/application.yml` 中设置以下配置并重启后端：
+
+```yaml
+trace:
+  logging:
+    include-content: ${TRACE_LOGGING_INCLUDE_CONTENT:true}
+    max-content-length: ${TRACE_LOGGING_MAX_CONTENT_LENGTH:65536}
+```
+
+随后查看 `model_call_started` 的 `request` 和 `model_call_finished` 的 `response`，通过 `traceId` 关联同次分析。超过上限的正文以 `...<truncated>` 结尾；环境变量仍可覆盖上述配置。
 
 不要在共享环境开启完整模型正文日志；部署时应设置 `TRACE_LOGGING_INCLUDE_CONTENT=false`。正文可能包含用户问题、检索上下文和模型输出。
 

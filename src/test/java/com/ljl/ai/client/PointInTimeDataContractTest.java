@@ -35,11 +35,31 @@ class PointInTimeDataContractTest {
         rows.add(row("2025-09-30", "2026-03-01", "available"));
 
         FinancialDataClient.FinancialSnapshot result = FinancialDataClient.selectSnapshotAsOf(
-                rows, LocalDate.of(2026, 3, 15), "600519", "2025Q4");
+                rows, LocalDate.of(2026, 3, 15), "600519", "latest");
 
         assertEquals("available", result.values().get("netProfit"));
         assertEquals(LocalDate.of(2026, 3, 1), result.publishedAt());
         assertEquals(FinancialFact.TemporalStatus.VERIFIED, result.temporalStatus());
+    }
+
+    @Test
+    void explicitReportPeriodMustNotSilentlyFallBackToAnotherQuarter() {
+        JSONArray rows = new JSONArray();
+        rows.add(row("2025-12-31", "2026-04-10", "future-publication"));
+        rows.add(row("2025-09-30", "2026-03-01", "available"));
+        org.junit.jupiter.api.Assertions.assertNull(FinancialDataClient.selectSnapshotAsOf(
+                rows, LocalDate.of(2026, 3, 15), "600519", "2025Q4"));
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
+                () -> FinancialDataClient.selectSnapshotAsOf(rows, LocalDate.of(2026, 3, 15), "600519", "annual"));
+    }
+
+    @Test
+    void symbolNormalizationPreservesExplicitExchangeAndRecognizesBareBeijingCodes() {
+        assertEquals("bj830799", MarketDataClient.normalizeSymbol("830799"));
+        assertEquals("bj920001", MarketDataClient.normalizeSymbol("920001.BJ"));
+        assertEquals("sz000001", MarketDataClient.normalizeSymbol("SZ000001"));
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
+                () -> MarketDataClient.normalizeSymbol(null));
     }
 
     @Test

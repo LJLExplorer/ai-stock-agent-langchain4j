@@ -139,7 +139,7 @@ public class KnowledgeController {
             return ResponseEntity.status(500).body(Map.of(
                     "success", false,
                     "errorCode", "ADD_DOCUMENT_ERROR",
-                    "errorMessage", "文档添加失败: " + e.getMessage()
+                    "errorMessage", "文档添加失败，请稍后重试"
             ));
         }
     }
@@ -215,7 +215,7 @@ public class KnowledgeController {
             return ResponseEntity.badRequest().body(Map.of("success", false, "errorMessage", e.getMessage()));
         } catch (Exception e) {
             log.error("重新启用知识文档失败, documentId: {}", documentId, e);
-            return ResponseEntity.status(500).body(Map.of("success", false, "errorMessage", "文档重新启用失败: " + e.getMessage()));
+            return ResponseEntity.status(500).body(Map.of("success", false, "errorMessage", "文档重新启用失败，请稍后重试"));
         }
     }
     

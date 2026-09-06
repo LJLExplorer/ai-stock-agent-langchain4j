@@ -1,5 +1,11 @@
 package com.ljl.ai.workflow;
 
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.Collections;
+import java.util.IdentityHashMap;
+import java.util.Set;
+
 import com.ljl.ai.observability.RunEvent;
 import com.ljl.ai.observability.RunEventPublisher;
 import com.ljl.ai.planner.AgentPlan;
@@ -43,6 +49,7 @@ public class WorkflowRunner {
                 state.getTraceId(), state.getWorkflowStatus());
         initializeMetadata(state);
         stateStore.save(state, initialExpectedVersion(state));
+        restoreEventSequence(state);
         publish(state, RunEvent.EventType.PLAN_CREATED, "PLAN",
                 "graphVersion=" + state.getGraphVersion() + ";taskCount=" + state.getTasks().size());
         return execute(state);
@@ -57,7 +64,9 @@ public class WorkflowRunner {
         if (!isAcceptedPlaceholder(placeholder, state)) {
             throw new IllegalStateException("EXECUTION_STATE_ALREADY_EXISTS");
         }
-        state.setVersion(placeholder.getVersion());
+        // 接管占位记录也是一次状态更新，必须推进版本，阻止并发接管使用相同 CAS 条件成功。
+        state.setVersion(Math.addExact(placeholder.getVersion(), 1));
+        state.setEventSequence(Math.max(state.getEventSequence(), placeholder.getEventSequence()));
         return placeholder.getVersion();
     }
 
@@ -78,10 +87,34 @@ public class WorkflowRunner {
     public ExecutionState resume(String executionId) {
         ExecutionState state = stateStore.load(executionId)
                 .orElseThrow(() -> new IllegalArgumentException("执行状态不存在: " + executionId));
+        if (state.getWorkflowStatus() == WorkflowStatus.COMPLETED) {
+            return state;
+        }
         validateCompatibility(state);
+        boolean retryingFailure = state.getWorkflowStatus() == WorkflowStatus.FAILED;
+        if (retryingFailure) {
+            // 显式恢复先提交合法的重试状态；CAS 失败时不能继续调用工具或模型。
+            long expectedVersion = state.getVersion();
+            state.retry(null);
+            stateStore.save(state, expectedVersion);
+        }
+        restoreEventSequence(state);
+        if (retryingFailure) {
+            publish(state, RunEvent.EventType.WORKFLOW_RETRYING, "RESUME", "status=retrying;reason=manual_resume");
+        }
         log.info("workflow_execution_resumed executionId={}, traceId={}, status={}", state.getExecutionId(),
                 state.getTraceId(), state.getWorkflowStatus());
         return execute(state);
+    }
+
+    private void restoreEventSequence(ExecutionState state) {
+        if (eventPublisher == null) return;
+        try {
+            eventPublisher.restoreSequence(state.getExecutionId(), state.getEventSequence());
+        } catch (RuntimeException exception) {
+            log.warn("workflow_event_sequence_restore_failed executionId={}, errorType={}",
+                    state.getExecutionId(), exception.getClass().getSimpleName());
+        }
     }
 
     private ExecutionState execute(ExecutionState state) {
@@ -90,8 +123,19 @@ public class WorkflowRunner {
             MDC.put("traceId", state.getTraceId());
         }
         long started = System.nanoTime();
+        AtomicLong checkpointVersion =
+                new AtomicLong(state.getVersion());
+        AtomicBoolean completedCheckpoint = new AtomicBoolean();
         try {
-            workflow.run(state, stateStore::save);
+            workflow.run(state, (current, expectedVersion) -> {
+                stateStore.save(current, expectedVersion);
+                checkpointVersion.set(current.getVersion());
+                completedCheckpoint.set(current.getWorkflowStatus() == WorkflowStatus.COMPLETED);
+            });
+            if (state.getWorkflowStatus() != WorkflowStatus.COMPLETED
+                    && state.getWorkflowStatus() != WorkflowStatus.FAILED) {
+                throw new IllegalStateException("WORKFLOW_DID_NOT_REACH_TERMINAL_STATE");
+            }
             if (state.getFinalAnswer() != null && !state.getFinalAnswer().isBlank()) {
                 publish(state, RunEvent.EventType.ANSWER_READY, "ANSWER", "answer=ready");
             }
@@ -102,8 +146,25 @@ public class WorkflowRunner {
                     state.getWorkflowStatus(), elapsedMillis(started));
             return state;
         } catch (RuntimeException exception) {
-            publish(state, RunEvent.EventType.WORKFLOW_FAILED, state.getCurrentNode(),
-                    "errorCode=" + exception.getClass().getSimpleName());
+            if (completedCheckpoint.get() && state.getWorkflowStatus() == WorkflowStatus.COMPLETED) {
+                // 提交之后的通知失败不能撤销已完成的业务结果，SSE 可从检查点补偿。
+                log.warn("workflow_post_completion_failed executionId={}, errorType={}",
+                        state.getExecutionId(), exception.getClass().getSimpleName());
+                return state;
+            }
+            // 使用当前执行持有的版本进行 CAS，不能覆盖其他执行者的新检查点。
+            try {
+                if (isCheckpointConflict(exception)) {
+                    throw exception;
+                }
+                long expectedVersion = checkpointVersion.get();
+                state.fail(exception.getClass().getSimpleName());
+                stateStore.save(state, expectedVersion);
+                publish(state, RunEvent.EventType.WORKFLOW_FAILED, state.getCurrentNode(),
+                        "errorCode=" + exception.getClass().getSimpleName());
+            } catch (RuntimeException checkpointError) {
+                if (checkpointError != exception) exception.addSuppressed(checkpointError);
+            }
             log.error("workflow_execution_failed executionId={}, elapsedMs={}, errorType={}", state.getExecutionId(),
                     elapsedMillis(started), exception.getClass().getSimpleName());
             throw exception;
@@ -120,8 +181,21 @@ public class WorkflowRunner {
         if (eventPublisher == null) {
             return;
         }
-        RunEvent event = eventPublisher.publish(state.getExecutionId(), state.getTraceId(), eventType, node, summary);
-        state.setEventSequence(event.sequence());
+        try {
+            RunEvent event = eventPublisher.publish(state.getExecutionId(), state.getTraceId(), eventType, node, summary);
+            state.setEventSequence(event.sequence());
+        } catch (RuntimeException exception) {
+            log.warn("workflow_event_publication_failed executionId={}, eventType={}, errorType={}",
+                    state.getExecutionId(), eventType, exception.getClass().getSimpleName());
+        }
+    }
+
+    private boolean isCheckpointConflict(Throwable exception) {
+        Set<Throwable> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+        for (Throwable cause = exception; cause != null && seen.add(cause); cause = cause.getCause()) {
+            if (cause instanceof CheckpointConflictException) return true;
+        }
+        return false;
     }
 
     private long elapsedMillis(long started) {

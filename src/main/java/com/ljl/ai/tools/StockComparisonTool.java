@@ -15,11 +15,14 @@ public class StockComparisonTool {
         this.marketDataClient = marketDataClient;
     }
 
-    @Tool(name = "compareStocks", value = "比较多只股票的行情、技术面、基本面和预测结果")
+    @Tool(name = "compareStocks", value = "仅比较多只股票当前实时行情，不提供历史周期、技术面、财务或预测比较")
     public ToolResult<String> compareStocks(@P("股票代码列表，逗号分隔") String symbols,
-                                @P("比较周期") String horizon) {
+                                @P("比较周期，仅支持 realtime") String horizon) {
         return ToolResultExecutor.execute("STOCK_COMPARISON_ERROR", () -> {
-            StringBuilder result = new StringBuilder("多股票实时行情比较（腾讯财经）\n周期：").append(horizon).append('\n');
+            if (!"realtime".equalsIgnoreCase(horizon)) {
+                throw new IllegalArgumentException("行情比较仅支持 realtime");
+            }
+            StringBuilder result = new StringBuilder("多股票实时行情比较（腾讯财经）\n");
             for (String symbol : symbols.split(",")) {
                 StockQuote quote = marketDataClient.getRealtimeQuote(symbol.trim());
                 result.append(quote.getSymbol()).append(" ").append(quote.getName())

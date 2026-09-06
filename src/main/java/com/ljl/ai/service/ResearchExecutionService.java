@@ -59,9 +59,15 @@ public class ResearchExecutionService implements AutoCloseable {
                 new ThreadPoolExecutor.AbortPolicy());
     }
 
-    public ResearchExecutionResponse start(ChatRequest request) {
+    public synchronized ResearchExecutionResponse start(ChatRequest request) {
         if (request == null || request.getResearchMode() != AnalysisContext.ResearchMode.DEEP) {
             throw new IllegalArgumentException("DEEP_RESEARCH_MODE_REQUIRED");
+        }
+        if (Boolean.FALSE.equals(request.getEnableTools())) {
+            throw new IllegalArgumentException("深度研究需要开启工具");
+        }
+        if (executor.isShutdown()) {
+            throw new IllegalStateException("RESEARCH_EXECUTION_SERVICE_STOPPED");
         }
         String sessionId = ensureSession(request);
         String executionId = UUID.randomUUID().toString();
@@ -71,11 +77,11 @@ public class ResearchExecutionService implements AutoCloseable {
                 ChatService.executionQuestion(request.getMessage(), request.getOrderId()), List.of());
         acceptedState.setUserId(request.getUserId());
         stateStore.save(acceptedState, -1);
-        CountDownLatch accepted = new CountDownLatch(1);
+        ResearchTask task = new ResearchTask(executionRequest, executionId);
         try {
-            executor.execute(() -> runAfterAccepted(accepted, executionRequest, executionId));
+            executor.execute(task);
         } catch (RejectedExecutionException exception) {
-            recordFailure(executionRequest, executionId, "RESEARCH_EXECUTION_QUEUE_FULL");
+            task.cancel("RESEARCH_EXECUTION_QUEUE_FULL");
             throw new IllegalStateException("RESEARCH_EXECUTION_QUEUE_FULL", exception);
         }
 
@@ -84,8 +90,12 @@ public class ResearchExecutionService implements AutoCloseable {
                     "EXECUTION", "status=accepted");
             return new ResearchExecutionResponse(executionId, sessionId,
                     ResearchExecutionResponse.Status.ACCEPTED, Instant.now());
+        } catch (RuntimeException exception) {
+            task.cancel("RESEARCH_ACCEPTANCE_FAILED");
+            executor.remove(task);
+            throw exception;
         } finally {
-            accepted.countDown();
+            task.accepted.countDown();
         }
     }
 
@@ -99,7 +109,9 @@ public class ResearchExecutionService implements AutoCloseable {
 
     private String ensureSession(ChatRequest request) {
         if (StringUtils.isNotBlank(request.getSessionId())) {
-            return request.getSessionId().trim();
+            String sessionId = request.getSessionId().trim();
+            chatService.requireSessionForExecution(sessionId, request.getUserId());
+            return sessionId;
         }
         ChatSession session = chatService.createSession(request.getUserId(), request.getOrderId());
         if (session == null || StringUtils.isBlank(session.getSessionId())) {
@@ -121,12 +133,19 @@ public class ResearchExecutionService implements AutoCloseable {
                 .build();
     }
 
-    private void runAfterAccepted(CountDownLatch accepted, ChatRequest request, String executionId) {
+    private void runAfterAccepted(ResearchTask task) {
+        ChatRequest request = task.request;
+        String executionId = task.executionId;
         try {
-            accepted.await();
+            task.accepted.await();
+            if (task.cancelled) return;
             ChatResponse response = chatService.chat(request, executionId);
             if (response == null || !Boolean.TRUE.equals(response.getSuccess())) {
                 recordFailure(request, executionId, "CHAT_EXECUTION_FAILED");
+            } else {
+                stateStore.load(executionId).filter(state -> state.getWorkflowStatus() != WorkflowStatus.COMPLETED
+                        && state.getWorkflowStatus() != WorkflowStatus.FAILED)
+                        .ifPresent(state -> recordFailure(request, executionId, "RESEARCH_WORKFLOW_NOT_COMPLETED"));
             }
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
@@ -139,7 +158,6 @@ public class ResearchExecutionService implements AutoCloseable {
     }
 
     private void recordFailure(ChatRequest request, String executionId, String errorCode) {
-        RunEvent failureEvent = publishFailureIfMissing(executionId, errorCode);
         try {
             Optional<ExecutionState> checkpoint = stateStore.load(executionId);
             ExecutionState state = checkpoint.orElseGet(() -> {
@@ -149,12 +167,21 @@ public class ResearchExecutionService implements AutoCloseable {
                 return created;
             });
             synchronized (state) {
-                state.setEventSequence(Math.max(state.getEventSequence(), failureEvent.sequence()));
+                if (state.getWorkflowStatus() == WorkflowStatus.COMPLETED) {
+                    return;
+                }
                 if (state.getWorkflowStatus() != WorkflowStatus.FAILED) {
                     long expectedVersion = checkpoint.isPresent() ? state.getVersion() : -1;
                     state.fail(errorCode);
                     stateStore.save(state, expectedVersion);
                 }
+            }
+            RunEvent failureEvent = publishFailureIfMissing(executionId, errorCode);
+            if (state.getEventSequence() < failureEvent.sequence()) {
+                long expectedVersion = state.getVersion();
+                state.setEventSequence(failureEvent.sequence());
+                state.setVersion(expectedVersion + 1);
+                stateStore.save(state, expectedVersion);
             }
         } catch (RuntimeException persistenceError) {
             log.error("deep_research_failure_checkpoint_failed executionId={}, errorType={}",
@@ -181,12 +208,40 @@ public class ResearchExecutionService implements AutoCloseable {
 
     @Override
     @PreDestroy
-    public void close() {
-        executor.shutdownNow();
+    public synchronized void close() {
+        // shutdownNow 仅返回排队任务，不会调用它们的 run；显式补写终态。
+        for (Runnable pending : executor.shutdownNow()) {
+            if (pending instanceof ResearchTask task) {
+                task.cancel("RESEARCH_EXECUTION_SERVICE_STOPPED");
+            }
+        }
     }
 
     boolean isShutdown() {
         return executor.isShutdown();
+    }
+
+    private final class ResearchTask implements Runnable {
+        private final ChatRequest request;
+        private final String executionId;
+        private final CountDownLatch accepted = new CountDownLatch(1);
+        private volatile boolean cancelled;
+
+        private ResearchTask(ChatRequest request, String executionId) {
+            this.request = request;
+            this.executionId = executionId;
+        }
+
+        @Override
+        public void run() {
+            runAfterAccepted(this);
+        }
+
+        private void cancel(String errorCode) {
+            cancelled = true;
+            recordFailure(request, executionId, errorCode);
+            accepted.countDown();
+        }
     }
 
     private static final class ResearchThreadFactory implements ThreadFactory {

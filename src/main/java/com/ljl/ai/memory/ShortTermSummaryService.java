@@ -3,12 +3,12 @@ package com.ljl.ai.memory;
 import com.ljl.ai.config.MemoryConfig;
 import com.ljl.ai.agent.ConversationSummaryAssistant;
 import dev.langchain4j.data.message.ChatMessage;
+import dev.langchain4j.data.message.ToolExecutionResultMessage;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
-import java.time.Duration;
 import java.util.List;
 import java.util.function.BiFunction;
 import java.util.stream.Collectors;
@@ -65,6 +65,14 @@ public class ShortTermSummaryService {
         }
 
         int split = messages.size() / 2;
+        // 工具结果必须与前面的 AI 工具调用一起保留，包括同一轮的多个并行结果。
+        // 回退而非向前丢弃结果，避免整组工具交换尚未结束时清空剩余窗口。
+        while (split > 0 && messages.get(split) instanceof ToolExecutionResultMessage) {
+            split--;
+        }
+        if (split == 0) {
+            return;
+        }
         String source = messages.subList(0, split).stream()
                 .map(ChatMessage::toString)
                 .collect(Collectors.joining("\n"));
@@ -79,17 +87,11 @@ public class ShortTermSummaryService {
         }
 
         try {
-            memoryStore.updateMessages(memoryId, messages.subList(split, messages.size()));
-            Duration ttl = Duration.ofSeconds(config.getShortTerm().getTtl());
-            redis.opsForValue().set(summaryKey(memoryId), summary, ttl);
-            redis.opsForValue().set(INDEX_PREFIX + memoryId, Integer.toString(split), ttl);
-        } catch (Exception e) {
-            try {
-                memoryStore.updateMessages(memoryId, messages);
-            } catch (Exception rollbackError) {
-                log.error("短期记忆摘要失败且回滚消息窗口失败, memoryId: {}", memoryId, rollbackError);
+            if (!memoryStore.compact(memoryId, messages, split, oldSummary, summary)) {
+                log.debug("短期记忆窗口已变化，跳过本次摘要压缩, memoryId: {}", memoryId);
             }
-            log.error("短期记忆摘要失败，保留原始窗口, memoryId: {}", memoryId, e);
+        } catch (Exception e) {
+            log.error("短期记忆摘要原子提交失败, memoryId: {}", memoryId, e);
             throw new IllegalStateException("短期记忆摘要失败", e);
         }
     }
