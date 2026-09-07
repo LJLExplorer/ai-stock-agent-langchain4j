@@ -107,9 +107,9 @@ public class ChatController {
     public ResponseEntity<ChatSession> renameSession(@PathVariable String sessionId,
                                                      @RequestParam String userId,
                                                      @RequestBody Map<String, String> body) {
-        String title = body.getOrDefault("title", "").trim();
+        String title = body.get("title") == null ? "" : body.get("title").trim();
         if (title.isEmpty() || title.length() > 80) {
-            return ResponseEntity.badRequest().build();
+            throw new IllegalArgumentException("标题不能为空且不能超过 80 个字符");
         }
         return ResponseEntity.ok(chatService.renameSession(sessionId, userId, title));
     }
@@ -125,17 +125,11 @@ public class ChatController {
 
         Object rawFeedback = feedbackData.get("feedback");
         if (!(rawFeedback instanceof Number number)) {
-            return ResponseEntity.badRequest().body(Map.of(
-                    "success", false,
-                    "error", "feedback must be a number"
-            ));
+            throw new IllegalArgumentException("feedback must be -1, 0, or 1");
         }
         int feedback = number.intValue();
-        if (feedback < -1 || feedback > 1) {
-            return ResponseEntity.badRequest().body(Map.of(
-                    "success", false,
-                    "error", "feedback must be -1, 0, or 1"
-            ));
+        if (feedback < -1 || feedback > 1 || number.doubleValue() != feedback) {
+            throw new IllegalArgumentException("feedback must be -1, 0, or 1");
         }
 
         Object rawDetail = feedbackData.getOrDefault("detail", "");

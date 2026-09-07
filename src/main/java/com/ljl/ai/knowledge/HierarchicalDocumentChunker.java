@@ -1,5 +1,8 @@
 package com.ljl.ai.knowledge;
 
+import com.ljl.ai.config.KnowledgeConfig;
+import org.springframework.beans.factory.annotation.Autowired;
+
 import com.ljl.ai.model.entity.KnowledgeDocument;
 import lombok.Value;
 import org.springframework.stereotype.Component;
@@ -20,15 +23,34 @@ import java.util.regex.Pattern;
 @Component
 public class HierarchicalDocumentChunker {
 
-    private static final int TARGET_CHILD_SIZE = 700;
-    private static final int MIN_CHILD_SIZE = 600;
-    private static final int MAX_CHILD_SIZE = 800;
-    private static final int TARGET_OVERLAP = 100;
-    private static final int MIN_OVERLAP = 80;
-    private static final int MAX_OVERLAP = 120;
-    private static final int SHORT_PARENT_THRESHOLD = 1200;
-    private static final int SUMMARY_MIN_SIZE = 400;
-    private static final int SUMMARY_MAX_SIZE = 600;
+    public HierarchicalDocumentChunker() {
+        this(new KnowledgeConfig());
+    }
+
+    @Autowired
+    public HierarchicalDocumentChunker(KnowledgeConfig config) {
+        KnowledgeConfig.ChunkConfig chunk = config.getChunk();
+        chunk.validate();
+        this.targetChildSize = chunk.getTargetSize();
+        this.minChildSize = chunk.getMinSize();
+        this.maxChildSize = chunk.getMaxSize();
+        this.targetOverlap = chunk.getMinOverlap() + (chunk.getMaxOverlap() - chunk.getMinOverlap()) / 2;
+        this.minOverlap = chunk.getMinOverlap();
+        this.maxOverlap = chunk.getMaxOverlap();
+        this.shortParentThreshold = chunk.getShortParentThreshold();
+        this.summaryMinSize = chunk.getSummaryMinSize();
+        this.summaryMaxSize = chunk.getSummaryMaxSize();
+    }
+
+    private final int targetChildSize;
+    private final int minChildSize;
+    private final int maxChildSize;
+    private final int targetOverlap;
+    private final int minOverlap;
+    private final int maxOverlap;
+    private final int shortParentThreshold;
+    private final int summaryMinSize;
+    private final int summaryMaxSize;
 
     private static final Pattern MARKDOWN_HEADING = Pattern.compile("^(#{1,6})\\s+(.+?)\\s*$");
     private static final Pattern CHINESE_CHAPTER = Pattern.compile("^第[一二三四五六七八九十百千万零〇两0-9]+[章节篇部分](?:\\s+\\S.*)?$");
@@ -94,6 +116,10 @@ public class HierarchicalDocumentChunker {
         return new ChunkedDocument(parents, children);
     }
 
+    /**
+     * 在单个父章节内按段落或句子边界切分带重叠的子块，并合并过短尾块。
+     * 原文偏移用于后续窗口拼接，标题路径仅加入向量化文本，不混入子块正文。
+     */
     private List<ChildDraft> splitParent(String documentId, String ingestionVersion, ParentDraft parent) {
         String content = parent.getContent();
         if (content.isEmpty()) {
@@ -164,8 +190,8 @@ public class HierarchicalDocumentChunker {
     }
 
     private int overlapStart(String content, List<Integer> boundaries, int newStart) {
-        int lowerBound = Math.max(0, newStart - MAX_OVERLAP);
-        int upperBound = newStart - MIN_OVERLAP;
+        int lowerBound = Math.max(0, newStart - maxOverlap);
+        int upperBound = newStart - minOverlap;
         int selected = -1;
         for (int boundary : boundaries) {
             if (boundary < lowerBound) {
@@ -176,23 +202,24 @@ public class HierarchicalDocumentChunker {
             }
             selected = boundary;
         }
-        return selected >= 0 ? selected : Math.max(0, newStart - TARGET_OVERLAP);
+        return selected >= 0 ? selected : Math.max(0, newStart - targetOverlap);
     }
 
+    /** 在长度预算内优先选择段落边界，其次句子边界；没有合适边界时按目标长度切分。 */
     private int chooseEnd(int contentLength, List<Integer> paragraphBoundaries,
                           List<Integer> sentenceBoundaries, int overlapStart) {
         int remaining = contentLength - overlapStart;
-        if (remaining <= MAX_CHILD_SIZE) {
+        if (remaining <= maxChildSize) {
             return contentLength;
         }
-        int lowerBound = overlapStart + MIN_CHILD_SIZE;
-        int upperBound = overlapStart + MAX_CHILD_SIZE;
+        int lowerBound = overlapStart + minChildSize;
+        int upperBound = overlapStart + maxChildSize;
         int paragraphEnd = closestToTarget(paragraphBoundaries, lowerBound, upperBound, overlapStart);
         if (paragraphEnd >= 0) {
             return paragraphEnd;
         }
         int sentenceEnd = closestToTarget(sentenceBoundaries, lowerBound, upperBound, overlapStart);
-        return sentenceEnd >= 0 ? sentenceEnd : Math.min(contentLength, overlapStart + TARGET_CHILD_SIZE);
+        return sentenceEnd >= 0 ? sentenceEnd : Math.min(contentLength, overlapStart + targetChildSize);
     }
 
     private int closestToTarget(List<Integer> boundaries, int lowerBound, int upperBound, int overlapStart) {
@@ -205,7 +232,7 @@ public class HierarchicalDocumentChunker {
             if (boundary > upperBound) {
                 break;
             }
-            int distance = Math.abs(boundary - (overlapStart + TARGET_CHILD_SIZE));
+            int distance = Math.abs(boundary - (overlapStart + targetChildSize));
             if (distance < bestDistance) {
                 selected = boundary;
                 bestDistance = distance;
@@ -220,7 +247,7 @@ public class HierarchicalDocumentChunker {
         }
         MutableChild tail = spans.getLast();
         MutableChild previous = spans.get(spans.size() - 2);
-        if (tail.length() < MIN_CHILD_SIZE && tail.endOffset - previous.overlapStartOffset <= MAX_CHILD_SIZE) {
+        if (tail.length() < minChildSize && tail.endOffset - previous.overlapStartOffset <= maxChildSize) {
             previous.endOffset = tail.endOffset;
             spans.removeLast();
         }
@@ -242,7 +269,7 @@ public class HierarchicalDocumentChunker {
         String normalizedContent = content == null ? "" : content.strip();
         String stockCode = resolveMetadata(metadata, "stockCode", STOCK_CODE, documentTitle, headingPath, normalizedContent);
         String year = resolveMetadata(metadata, "year", YEAR, documentTitle, headingPath, normalizedContent);
-        String summary = normalizedContent.length() > SHORT_PARENT_THRESHOLD
+        String summary = normalizedContent.length() > shortParentThreshold
                 ? createExtractiveSummary(headingPath, normalizedContent) : null;
         return new ParentDraft(sectionIndex, headingPath, normalizedContent, tags, metadata, stockCode, year, summary);
     }
@@ -264,8 +291,10 @@ public class HierarchicalDocumentChunker {
     }
 
     private String createExtractiveSummary(List<String> headingPath, String content) {
-        String heading = String.join(" > ", headingPath);
-        String firstParagraph = firstEffectiveParagraph(content);
+        // 标题最多占四分之一预算，超长标题不能挤掉正文或突破摘要上限。
+        String heading = truncateSummaryPart(String.join(" > ", headingPath), summaryMaxSize / 4);
+        int prefixLength = heading.isEmpty() ? 0 : heading.length() + 1;
+        String firstParagraph = truncateSummaryPart(firstEffectiveParagraph(content), summaryMaxSize - prefixLength);
         List<SentenceCandidate> candidates = sentenceCandidates(content);
         List<String> selected = new ArrayList<>();
         selected.add(firstParagraph);
@@ -275,15 +304,24 @@ public class HierarchicalDocumentChunker {
                 .filter(candidate -> firstParagraph.contains(candidate.text()))
                 .forEach(candidate -> seen.add(candidate.text()));
 
-        candidates.stream()
+        List<SentenceCandidate> ranked = candidates.stream()
                 .sorted(Comparator.comparingInt(SentenceCandidate::score).reversed()
                         .thenComparingInt(SentenceCandidate::position))
-                .filter(candidate -> seen.add(candidate.text()))
-                .limit(3)
-                .sorted(Comparator.comparingInt(SentenceCandidate::position))
+                .toList();
+        List<SentenceCandidate> chosen = new ArrayList<>();
+        int remaining = summaryMaxSize - summaryLength(prefixLength, selected);
+        for (SentenceCandidate candidate : ranked) {
+            if (!seen.contains(candidate.text()) && candidate.text().length() + 1 <= remaining) {
+                chosen.add(candidate);
+                seen.add(candidate.text());
+                remaining -= candidate.text().length() + 1;
+                if (chosen.size() == 3) break;
+            }
+        }
+        chosen.stream().sorted(Comparator.comparingInt(SentenceCandidate::position))
                 .forEach(candidate -> selected.add(candidate.text()));
 
-        appendUntilMinimum(selected, seen, candidates, heading.length() + 1);
+        appendUntilMinimum(selected, seen, candidates, prefixLength);
         return joinWithinLimit(heading, selected);
     }
 
@@ -328,32 +366,40 @@ public class HierarchicalDocumentChunker {
     private void appendUntilMinimum(List<String> selected, Set<String> seen,
                                     List<SentenceCandidate> candidates, int prefixLength) {
         for (SentenceCandidate candidate : candidates) {
-            if (summaryLength(prefixLength, selected) >= SUMMARY_MIN_SIZE) {
+            if (summaryLength(prefixLength, selected) >= summaryMinSize) {
                 return;
             }
-            if (seen.add(candidate.text()) && summaryLength(prefixLength, selected) + candidate.text().length() + 1
-                    <= SUMMARY_MAX_SIZE) {
-                selected.add(candidate.text());
+            if (seen.add(candidate.text())) {
+                int remaining = summaryMaxSize - summaryLength(prefixLength, selected) - 1;
+                String excerpt = truncateSummaryPart(candidate.text(), Math.max(0, remaining));
+                if (!excerpt.isEmpty()) selected.add(excerpt);
             }
         }
     }
 
     private int summaryLength(int prefixLength, List<String> parts) {
-        return prefixLength + parts.stream().mapToInt(String::length).sum() + parts.size();
+        return prefixLength + parts.stream().mapToInt(String::length).sum() + Math.max(0, parts.size() - 1);
     }
 
     private String joinWithinLimit(String heading, List<String> parts) {
-        StringBuilder summary = new StringBuilder(heading).append('\n');
+        StringBuilder summary = new StringBuilder(heading);
         for (String part : parts) {
-            if (summary.length() + part.length() + 1 > SUMMARY_MAX_SIZE) {
-                continue;
-            }
-            if (summary.length() > heading.length() + 1) {
-                summary.append('\n');
-            }
-            summary.append(part);
+            int separatorLength = summary.isEmpty() ? 0 : 1;
+            String excerpt = truncateSummaryPart(part, Math.max(0, summaryMaxSize - summary.length() - separatorLength));
+            if (excerpt.isEmpty()) continue;
+            if (separatorLength > 0) summary.append('\n');
+            summary.append(excerpt);
         }
         return summary.toString();
+    }
+
+    private String truncateSummaryPart(String text, int maxLength) {
+        int end = Math.min(text.length(), maxLength);
+        if (end > 0 && end < text.length() && Character.isHighSurrogate(text.charAt(end - 1))
+                && Character.isLowSurrogate(text.charAt(end))) {
+            end--;
+        }
+        return text.substring(0, end).strip();
     }
 
     private Heading headingOf(String line) {

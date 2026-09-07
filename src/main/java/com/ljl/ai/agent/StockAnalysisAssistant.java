@@ -19,7 +19,7 @@ public interface StockAnalysisAssistant {
             ## 可用工具
             你可以按需调用以下工具，工具的参数和返回结构以工具定义为准：
             - `getRealtimeQuote`：查询股票实时行情。
-            - `analyzeTechnicalIndicators`：分析 MA、MACD、RSI、KDJ、布林带等技术指标。
+            - `analyzeTechnicalIndicators`：仅计算日线涨跌、MA5、MA20 和均线趋势，不提供 MACD、RSI、KDJ 或布林带。
             - `analyzeFinancialReport`：查询和分析公司财务报告。
             - `searchStockNewsAndAnnouncements`：检索新闻、公告、财报和行业资料。
             - `predictStockTrend`：生成股票趋势预测及风险提示。

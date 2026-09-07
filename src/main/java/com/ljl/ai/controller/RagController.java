@@ -54,9 +54,7 @@ public class RagController {
      */
     @PostMapping("/query")
     public ResponseEntity<?> ragQuery(@RequestBody Map<String, Object> request) {
-        String query = (String) request.get("query");
-
-        if (!StringUtils.hasText(query)) {
+        if (!(request.get("query") instanceof String query) || !StringUtils.hasText(query)) {
             return ResponseEntity.badRequest().body(Map.of(
                     "success", false,
                     "errorCode", "EMPTY_QUERY",

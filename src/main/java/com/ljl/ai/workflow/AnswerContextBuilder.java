@@ -24,6 +24,7 @@ public final class AnswerContextBuilder {
     public record Context(String content, int originalChars, int truncatedTaskCount) {
     }
 
+    /** 按任务分配上下文预算，限制历史结果条数，并记录原始长度和截断数量，避免单个任务占满提示。 */
     public Context build(ExecutionState state) {
         List<ExecutionTask> tasks = state == null || state.getTasks() == null
                 ? Collections.emptyList() : state.getTasks();
@@ -82,6 +83,7 @@ public final class AnswerContextBuilder {
         return content.toString();
     }
 
+    /** 按 Unicode 码点截断并预留截断标记空间，避免将表情等代理对字符从中间切开。 */
     private String truncate(String value, int maxCodePoints) {
         int count = codePointCount(value);
         if (count <= maxCodePoints) {

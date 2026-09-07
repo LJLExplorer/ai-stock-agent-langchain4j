@@ -23,7 +23,8 @@ class ChatServiceMemoryContextTest {
 
     @Test
     void shouldPassSummaryAsSystemContextWithoutChangingCurrentUserMessage() {
-        ChatService service = new ChatService();
+        ChatServiceFixture fixture = new ChatServiceFixture();
+        ChatService service = fixture.service;
         ChatMemoryService chatMemoryService = mock(ChatMemoryService.class);
         RedisChatMemoryProvider chatMemoryProvider = mock(RedisChatMemoryProvider.class);
         ShortTermSummaryService summaryService = mock(ShortTermSummaryService.class);
@@ -39,11 +40,15 @@ class ChatServiceMemoryContextTest {
         when(longTermMemoryService.recall(any(), any())).thenReturn(Collections.emptyList());
         when(assistant.chatWithMemory(any(), any(), any())).thenReturn("回答");
 
-        ReflectionTestUtils.setField(service, "chatMemoryService", chatMemoryService);
-        ReflectionTestUtils.setField(service, "chatMemoryProvider", chatMemoryProvider);
-        ReflectionTestUtils.setField(service, "shortTermSummaryService", summaryService);
-        ReflectionTestUtils.setField(service, "longTermMemoryService", longTermMemoryService);
-        ReflectionTestUtils.setField(service, "stockAnalysisAssistantWithoutTools", assistant);
+        ReflectionTestUtils.setField(fixture.persistence, "chatMemoryService", chatMemoryService);
+        ReflectionTestUtils.setField(fixture.context, "chatMemoryService", chatMemoryService);
+        ReflectionTestUtils.setField(fixture.assembler, "chatMemoryProvider", chatMemoryProvider);
+        ReflectionTestUtils.setField(fixture.persistence, "chatMemoryProvider", chatMemoryProvider);
+        ReflectionTestUtils.setField(fixture.failure, "chatMemoryProvider", chatMemoryProvider);
+        ReflectionTestUtils.setField(fixture.context, "shortTermSummaryService", summaryService);
+        ReflectionTestUtils.setField(fixture.persistence, "shortTermSummaryService", summaryService);
+        ReflectionTestUtils.setField(fixture.context, "longTermMemoryService", longTermMemoryService);
+        ReflectionTestUtils.setField(fixture.execution, "stockAnalysisAssistantWithoutTools", assistant);
 
         service.chat(ChatRequest.builder().userId("user-1").message("风险再展开说说").build());
 

@@ -29,16 +29,12 @@ public class TimeSeriesPredictionTool {
     private long timeoutSeconds;
 
     @Tool(name = "predictStockTrend", value = "调用 daily_stock_analysis 的股票分析流水线，返回趋势预测、当前价格、操作建议和风险提示")
-    public ToolResult<String> predictStockTrend(@P("股票代码") String symbol,
-                                                @P("预测未来交易日数量，如 1/3/5/10") int horizon,
-                                                @P("模型名称，如 LSTM/Transformer/PatchTST") String model) {
+    public ToolResult<String> predictStockTrend(@P("股票代码；由上游分析流水线决定方法和时间范围，不支持指定模型或预测天数") String symbol) {
         return ToolResultExecutor.executeResult("PREDICTION_ERROR",
-                () -> doPredictStockTrend(symbol, horizon, model));
+                () -> doPredictStockTrend(symbol));
     }
 
-    private ToolResult<String> doPredictStockTrend(@P("股票代码") String symbol,
-                                    @P("预测未来交易日数量，如 1/3/5/10") int horizon,
-                                    @P("模型名称，如 LSTM/Transformer/PatchTST") String model) {
+    private ToolResult<String> doPredictStockTrend(String symbol) {
         if (predictionBaseUrl == null || predictionBaseUrl.isBlank()) {
             return ToolResult.failure("PREDICTION_NOT_CONFIGURED", "预测服务未配置（prediction.base-url）");
         }
@@ -62,13 +58,17 @@ public class TimeSeriesPredictionTool {
             }
 
             JSONObject result = JSON.parseObject(response.body());
-            JSONObject report = result.getJSONObject("report");
+            JSONObject report = result == null ? null : result.getJSONObject("report");
             JSONObject summary = report == null ? null : report.getJSONObject("summary");
+            if (summary == null || summary.getString("trend_prediction") == null
+                    || summary.getString("trend_prediction").isBlank()) {
+                return ToolResult.failure("PREDICTION_EMPTY_REPORT", "预测服务未返回有效趋势报告");
+            }
             JSONObject meta = report == null ? null : report.getJSONObject("meta");
             JSONObject output = new JSONObject();
             output.put("symbol", symbol);
-            output.put("horizon", horizon);
-            output.put("model", "daily_stock_analysis");
+            output.put("source", "daily_stock_analysis");
+            output.put("limitation", "上游未提供可验证的预测天数或模型名称");
             output.put("trend_prediction", summary == null ? null : summary.getString("trend_prediction"));
             output.put("current_price", meta == null ? null : meta.getBigDecimal("current_price"));
             output.put("change_pct", meta == null ? null : meta.getBigDecimal("change_pct"));
@@ -79,8 +79,11 @@ public class TimeSeriesPredictionTool {
             output.put("source_query_id", result.getString("query_id"));
             return ToolResult.success(JSON.toJSONString(output));
         } catch (Exception e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
             log.warn("预测服务调用失败, symbol: {}", symbol, e);
-            return ToolResult.failure("PREDICTION_ERROR", e.getMessage());
+            return ToolResult.failure("PREDICTION_ERROR", "预测服务调用失败，请稍后重试");
         }
     }
 }

@@ -40,6 +40,10 @@ public class WorkflowAnswerGenerator {
         this.qualityGuard = qualityGuard;
     }
 
+    /**
+     * 优先呈现经过校验的深度裁决；标准模式调用无工具助手生成答案，并同时校验证据和文本质量。
+     * 标准答案最多重写一次，仍不合格时写入确定性说明，避免无限重试。
+     */
     public void generate(ExecutionState state) {
         if (state == null) {
             return;
@@ -66,6 +70,10 @@ public class WorkflowAnswerGenerator {
         state.setFinalAnswer(fallback(state));
     }
 
+    /**
+     * 渲染并复核深度研究结论；深度模式缺少裁决或裁决无效时直接降级，禁止再用普通生成绕过裁决。
+     * 返回 true 表示最终回答已在此处处理，调用方无需继续生成。
+     */
     private boolean presentResearchConclusion(ExecutionState state, AnswerContextBuilder.Context context) {
         ResearchConclusion conclusion = state.getResearchConclusion();
         if (conclusion == null) {
@@ -155,6 +163,7 @@ public class WorkflowAnswerGenerator {
         }
     }
 
+    /** 先检查引用、数字和日期的证据约束，再检查文本质量，统一返回可供有限重写使用的失败原因。 */
     private GenerationAttempt validate(ExecutionState state, AnswerContextBuilder.Context context,
                                        int attempt, String answer) {
         ClaimEvidenceGuard.Validation evidenceValidation = evidenceGuard.validate(answer, state.getEvidencePack());

@@ -1,5 +1,8 @@
 package com.ljl.ai.client;
 
+import java.util.Locale;
+import java.time.YearMonth;
+
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
@@ -36,8 +39,9 @@ public class FinancialDataClient {
         if (analysisDate.isAfter(LocalDate.now())) {
             throw new IllegalArgumentException("analysisDate 不能晚于当前日期");
         }
-        String code = rawSymbol.trim().toUpperCase();
-        String secucode = code.matches("\\d{6}\\.(SH|SZ|BJ)") ? code : code + (code.startsWith("6") ? ".SH" : ".SZ");
+        requestedReportDate(period);
+        String code = MarketDataClient.normalizeSymbol(rawSymbol);
+        String secucode = code.substring(2) + "." + code.substring(0, 2).toUpperCase(Locale.ROOT);
         String filter = URLEncoder.encode("(SECUCODE=\"" + secucode + "\")", StandardCharsets.UTF_8);
         // Eastmoney retired RPT_F10_FINANCE_MAIN (now returns code 9501 "报表配置不存在").
         // RPT_F10_FINANCE_MAINFINADATA is its replacement, with renamed fields.
@@ -47,7 +51,8 @@ public class FinancialDataClient {
         try (Response response = httpClient.newCall(request).execute()) {
             if (!response.isSuccessful() || response.body() == null) throw new IllegalStateException("东方财富财务接口 HTTP " + response.code());
             JSONObject root = JSON.parseObject(response.body().string());
-            JSONArray data = root.getJSONArray("result") == null ? null : root.getJSONObject("result").getJSONArray("data");
+            JSONObject result = root == null ? null : root.getJSONObject("result");
+            JSONArray data = result == null ? null : result.getJSONArray("data");
             if (data == null || data.isEmpty()) throw new IllegalStateException("未找到财务数据: " + rawSymbol + " " + period);
             FinancialSnapshot snapshot = selectSnapshotAsOf(data, analysisDate, rawSymbol, period);
             if (snapshot == null) {
@@ -61,6 +66,7 @@ public class FinancialDataClient {
 
     static FinancialSnapshot selectSnapshotAsOf(JSONArray rows, LocalDate analysisDate,
                                                 String rawSymbol, String period) {
+        LocalDate requestedDate = requestedReportDate(period);
         JSONObject unknownCandidate = null;
         if (rows == null) {
             return null;
@@ -71,6 +77,9 @@ public class FinancialDataClient {
                 continue;
             }
             LocalDate reportDate = parseDate(first(row, "REPORT_DATE", "REPORT_DATE_NAME"));
+            if (requestedDate != null && !requestedDate.equals(reportDate)) {
+                continue;
+            }
             if (reportDate != null && reportDate.isAfter(analysisDate)) {
                 continue;
             }
@@ -92,6 +101,18 @@ public class FinancialDataClient {
         return snapshot(unknownCandidate, rawSymbol, period,
                 parseDate(first(unknownCandidate, "REPORT_DATE", "REPORT_DATE_NAME")), null,
                 FinancialFact.TemporalStatus.UNKNOWN);
+    }
+
+    private static LocalDate requestedReportDate(String period) {
+        if (period != null && "latest".equalsIgnoreCase(period.trim())) {
+            return null;
+        }
+        if (period == null || !period.trim().matches("[1-9]\\d{3}Q[1-4]")) {
+            throw new IllegalArgumentException("报告期仅支持 latest 或 YYYYQ1 至 YYYYQ4");
+        }
+        String normalized = period.trim();
+        int month = (normalized.charAt(5) - '0') * 3;
+        return YearMonth.of(Integer.parseInt(normalized.substring(0, 4)), month).atEndOfMonth();
     }
 
     private static FinancialSnapshot snapshot(JSONObject row, String rawSymbol, String period,

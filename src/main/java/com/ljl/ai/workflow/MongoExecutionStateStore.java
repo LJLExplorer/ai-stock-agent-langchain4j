@@ -22,6 +22,10 @@ public class MongoExecutionStateStore implements ExecutionStateStore {
         return Optional.ofNullable(mongoTemplate.findById(executionId, ExecutionState.class));
     }
 
+    /**
+     * 负期望版本表示首次插入；否则以执行 ID 和旧版本做条件替换，未命中则报告检查点冲突。
+     * 新快照中的版本由调用方推进，此方法不自行递增。
+     */
     @Override
     public ExecutionState save(ExecutionState state, long expectedVersion) {
         if (expectedVersion < 0) {

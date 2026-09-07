@@ -10,7 +10,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
-import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -65,6 +64,7 @@ public class KnowledgeService {
             KnowledgeIngestionService.IngestionResult ingestion = null;
             try {
                 KnowledgeDocument existingDoc = findByFeishuDocToken(docToken);
+                requireMutable(existingDoc);
                 KnowledgeDocument document = existingDoc != null ? existingDoc : new KnowledgeDocument();
                 List<String> previousVectorIds = existingDoc != null && existingDoc.getVectorIds() != null
                         ? new ArrayList<>(existingDoc.getVectorIds()) : List.of();
@@ -178,6 +178,7 @@ public class KnowledgeService {
         return document;
     }
     
+    /** 将全部索引写入成功后的版本与向量清单绑定到文档，调用方保存文档后才对检索发布。 */
     private void applyIngestionResult(KnowledgeDocument document,
                                       KnowledgeIngestionService.IngestionResult ingestion) {
         document.setVectorIds(ingestion.vectorIds());
@@ -193,6 +194,7 @@ public class KnowledgeService {
         if (document == null || document.getDocumentId() == null || document.getDocumentId().isBlank()) {
             throw new IllegalArgumentException("知识文档及 documentId 不能为空");
         }
+        requireMutable(document);
         List<String> previousVectorIds = document.getVectorIds() == null ? List.of()
                 : new ArrayList<>(document.getVectorIds());
         String previousIngestionVersion = document.getActiveIngestionVersion();
@@ -264,13 +266,18 @@ public class KnowledgeService {
             return;
         }
 
+        boolean claimed = false;
         try {
-            // 阶段1: 标记为删除中 - 防止重复删除
-            Update markDelete = new Update()
-                    .set("deleteStatus", "DELETING")
-                    .set("enabled", false)
-                    .set("deleteTimestamp", LocalDateTime.now());
-            mongoTemplate.updateFirst(query, markDelete, KnowledgeDocument.class);
+            // 阶段1: 标记为删除中 - 防止重复删除；失败操作可重试，运行中的操作不可抢占。
+            if (!"DELETE_FAILED".equals(document.getDeleteStatus())) {
+                requireMutable(document);
+            }
+            document.setDeleteStatus("DELETING");
+            document.setEnabled(false);
+            document.setDeleteTimestamp(LocalDateTime.now());
+            // @Version 保证读取后发生的同步/启用会导致标记失败，不清理旧快照。
+            mongoTemplate.save(document);
+            claimed = true;
             log.debug("已标记文档为删除中, id: {}", documentId);
 
             // 阶段2: 删除向量（重试3次）
@@ -280,13 +287,15 @@ public class KnowledgeService {
             deleteHierarchyData(documentId);
 
             // 阶段3: 删除MongoDB记录
-            mongoTemplate.remove(query, KnowledgeDocument.class);
+            Query claimedQuery = new Query(Criteria.where("documentId").is(documentId)
+                    .and("version").is(document.getVersion()).and("deleteStatus").is("DELETING"));
+            mongoTemplate.remove(claimedQuery, KnowledgeDocument.class);
             log.info("知识文档已删除, id: {}, 向量数: {}", documentId,
                     document.getVectorIds() != null ? document.getVectorIds().size() : 0);
 
         } catch (Exception e) {
-            log.error("删除文档失败，已标记为DELETING状态，需要手动处理, id: {}, error: {}",
-                    documentId, e.getMessage(), e);
+            if (claimed) markCleanupFailed(document, "DELETE_FAILED", e);
+            log.error("删除文档失败, id: {}, errorType: {}", documentId, e.getClass().getSimpleName());
             throw e;
         }
     }
@@ -361,26 +370,35 @@ public class KnowledgeService {
         if (document == null) {
             throw new IllegalArgumentException("知识文档不存在: " + documentId);
         }
+        if (!"DISABLE_FAILED".equals(document.getDeleteStatus())) {
+            requireMutable(document);
+        }
         if (Boolean.FALSE.equals(document.getEnabled())
-                && (document.getVectorIds() == null || document.getVectorIds().isEmpty())) {
+                && (document.getVectorIds() == null || document.getVectorIds().isEmpty())
+                && !"DISABLE_FAILED".equals(document.getDeleteStatus())) {
             return;
         }
 
         // Persist the retrieval barrier before touching Milvus. RetrievalService
         // checks this flag, so a failed vector deletion cannot expose the document.
-        if (!Boolean.FALSE.equals(document.getEnabled())) {
-            document.setEnabled(false);
-            document.setUpdateTime(LocalDateTime.now());
-            mongoTemplate.save(document);
-        }
-        if (document.getVectorIds() != null && !document.getVectorIds().isEmpty()) {
-            deleteVectorsWithRetry(document.getVectorIds(), documentId);
-        }
-        deleteHierarchyData(documentId);
-        document.setVectorIds(List.of());
-        document.setChunkCount(0);
+        document.setEnabled(false);
+        document.setDeleteStatus("DISABLING");
         document.setUpdateTime(LocalDateTime.now());
         mongoTemplate.save(document);
+        try {
+            if (document.getVectorIds() != null && !document.getVectorIds().isEmpty()) {
+                deleteVectorsWithRetry(document.getVectorIds(), documentId);
+            }
+            deleteHierarchyData(documentId);
+            document.setVectorIds(List.of());
+            document.setChunkCount(0);
+            document.setDeleteStatus(null);
+            document.setUpdateTime(LocalDateTime.now());
+            mongoTemplate.save(document);
+        } catch (RuntimeException exception) {
+            markCleanupFailed(document, "DISABLE_FAILED", exception);
+            throw exception;
+        }
         log.info("知识文档已禁用, id: {}", documentId);
     }
 
@@ -389,6 +407,7 @@ public class KnowledgeService {
         Query query = new Query(Criteria.where("documentId").is(documentId));
         KnowledgeDocument document = mongoTemplate.findOne(query, KnowledgeDocument.class);
         if (document == null) throw new IllegalArgumentException("知识文档不存在: " + documentId);
+        requireMutable(document);
         if (Boolean.TRUE.equals(document.getEnabled())) return;
         if (document.getRawContent() == null || document.getRawContent().isBlank()) {
             throw new IllegalStateException("知识文档没有可用于重建向量的原始内容: " + documentId);
@@ -416,6 +435,22 @@ public class KnowledgeService {
     private void deleteHierarchyData(String documentId) {
         if (sectionStore != null) sectionStore.deleteDocument(documentId);
         if (hybridCollectionManager != null) hybridCollectionManager.deleteDocument(documentId);
+    }
+
+    private void requireMutable(KnowledgeDocument document) {
+        if (document != null && document.getDeleteStatus() != null && !document.getDeleteStatus().isBlank()) {
+            throw new IllegalStateException("文档正在清理或已删除，请等待或重试原清理操作");
+        }
+    }
+
+    private void markCleanupFailed(KnowledgeDocument document, String status, Exception original) {
+        try {
+            document.setDeleteStatus(status);
+            document.setEnabled(false);
+            mongoTemplate.save(document);
+        } catch (RuntimeException persistenceError) {
+            original.addSuppressed(persistenceError);
+        }
     }
 
     /** 发布已完成后才清旧版本；失败不撤销新活动版本，后续可安全重试。 */

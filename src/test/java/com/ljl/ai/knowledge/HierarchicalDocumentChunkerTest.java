@@ -16,6 +16,59 @@ class HierarchicalDocumentChunkerTest {
     private final HierarchicalDocumentChunker chunker = new HierarchicalDocumentChunker();
 
     @Test
+    void longSingleParagraphSummaryMustIncludeBodyWithinBudget() {
+        for (String body : List.of("Revenue and cash flow grew steadily. ".repeat(100),
+                "营业收入同比增长25%，现金流持续改善。".repeat(100), "正文".repeat(1000))) {
+            String summary = chunker.parseSections("Report", body, List.of(), Map.of()).getFirst().getSummary();
+
+            assertTrue(summary.startsWith("Report\n"));
+            assertTrue(summary.length() >= 400 && summary.length() <= 600);
+            assertTrue(body.startsWith(summary.substring("Report\n".length())));
+        }
+    }
+
+    @Test
+    void oversizedHeadingMustLeaveRoomForBodyAndRespectSummaryLimit() {
+        String summary = chunker.parseSections("Report", "# " + "H".repeat(800) + "\n"
+                + "正文收入增长。".repeat(250), List.of(), Map.of()).getFirst().getSummary();
+
+        assertTrue(summary.length() >= 400 && summary.length() <= 600);
+        assertTrue(summary.contains("正文收入增长。"));
+    }
+
+    @Test
+    void summaryRespectsSmallConfiguredBudgetsWithoutSplittingSurrogatePairs() {
+        for (int maxSize : List.of(1, 2, 7, 32)) {
+            com.ljl.ai.config.KnowledgeConfig config = new com.ljl.ai.config.KnowledgeConfig();
+            config.getChunk().setSummaryMinSize(1);
+            config.getChunk().setSummaryMaxSize(maxSize);
+            String summary = new HierarchicalDocumentChunker(config).parseSections("标题".repeat(50),
+                    "正文😀内容".repeat(300), List.of(), Map.of()).getFirst().getSummary();
+
+            assertFalse(summary.isBlank());
+            assertTrue(summary.length() <= maxSize);
+            assertFalse(Character.isHighSurrogate(summary.charAt(summary.length() - 1)));
+        }
+    }
+
+    @Test
+    void usesConfiguredChildSizesAndRejectsNonProgressingOverlap() {
+        com.ljl.ai.config.KnowledgeConfig config = new com.ljl.ai.config.KnowledgeConfig();
+        config.getChunk().setMinSize(100);
+        config.getChunk().setTargetSize(120);
+        config.getChunk().setMaxSize(140);
+        config.getChunk().setMinOverlap(10);
+        config.getChunk().setMaxOverlap(20);
+        var result = new HierarchicalDocumentChunker(config).chunk(KnowledgeDocument.builder()
+                .documentId("configured").title("test").rawContent("股票研究正文。".repeat(200)).build(), "v1");
+        assertTrue(result.getChildren().size() > 8);
+        assertTrue(result.getChildren().stream().allMatch(child -> child.getContent().length() <= 140));
+        config.getChunk().setMaxOverlap(100);
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
+                () -> new HierarchicalDocumentChunker(config));
+    }
+
+    @Test
     void parsesHeadingHierarchy() {
         String content = "# 年报\n概览正文。\n## 管理层讨论\n讨论正文。\n"
                 + "第一章 经营情况\n章节正文。\n一、主营业务\n业务正文。\n"

@@ -48,6 +48,7 @@ public class DeepResearchService {
         this.roleExecutor = Objects.requireNonNull(roleExecutor, "roleExecutor 不能为空");
     }
 
+    /** 使用同一证据包启动多角色研究，不引入历史决策复盘。 */
     public ResearchConclusion research(EvidencePack evidencePack) {
         if (evidencePack == null) {
             throw new IllegalArgumentException("EvidencePack 不能为空");
@@ -56,6 +57,7 @@ public class DeepResearchService {
         return research(evidencePack, evidence);
     }
 
+    /** 将本次可见的历史复盘作为校准参考加入上下文，再基于当前证据包完成多角色研究。 */
     public ResearchConclusion research(EvidencePack evidencePack, List<ResearchDecision> decisionReviews) {
         if (evidencePack == null) {
             throw new IllegalArgumentException("EvidencePack 不能为空");
@@ -64,6 +66,10 @@ public class DeepResearchService {
         return research(evidencePack, evidence);
     }
 
+    /**
+     * 并行运行适用角色，按预定顺序收集结果后交给 Judge 裁决，并由 Java 再次校验裁决输出。
+     * 无可信证据、所有角色失效或裁决失败时返回证据不足结论；部分角色失败则记录降级限制。
+     */
     private ResearchConclusion research(EvidencePack evidencePack, String evidence) {
         if (availableEvidenceIds(evidencePack).isEmpty()) {
             return fallback(dataAsOf(evidencePack), List.of("NO_VERIFIED_EVIDENCE"));
@@ -111,6 +117,7 @@ public class DeepResearchService {
         return plannedRoles(evidencePack).size() + 1;
     }
 
+    /** 按证据类型启用专业角色，并固定加入看多、看空与风险角色，避免研究超出已有材料范围。 */
     private List<Role> plannedRoles(EvidencePack evidencePack) {
         Set<FinancialFact.EvidenceType> types = evidencePack == null || evidencePack.evidenceByType() == null
                 ? Set.of() : evidencePack.evidenceByType().keySet();
@@ -131,6 +138,7 @@ public class DeepResearchService {
         return List.copyOf(roles);
     }
 
+    /** 每个角色仅调用一次模型，检查输出质量与长度，并在并行线程中设置及恢复追踪上下文。 */
     private RoleOutcome runRole(EvidencePack evidencePack, Role role, String evidence, String traceId) {
         String previousTraceId = MDC.get("traceId");
         String previousRole = MDC.get("researchRole");

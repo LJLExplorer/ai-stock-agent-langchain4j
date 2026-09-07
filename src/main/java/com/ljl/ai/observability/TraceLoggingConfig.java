@@ -9,9 +9,9 @@ import org.springframework.context.annotation.Configuration;
 @ConfigurationProperties(prefix = "trace.logging")
 public class TraceLoggingConfig {
 
-    /** 测试诊断默认记录请求和响应正文；生产环境应设置 TRACE_LOGGING_INCLUDE_CONTENT=false。 */
-    private boolean includeContent = true;
+    /** 正文可能包含敏感信息，只有显式开启诊断时才记录。 */
+    private boolean includeContent = false;
 
-    /** 开启正文记录后的最大长度；0 表示不截断。 */
-    private int maxContentLength;
+    /** 开启正文记录后的最大长度。 */
+    private int maxContentLength = 4096;
 }

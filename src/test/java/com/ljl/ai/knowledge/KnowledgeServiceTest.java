@@ -23,11 +23,86 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class KnowledgeServiceTest {
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void recoveredCleanupCanBeRetriedUsingTheOriginalVectorIds(boolean deleting) {
+        MongoTemplate mongo = mock(MongoTemplate.class);
+        EmbeddingStore<TextSegment> vectors = mock(EmbeddingStore.class);
+        KnowledgeSectionStore sections = mock(KnowledgeSectionStore.class);
+        MilvusHybridCollectionManager hybrid = mock(MilvusHybridCollectionManager.class);
+        KnowledgeIngestionService ingestion = mock(KnowledgeIngestionService.class);
+        KnowledgeDocument document = KnowledgeDocument.builder().documentId("recovered").version(4L)
+                .enabled(false).deleteStatus(deleting ? "DELETE_FAILED" : "DISABLE_FAILED")
+                .rawContent("保留的正文").vectorIds(List.of("original-vector")).chunkCount(1).build();
+        when(mongo.findOne(any(), eq(KnowledgeDocument.class))).thenReturn(document);
+        when(mongo.save(document)).thenAnswer(invocation -> {
+            document.setVersion(document.getVersion() + 1);
+            return document;
+        });
+        KnowledgeService service = serviceWithLifecycle(mock(FeishuClient.class), vectors, mongo,
+                ingestion, sections, hybrid);
+
+        if (deleting) service.deleteDocument("recovered");
+        else service.disableDocument("recovered");
+
+        verify(vectors).remove("original-vector");
+        verify(sections).deleteDocument("recovered");
+        verify(hybrid).deleteDocument("recovered");
+        verifyNoInteractions(ingestion);
+        assertFalse(document.getEnabled());
+        if (deleting) {
+            var query = org.mockito.ArgumentCaptor.forClass(org.springframework.data.mongodb.core.query.Query.class);
+            verify(mongo).remove(query.capture(), eq(KnowledgeDocument.class));
+            assertEquals(5L, query.getValue().getQueryObject().get("version"));
+        } else {
+            assertNull(document.getDeleteStatus());
+            assertTrue(document.getVectorIds().isEmpty());
+            assertEquals("保留的正文", document.getRawContent());
+            assertEquals(0, document.getChunkCount());
+        }
+    }
+
+    @Test
+    void deletingOrDisablingDocumentCannotBeReenabledOrSynced() {
+        FeishuClient feishu = mock(FeishuClient.class);
+        MongoTemplate mongo = mock(MongoTemplate.class);
+        KnowledgeIngestionService ingestion = mock(KnowledgeIngestionService.class);
+        KnowledgeService service = service(feishu, mock(EmbeddingStore.class), mongo, ingestion);
+        when(feishu.getDocumentContent("token")).thenReturn("updated content");
+        for (String status : List.of("DELETING", "DISABLING")) {
+            KnowledgeDocument document = KnowledgeDocument.builder().documentId("doc").version(3L)
+                    .rawContent("content").enabled(false).deleteStatus(status).build();
+            when(mongo.findOne(any(), eq(KnowledgeDocument.class))).thenReturn(document);
+            assertThrows(IllegalStateException.class, () -> service.enableDocument("doc"));
+            assertThrows(IllegalStateException.class, () -> service.syncFeishuDocument("token", "REPORT", List.of()));
+        }
+        org.mockito.Mockito.verifyNoInteractions(ingestion);
+    }
+
+    @Test
+    void failedDeletionClaimMustNotRemoveAnyVectorsOrHierarchy() {
+        MongoTemplate mongo = mock(MongoTemplate.class);
+        EmbeddingStore<TextSegment> vectors = mock(EmbeddingStore.class);
+        KnowledgeSectionStore sections = mock(KnowledgeSectionStore.class);
+        MilvusHybridCollectionManager hybrid = mock(MilvusHybridCollectionManager.class);
+        KnowledgeDocument document = KnowledgeDocument.builder().documentId("doc").version(3L)
+                .enabled(true).vectorIds(List.of("old-vector")).build();
+        when(mongo.findOne(any(), eq(KnowledgeDocument.class))).thenReturn(document);
+        doThrow(new org.springframework.dao.OptimisticLockingFailureException("concurrent sync"))
+                .when(mongo).save(document);
+        KnowledgeService service = serviceWithLifecycle(mock(FeishuClient.class), vectors, mongo,
+                mock(KnowledgeIngestionService.class), sections, hybrid);
+        assertThrows(org.springframework.dao.OptimisticLockingFailureException.class, () -> service.deleteDocument("doc"));
+        org.mockito.Mockito.verifyNoInteractions(vectors, sections, hybrid);
+        verify(mongo, never()).remove(any(), eq(KnowledgeDocument.class));
+    }
 
     @Test
     void shouldFindActiveDocumentById() {
@@ -235,7 +310,7 @@ class KnowledgeServiceTest {
         service.deleteDocument("doc-delete");
 
         InOrder order = inOrder(mongoTemplate, embeddingStore, sectionStore, hybrid);
-        order.verify(mongoTemplate).updateFirst(any(), any(), eq(KnowledgeDocument.class));
+        order.verify(mongoTemplate).save(document);
         order.verify(embeddingStore).remove("vector-1");
         order.verify(sectionStore).deleteDocument("doc-delete");
         order.verify(hybrid).deleteDocument("doc-delete");

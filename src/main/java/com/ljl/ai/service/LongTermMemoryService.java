@@ -31,6 +31,7 @@ public class LongTermMemoryService {
     private final MongoTemplate mongoTemplate;
     private final MemoryConfig config;
 
+    /** 先写入带用户归属的向量，再保存业务记忆；MongoDB 保存失败时尽力删除本次向量以补偿。 */
     public UserLongTermMemory add(String userId, String content, List<String> tags) {
         String memoryId = UUID.randomUUID().toString();
         TextSegment segment = TextSegment.from(content, Metadata.from(Map.of(
@@ -61,6 +62,10 @@ public class LongTermMemoryService {
         }
     }
 
+    /**
+     * 从共享向量库扩大召回候选，再按向量元数据中的 userId 过滤，并回查 MongoDB 的启用状态。
+     * 过滤后最多返回配置的 Top-K，避免其他用户或已删除、禁用的记忆进入当前上下文。
+     */
     public List<UserLongTermMemory> recall(String userId, String query) {
         Embedding queryEmbedding = embeddingModel.embed(query).content();
         // 向量库是共享的，必须给用户过滤预留足够候选，不能直接使用全局 Top-K。
@@ -97,6 +102,7 @@ public class LongTermMemoryService {
                 .and("enabled").is(true)), UserLongTermMemory.class);
     }
 
+    /** 校验记忆归属后先删除向量、再删除业务记录；不存在或不属于当前用户时直接返回。 */
     public void delete(String userId, String memoryId) {
         UserLongTermMemory memory = mongoTemplate.findById(memoryId, UserLongTermMemory.class);
         if (memory == null || !userId.equals(memory.getUserId())) return;

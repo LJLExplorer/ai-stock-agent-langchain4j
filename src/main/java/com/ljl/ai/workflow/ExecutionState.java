@@ -36,6 +36,11 @@ public class ExecutionState {
     private String graphVersion;
     private String planHash;
     private String lastCompletedNode;
+    /** 下一个可恢复的串行节点；并行任务在汇合点提交。 */
+    private String nextNode;
+    private WorkflowReflector.ReflectionDecision reflectionDecision;
+    private WorkflowCritic.Decision criticDecision;
+    private int retryCount;
     private long eventSequence;
     private long version;
     private LocalDateTime createdAt;
@@ -72,6 +77,7 @@ public class ExecutionState {
             throw new IllegalStateException("工作流无法重试: " + workflowStatus);
         }
         workflowStatus = WorkflowStatus.RETRYING;
+        retryCount++;
         errorMessage = reason;
         touch();
     }
@@ -81,6 +87,7 @@ public class ExecutionState {
             throw new IllegalStateException("仍有未完成任务，不能完成工作流");
         }
         workflowStatus = WorkflowStatus.COMPLETED;
+        errorMessage = null;
         touch();
     }
 

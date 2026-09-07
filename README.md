@@ -6,414 +6,41 @@
 ![LangChain4j](https://img.shields.io/badge/LangChain4j-1.0.0--beta3-5B4B8A)
 ![License](https://img.shields.io/badge/License-MIT-blue)
 
-一个面向股票研究场景的 Java AI Agent：用 LangChain4j 组织模型与工具，用 LangGraph4j 编排可重试、逐节点持久化的 Plan-and-Execute 状态图，用 Milvus Dense + BM25 + RRF 完成混合检索，并通过金融时点约束、证据引用校验、可回放运行事件和可选多角色深度投研，把模型输出纳入可恢复、可检查的后端边界。
+面向股票研究的 Java AI Agent，支持行情、技术、财务、新闻分析，以及知识库问答和多轮对话。项目使用 LangChain4j 接入模型与工具，使用 LangGraph4j 编排任务，将计划校验、并行执行、失败重试、检查点恢复和证据引用落实为可测试的后端逻辑。
 
-> 项目只提供研究辅助能力，不执行证券交易，不构成投资建议，也不承诺收益或预测准确率。
+用户可以指定股票和分析日期，查看当时可见的数据与来源；也可以切换到深度投研，让多个角色基于同一份证据给出观点，再由 Judge 汇总。数据不足或校验失败时，系统返回明确的失败或降级说明。
 
-## 为什么不是普通的 ChatGPT Wrapper
+> 本项目用于研究辅助，不执行证券交易，不构成投资建议。
 
-项目重点不在“接一个模型接口”，而在模型输出如何进入受约束、可测试的后端系统：
+[快速开始](#快速开始) · [执行架构](#执行架构) · [关键实现](#关键实现) · [测试与验证](#测试与验证) · [简历与面试](docs/resume-and-interview.md)
 
-| 工程问题 | 项目中的处理方式 | 可核验代码 |
-| --- | --- | --- |
-| LLM 生成的计划不可信 | Planner 只提出候选计划；Java 规则完成意图、标的和任务白名单校验 | `AgentPlannerAssistant`、`PlanValidator`、`PlannerTextParser` |
-| 模型可能绕过流程乱调工具 | 图内任务由 `StockAnalysisTaskExecutor` 确定性映射；ANSWER 阶段使用无工具 Assistant | `StockAnalysisWorkflow`、`WorkflowAnswerGenerator` |
-| 工具失败后容易生成“看似完整”的答案 | Reflector 用确定性规则校验结果，Critic 只允许有限路由，失败任务受次数上限约束 | `WorkflowReflector`、`WorkflowCritic`、`WorkflowRetryPolicy` |
-| 单路向量检索对精确关键词不稳定 | 同一 Collection 执行 Dense ANN 与 BM25，再用 RRF 融合；融合结果还需通过稠密相似度阈值校验 | `MilvusHybridSearchClient`、`RetrievalService` |
-| 多轮追问容易丢主语或串话题 | 结合近期业务消息、当前话题摘要与话题状态生成独立查询；按话题拆分 Redis 模型窗口 | `QueryRewriteAssistant`、`ConversationTopicStore`、`ConversationContextService` |
-| 长对话无限增长 | Redis 保留近轮原文，较早消息递归压缩为独立摘要；摘要失败时回滚原始窗口 | `RedisChatMemoryStore`、`ShortTermSummaryService` |
-| 多用户长期记忆可能串数据 | 向量召回扩大候选池后按 `userId` 二次过滤，并校验 MongoDB 中的启用状态 | `LongTermMemoryService` |
-| 工作流中断后丢失进度或重复调工具 | 每个成功节点以 CAS 保存 Checkpoint；工具以 `executionId + taskId + attempt` 幂等记录恢复 | `WorkflowRunner`、`MongoExecutionStateStore`、`MongoToolExecutionStore` |
-| 金融回答可能偷看未来数据或编造数字 | 统一 `analysisDate`，工具按时点截断；数字结论必须引用当前 `EvidencePack` | `AnalysisContext`、`EvidencePackBuilder`、`ClaimEvidenceGuard` |
-| 长时间 Agent 只能黑盒等待 | 异步启动深度投研，以受控 `RunEvent` 和 SSE 展示阶段、重试、缺失及终态 | `ResearchExecutionController`、`InMemoryRunEventPublisher` |
-| 公共仓库难以复现 | 脱敏配置模板、固定版本 Compose、测试分层、后端/前端 CI | `application.example.yml`、`compose.yaml`、`ci.yml` |
+## 功能概览
 
-## 可靠 Agent 运行时与金融证据闭环
-
-这是当前项目最核心的工程增强。它不是又加了一层 Prompt，而是把“时点、数据、执行、引用、观测、复盘、评测”建模为显式的 Java 对象与确定性检查。
-
-| 边界 | 核心对象 | 确定性约束 |
-| --- | --- | --- |
-| 一次分析看什么时点 | `AnalysisContext` | 统一标的、`analysisDate`、模式、用户/会话/执行标识 |
-| 哪些数据能支撑结论 | `FinancialFact` / `EvidencePack` | 稳定 `evidenceId`、来源时间、截止日、缺失项、失败项与 `evidenceHash` |
-| 中断后从什么状态继续 | `ExecutionState` / `ToolExecutionRecord` | 节点级 CAS Checkpoint、图版本/计划摘要校验、工具幂等恢复 |
-| 长任务正在做什么 | `RunEvent` | 固定事件枚举、递增 sequence、有界回放，不承载 Prompt/思维链/工具正文 |
-| 多角色是否越权 | `DeepResearchService` / `ResearchConclusion` | 固定角色顺序与次数，共享同一证据包，Judge 结果再由 Java 校验 |
-| 历史判断如何反馈未来研究 | `ResearchDecision` | 按交易日确定性计算 1/5/20 日后验，与聊天记忆分开存储 |
-
-### 从请求到可验证结论
-
-```mermaid
-flowchart TD
-    Request["用户问题 + analysisDate + researchMode"] --> Context["AnalysisContext<br/>统一标的与时点"]
-    Context --> PIT["按时点读取<br/>K 线 / 财报 / 新闻"]
-    PIT --> Tasks["确定性工具节点<br/>幂等记录 + Checkpoint"]
-    Tasks --> Pack["EvidencePack<br/>事实 + 缺失 + 时点 + Hash"]
-    Pack --> Mode{"STANDARD / DEEP"}
-    Mode -->|STANDARD| Answer["无工具答案生成"]
-    Mode -->|DEEP| Roles["基本面→技术面→新闻<br/>看多→看空→风险→Judge"]
-    Roles --> Conclusion["ResearchConclusion<br/>评级 + 置信度 + 证据 ID"]
-    Conclusion --> Answer
-    Answer --> Guard["Claim–Evidence Guard<br/>引用 / 数字 / 日期校验"]
-    Guard --> Result["带 [evidence:ev-…] 的 Markdown 结论<br/>或确定性降级"]
-    Tasks -.-> Events["RunEvent + SSE"]
-    Roles -.-> Events
-    Result --> Decision["深度模式决策记录<br/>后验复盘"]
-```
-
-### 1. `AnalysisContext`：先固定“当时可见”
-
-- 每次工作流共享同一个不可变上下文：`symbol`、`analysisDate`、`researchMode`、`executionId`、`traceId`、`userId` 与 `sessionId`。
-- 历史 K 线先截断到 `analysisDate`；财务数据按披露日选择；新闻过滤截止日之后的发布时间。
-- 历史数据缺失时不用当前值偷偷回填；时点无法确定的数据显式标记为 `UNKNOWN`，未来数据标记为 `REJECTED`。
-
-这个边界主要解决回测和历史问题中的 look-ahead bias：系统只能使用在分析日当时已知的信息。
-
-### 2. `EvidencePack`：模型不再直接拿工具长文本当事实
-
-`EvidencePackBuilder` 将工作流中的行情、技术、财务与新闻工具结果转为不可变 `FinancialFact`。每条事实保留指标、数值/单位、期间、发布时间、来源 URL、公式、输入快照和时点状态，再由规范化内容生成稳定 `ev-...` ID。证据包还单独保存：
-
-- `missingItems`：本轮应有但没有获取的数据；
-- `toolFailures`：工具失败的受控摘要；
-- `dataAsOf`：整个证据包的数据截止时间；
-- `evidenceHash`：可用于判断两次研究是否基于同一批证据；
-- `modelView`：仅从结构化证据确定性渲染的有界模型上下文。
-
-`ClaimEvidenceGuard` 要求答案以 `[evidence:ev-...]` 引用当前证据包中时间已核实的证据，拒绝未知/跨包 ID、无引用的阿拉伯数字及中文数值表达，以及晚于 `dataAsOf` 的日期。标准回答失败时只允许一次重写；深度裁决失败或缺失时直接返回确定性说明，不再调用普通回答模型绕过裁决。重复文本和超长连续中文段落也会被质量门禁拒绝。这些规则不等于对每个自然语言判断完成了事实核验。
-
-新闻检索使用公司新闻/公告主题，不直接复制用户的策略或 skill 指令。每次至少尝试媒体新闻与官方披露两类来源；官方来源使用通用搜索并限定交易所、巨潮和已配置的公司官网域名，不只使用新闻索引。新闻按请求天数筛选，官方公告/定期报告单独使用一年披露窗口，并在最终结果中优先保留官方来源。股票名称从行情服务解析后与代码一起参与主体匹配；名称解析失败时退回代码，不猜公司官网。
-
-`news-search.issuer-domains` 支持 `600519=moutai.com.cn,moutaichina.com;其他代码=经核对的官网域名`，默认只配置已核对的茅台官网，其他股票仍检索通用官方披露网站。`news-search.issuer-listings` 支持 `代码=已核实的官方披露目录URL`（分号分隔），默认配置[茅台官网财务报告目录](https://www.moutai.com.cn/mtgf/tzzgx/cwbg/index.html)；配置 Tavily 时会直接提取目录，把每条报告的原文链接和披露日期关联起来，不把某条报告日期赋给整个目录，也不把 PDF 上传目录日期当作披露日期。目录证据明确注明仅核实文件与日期、尚未提取全文或指标。保留媒体来源名额，避免最终列表被报告不同版本占满。
-
-日期支持 ISO、英文 GMT、中文日期标签与英文绝对日期；不会把报告期或抓取时间当成发布日期。来源仍须通过非教程/代码仓库、主体、链接和时点筛选，媒体结果额外经过语义相关性过滤；已核实的官方披露不再因向量分数被误删。无日期原文不会被强行采纳。财务指标另外保留实际使用的东方财富接口 URL，不伪装为公司财报 PDF。
-
-可选联网检查：`mvn -Dtest=NewsSearchLiveTest -Dnews.live=true test`，读取本地新闻 API 配置，验证检索层返回腾讯行情页以外且包含官方来源的结果；不调用 LLM、不写业务数据库，未启用 Embedding 语义过滤，默认测试跳过此项。2026-09-06 实测返回 3 份茅台官网报告链接和 2 条媒体报道。
-
-### 3. 逐节点 Checkpoint 与工具幂等
-
-- `ExecutionState` 保存 `graphVersion`、规范化 `planHash`、`lastCompletedNode`、`eventSequence`、任务尝试历史、证据包与最终结论。
-- 节点动作成功后，先以 `executionId + version` 做 MongoDB CAS 保存，持久化成功后才发布 `NODE_COMPLETED`；`CRITIC` 路由也在返回 `Command` 前保存。
-- 恢复前校验固定 `graphVersion` 与当前计划摘要，不兼容快照以 `INCOMPATIBLE_CHECKPOINT` 拒绝，避免新图误读旧状态。
-- `ToolExecutionRecord` 以 `executionId:taskId:attempt` 为唯一键，状态只允许 `STARTED -> SUCCEEDED/FAILED`；成功时原子保存原始结果和证据快照。
-- 恢复时已成功的工具零调用复用记录；遗留 `STARTED` 只允许当前四类明确的只读投研工具以新 attempt 重试。
-
-这些机制提供了可验证的 at-least-once 恢复边界，但不宣称通用 Exactly-once，也不是 LangGraph 原生的任意节点游标续跑。
-
-### 4. `RunEvent` + SSE：只暴露运行元数据
-
-`RunEvent` 只包含 `executionId`、`traceId`、递增 `sequence`、时间、固定事件类型、节点和最多 500 字符的受控摘要。它没有 Prompt、模型思考正文或工具结果字段。进程内发布器为每个 execution 保留最近 200 条事件，SSE 先回放快照，再从 sequence 游标补发订阅间隙的事件。
-
-深度投研使用独立异步端点：
-
-```text
-POST /api/research/executions
-GET  /api/research/executions/{executionId}?userId=...
-GET  /api/research/executions/{executionId}/events?userId=...   # text/event-stream
-```
-
-POST 只接受 `researchMode=DEEP`，返回 HTTP 202 与 `executionId/sessionId/submittedAt`。后台执行器默认使用 2 个工作线程和 32 个有界排队位；队列满时返回稳定错误，不创建无界线程。断线不取消后台任务；前端会关闭旧 `EventSource`、查询一次执行状态，并在未终态时显示手动重连。
-
-### 5. 默认可控，深度投研可选
-
-| 模式 | 入口 | 执行方式 | 适用场景 |
-| --- | --- | --- | --- |
-| `STANDARD` | `/api/chat/send` | 现有 Planner + 确定性工具 + 证据答案，同步返回 | 常规行情、技术、财务和新闻问答；默认模式 |
-| `DEEP` | `/api/research/executions` | 先建证据包，按证据范围并行执行适用角色，再交给 Judge，通过 SSE 返回进度 | 需要多视角对抗、风险审议和结构化评级的长任务 |
-
-`DeepResearchAssistant` 不注册业务工具，也不绑定会话 MemoryId。适用角色和 Judge 都只看同一个有界 `EvidencePack`；每个角色最多一次调用。角色输出在截取或传给 Judge 之前经过质量门禁，异常输出被丢弃。Judge JSON 必须通过评级枚举、0～1 置信度、正文质量、`dataAsOf` 和非空证据 ID 校验；角色失败会记录降级，Judge 失败则返回 `INSUFFICIENT_DATA`，不继续生成评级或仓位建议。
-
-### 6. 决策复盘不等于对话记忆
-
-只有成功的深度结论才会幂等保存 `ResearchDecision`，记录执行、用户、标的、分析日、评级、置信度、证据哈希与图版本。`DecisionReviewService` 不调用 LLM，而是从历史 K 线确定性计算 1/5/20 个交易日的标的收益与相对沪深 300 ETF 的收益。
-
-复盘只在 `outcomeAvailableAt <= 本次 analysisDate` 且用户、标的相同时可见，作为独立“历史校准参考”传入深度研究，不能冒充本轮 evidenceId。这和用户偏好、话题摘要、近轮原文是三类不同的记忆。
-
-### 7. 离线 Agent Eval：先固定可回归基线
-
-`AgentEvalRunner` 使用函数式适配器注入确定性观测，默认不访问网络、模型或外部基础设施。当前 5 个固定样本覆盖 Planner、话题路由、RAG、证据门禁和工作流恢复，并输出字段顺序稳定的 JSON 报告。
-
-| 指标 | 当前离线 fixture 基线 |
-| --- | ---: |
-| Accuracy | 1.0 |
-| Recall@3 | 1.0 |
-| nDCG@3 | 0.9197207891481876 |
-| Citation Coverage | 1.0 |
-| Numeric Consistency | 1.0 |
-| 平均适配器延迟 | 30.0 ms |
-| 总调用计数 | 3 |
-
-> 这些是仓库内固定样本和确定性适配器的回归基线，不是真实市场准确率、线上模型质量或生产延迟承诺。在线评测必须使用显式 Profile，不进入默认 CI。
-
-## 核心能力
-
-- 股票实时行情、技术指标、财务数据、新闻检索、多股比较、组合分析和可选趋势预测工具。
-- Planner → Validator → StateGraph → Reflector → Critic → Answer 的受限 Plan-and-Execute 链路。
-- Milvus 2.5 Dense Vector + BM25 Sparse Vector + RRF 混合检索，并支持失败时降级为稠密语义检索。
-- 基于近期对话、话题摘要和话题状态的结构化查询改写；按话题隔离 Redis 模型窗口，并支持旧话题返回。
-- Redis 近轮原文与递归摘要、MongoDB 完整业务历史、MongoDB/Milvus 用户长期记忆组成分层上下文。
-- MongoDB 逐节点 Checkpoint、工具幂等记录、任务重试历史与乐观锁冲突保护。
-- 统一金融时点上下文、EvidencePack 与 Claim–Evidence Guard，防止未来数据和无引用数字进入结论。
-- 默认标准分析与可选多角色深度投研；异步执行通过受控 RunEvent/SSE 展示进度。
-- 独立决策复盘与离线 Agent Eval，分别为历史校准和稳定回归提供可追溯基线。
-- `traceId`、`sessionId`、`executionId` 关联的模型、工作流和工具诊断日志；当前测试配置默认记录模型请求和响应正文，生产环境应关闭。
-- React + Vite 前端，展示标准/深度模式、执行时间线、会话、证据缺失、知识来源和工具结果。
-
-## 技术栈
-
-| 层次 | 技术 |
+| 能力 | 当前实现 |
 | --- | --- |
-| 后端 | Java 21、Spring Boot 3.3、Maven |
-| Agent | LangChain4j 1.0.0-beta3、LangGraph4j 1.6.1 |
-| 模型 | OpenAI-compatible Chat API、DashScope Embedding |
-| 数据 | MongoDB、Redis、Milvus Java SDK 2.5.7 |
-| 检索 | Dense COSINE、BM25、RRF、语义阈值复核 |
-| 前端 | React 19、Vite 8、React Router |
-| 工程化 | Docker Compose、JUnit 5、Mockito、Node Test Runner、GitHub Actions |
+| 标准分析 | 同步股票问答；合法计划进入确定性工作流，支持行情、技术、财务和新闻任务 |
+| 深度投研 | 异步接单，按证据范围并行运行适用角色，再由 Judge 输出结构化结论；前端展示 SSE 进度 |
+| 知识库问答 | 文档与飞书资料入库，Milvus Dense + BM25 + RRF 混合检索，Parent/Child 分层上下文 |
+| 多轮对话 | 查询改写、股票话题切换与返回、Redis 原文窗口和递归摘要、用户主动录入的长期记忆 |
+| 执行与来源追踪 | MongoDB 检查点、工具执行记录、金融证据 ID、数据截止日与受控运行事件 |
+| 决策复盘 | 保存成功的深度结论，计算后续交易日收益，作为之后研究的校准参考 |
 
-## 系统架构
-
-```mermaid
-flowchart LR
-    UI["React / Vite"] --> API["Spring Boot REST API"]
-    API -->|STANDARD 同步| Chat["ChatService"]
-    API -->|DEEP 异步| Async["ResearchExecutionService<br/>有界线程池"]
-    Async --> Chat
-
-    Chat --> Rewrite["QueryRewriteAssistant<br/>指代消解 + 话题边界"]
-    Rewrite --> RAG["RAG Pipeline"]
-    RAG --> Hybrid["Milvus<br/>Dense + BM25 + RRF"]
-    RAG --> Docs["MongoDB<br/>文档元数据"]
-
-    Chat --> Planner["Planner + PlanValidator"]
-    Planner -->|合法股票计划| Context["AnalysisContext<br/>symbol + analysisDate + mode"]
-    Context --> Graph["LangGraph4j StateGraph<br/>逐节点 Checkpoint"]
-    Planner -->|无效或非股票计划| Agent["受工具上限约束的 Assistant"]
-    Graph --> Tools["7 个业务 Tool<br/>关键只读任务幂等"]
-    Agent --> Tools
-    Tools --> Evidence["FinancialFact + EvidencePack"]
-    Evidence --> Mode{"STANDARD / DEEP"}
-    Mode -->|STANDARD| Answer["无工具 Answer Generator"]
-    Mode -->|DEEP| Council["固定多角色审议 + Judge"]
-    Council --> Answer
-    Answer --> Guard["Claim–Evidence Guard"]
-
-    Chat --> Short["Redis<br/>近轮消息 + 递归摘要"]
-    Chat --> Long["MongoDB + Milvus<br/>用户长期记忆"]
-    Chat --> History["MongoDB<br/>会话、消息、Checkpoint"]
-    Chat --> Review["ResearchDecision<br/>确定性后验复盘"]
-    Graph -.-> Event["RunEvent Publisher"]
-    Event -.-> SSE["SSE 回放 / 订阅"]
-    SSE -.-> UI
-```
-
-### 一次请求的真实链路
-
-```mermaid
-flowchart TD
-    Request["POST /api/chat/send"] --> Trace["生成 traceId<br/>同 sessionId 进程内串行化"]
-    Trace --> Session["获取或创建会话<br/>校验 userId 归属"]
-    Session --> Rewrite["当前问题 + 近期对话 + 话题摘要<br/>生成结构化 retrievalQuery"]
-    Rewrite --> Topic["识别 NEW / CONTINUE / SWITCH / RETURN<br/>选择话题级模型记忆"]
-    Topic --> RagSwitch{"enableRag?"}
-    RagSwitch -->|yes| Retrieval["混合检索 / 语义降级<br/>过滤禁用或删除中文档"]
-    RagSwitch -->|no| Memory
-    Retrieval --> Memory["短期摘要 + 长期记忆召回"]
-    Memory --> ToolSwitch{"enableTools?"}
-    ToolSwitch -->|no| NoTool["无工具 Assistant"]
-    ToolSwitch -->|yes| Plan["Planner 提议 + Validator 校验"]
-    Plan -->|合法股票计划| Workflow["Plan-and-Execute 工作流"]
-    Plan -->|未通过| FullAgent["受调用次数限制的工具 Assistant"]
-    Workflow --> Response["格式化 ChatResponse"]
-    FullAgent --> Response
-    NoTool --> Response
-    Response --> Persist["保存业务消息、刷新摘要、记录 RAG Trace"]
-```
-
-Planner 使用经过指代消解的独立查询提出计划，但不把 RAG 上下文当成执行指令。RAG 与长期记忆用于检索和回答；合法股票计划进入确定性工作流。这个边界既让“那它去年呢”一类追问能够补全标的和时间，又避免知识库文本改变工具权限。
-
-## Plan-and-Execute 工作流
-
-```mermaid
-flowchart TD
-    Start([START]) --> Init["INIT<br/>启动 ExecutionState"]
-    Init --> Market["MARKET_DATA"]
-    Init --> Technical["TECHNICAL_ANALYSIS"]
-    Init --> Financial["FINANCIAL_ANALYSIS"]
-    Init --> News["NEWS_ANALYSIS"]
-    Market --> Reflector["REFLECTOR<br/>状态、空值、错误词、标的一致性"]
-    Technical --> Reflector
-    Financial --> Reflector
-    News --> Reflector
-    Reflector --> Critic["CRITIC<br/>有限路由"]
-    Critic -->|可信| Pack["EVIDENCE_PACK<br/>时点校验 + 稳定证据 ID"]
-    Critic -->|可重试| Retry["RETRY<br/>只重置问题任务"]
-    Critic -->|终态失败| Failed["FAILED"]
-    Retry --> Init
-    Pack --> Mode{"researchMode"}
-    Mode -->|STANDARD| Answer["ANSWER<br/>无工具生成 + 证据校验"]
-    Mode -->|DEEP| Deep["DEEP_RESEARCH<br/>多角色审议 + Judge"]
-    Deep --> Answer
-    Answer --> End([END])
-    Failed --> End
-```
-
-这里有三个刻意的约束：
-
-1. `AgentPlannerAssistant` 不注册任何 Tool，只能返回候选 JSON；`PlanValidator` 才决定计划是否能执行。
-2. 图节点按任务类型直接调用 Java Tool，不让模型在执行阶段重新选择工具。
-3. `WorkflowAnswerGenerator` 使用无工具 Assistant，只能总结经过 Reflector 校验的任务结果。
-
-图中四类任务是从 `INIT` 分支并在 `REFLECTOR` 汇合的独立节点。当前实现没有提供并发性能基准，因此不宣称并行加速。代码中保留了 `ADD_NEWS` 扩展路由，但当前 Reflector 明确要求新闻任务必须由 Planner 提出，所以该路由目前不可达，不作为已交付能力宣传。
-
-### 执行状态与 Checkpoint 边界
-
-`ExecutionState` 保存计划、任务状态、尝试次数、结果历史、`graphVersion`、`planHash`、`lastCompletedNode`、`eventSequence`、EvidencePack、深度结论和版本号。新执行先保存初始状态；每个图节点动作成功后，再按旧版本 CAS 持久化，持久化成功后才发布节点完成事件。
-
-`resume(executionId)` 在执行前校验图版本与规范化计划摘要，然后从最近一次成功 Checkpoint 重新进入受控图。已成功工具的原始结果与证据快照由 `ToolExecutionRecord` 恢复，不再调用外部工具。这是节点级持久化和关键只读工具幂等，仍不是分布式调度、通用 Exactly-once 或 LangGraph 原生任意节点游标续跑。
-
-## 混合 RAG
-
-查询使用 COSINE Dense ANN 与 BM25 两路召回，再由 `RRFRanker` 融合名次。RRF 分数只表示融合后的排序位置，不等同于语义相似度，因此 `RetrievalService` 还会用带 `minScore` 的 Dense 结果复核候选，并过滤已禁用、删除中或非活动入库版本的文档。Hybrid 客户端失败时可按配置降级为单路 Dense 检索。
-
-### Parent–Child 分层切分策略
-
-固定字符切分容易同时产生两个问题：整章向量包含过多主题，召回不够精确；片段过短时又会丢掉标题、论据和上下文。本项目把“用于召回的粒度”和“交给模型阅读的粒度”分开：Child 负责检索，Parent 负责恢复章节语义。
-
-```mermaid
-flowchart LR
-    Raw["原始文档"] --> Parent["Parent Section<br/>标题层级 + 完整正文"]
-    Parent --> Child["Child<br/>600～800 字符"]
-    Child --> Dense["Dense Vector"]
-    Child --> BM25["BM25 Sparse Vector"]
-    Dense --> RRF["RRF 融合 + Dense 复核"]
-    BM25 --> RRF
-    RRF --> Hit["命中 Child"]
-    Hit --> Assemble["回到同一 Parent<br/>全文或相邻窗口"]
-```
-
-切分过程分为五步：
-
-1. **识别 Parent 边界。** `HierarchicalDocumentChunker` 识别 Markdown `#`～`######`、中文“第X章/节/篇/部分”、“一、”“（一）”、`1.` 和 `1.2.3` 等标题。标题栈维护完整 `headingPath`；没有可识别标题时，整篇文档作为一个 Parent。
-2. **补齐金融元数据。** `stockCode`、`year` 优先读取文档显式 metadata；缺失时依次从文档标题、标题路径和正文提取。Parent 同时继承 tags，并保留完整原文。
-3. **在 Parent 内生成 Child。** 每个 Child 目标 700 字符，允许范围 600～800；优先选择最接近目标的段落边界，其次选择句末，仍找不到时按字符位置兜底。相邻块优先在 80～120 字符范围内从语义边界开始重叠，否则使用约 100 字符重叠；不足 600 字符的尾块在合并后不超过 800 字符时并入前块。
-4. **分离索引文本与展示正文。** Embedding 输入由“完整标题路径 + Child 正文”组成，降低脱离章节后的语义歧义；Child 正文、`parentSectionId`、`chunkIndex`、offset、股票代码、年份和标签分别写入语义向量索引与 Hybrid Collection，Parent Section 保存在 MongoDB。
-5. **命中后恢复 Parent 上下文。** 同一 Parent 的命中先按 `chunkIndex` 聚合。正文不超过 1,200 字符的 Parent 直接返回全文；长 Parent 扩展命中块前后各一个 Child，并使用原始 offset 合并重叠区间，避免依赖字符串去重误删合法重复内容。
-
-长 Parent 的摘要是确定性的抽取式摘要，不额外调用 LLM：标题和首个有效段落首先进入候选，再优先选择包含营业收入、净利润、现金流、估值、风险、同比/环比、数字和金融单位的句子，输出上限为 600 字符。摘要负责提供章节概览，最终证据仍来自命中窗口的原文。
-
-| 层级 | 保存内容 | 是否参与召回 | 回答阶段用途 |
-| --- | --- | --- | --- |
-| Parent | 标题路径、完整正文、摘要、Child offset、版本与金融元数据 | 否 | 恢复整章或相关窗口 |
-| Child | 600～800 字符正文、标题路径、Parent/版本/顺序信息 | 是 | Dense、BM25 与语义复核 |
-
-这套策略的代价是入库结构和版本管理更复杂，并增加一次 Parent 查询；当前没有公开 Recall@K 或延迟基准，因此只描述可由代码验证的机制，不宣称准确率提升比例。
-
-## 查询改写、话题路由与分层记忆
-
-### 为什么不能直接拼接完整历史
-
-直接把整个会话拼到查询里，会把旧股票、过期时间范围和寒暄一起送进检索与 Planner。只保留最近 N 条又会在用户说“回到刚才的茅台”时丢失旧话题。本项目将完整业务历史、用于路由的近期上下文、按话题隔离的模型窗口和用户长期记忆分开管理。
-
-```mermaid
-flowchart TD
-    Current["当前问题"] --> Resolver["QueryRewriteAssistant"]
-    Recent["MongoDB 近期业务消息"] --> Resolver
-    Summary["当前话题递归摘要"] --> Resolver
-    Topics["Redis 当前/最近话题"] --> Resolver
-    Resolver --> Query["standaloneQuery"]
-    Resolver --> Relation["NEW / CONTINUE / SWITCH / RETURN"]
-    Resolver --> Key["topicKey"]
-    Key --> TopicMemory["话题级 Redis 模型窗口"]
-    Query --> RAG2["RAG"]
-    Query --> Recall["长期记忆召回"]
-    Query --> Planner2["Planner"]
-    TopicMemory --> Answer2["最终回答"]
-```
-
-### 一轮对话如何路由
-
-1. `ChatMemoryService` 从 MongoDB 读取最近 30 条业务消息；`ConversationContextService` 只渲染最后 12 条，整体不超过 6,000 字符，单条最多 1,000 字符。
-2. `QueryRewriteAssistant` 同时读取当前问题、近期对话、当前话题摘要和最近话题列表，返回 `standaloneQuery/topicKey/topicRelation/confidence`。例如“那它去年现金流呢”会被改写为包含公司、年份和指标的独立问题。
-3. 后端不直接信任模型输出：空结果或调用异常时退回原问题；非 JSON 输出按普通改写文本兼容；问题或改写结果中存在明确六位股票代码时，以代码确定性覆盖 `topicKey` 和话题关系。
-4. `topicKey` 归一化后生成稳定 UUID，并与 `userId:sessionId` 组合成模型 `memoryId`。同一话题复用原 Redis 窗口；新话题进入独立窗口；回到旧话题时恢复对应窗口。`general` 话题继续使用基础 memoryId。
-5. 独立查询被同一轮的 RAG、长期记忆召回和 Planner 共同使用，避免三个子系统各自理解出不同的股票或时间范围。最终 Assistant 仍收到用户原话，保证回答语气和交互意图不被改写文本替代。
-6. 本轮回答成功并写入业务消息后才更新活动话题；失败重试不会提前推进话题状态。
-
-| 关系 | 判定含义 | 模型记忆行为 |
-| --- | --- | --- |
-| `NEW` | 会话首次出现明确研究对象 | 创建或进入对应话题窗口 |
-| `CONTINUE` | 当前问题延续活动话题 | 复用当前话题窗口并补全指代 |
-| `SWITCH` | 明确转向新的股票或主题 | 隔离旧窗口，进入新话题窗口 |
-| `RETURN` | 回到最近讨论过的旧话题 | 复用旧话题 UUID 与窗口 |
-
-### 上下文权重与噪声控制
-
-- **最高优先级：** 当前问题、显式股票代码以及消解后的独立查询。
-- **当前话题上下文：** 最多选择 8 条与 `topicKey` 或独立查询相关的近期业务消息；“好的、谢谢、收到、OK”等低信息消息不进入显式上下文。
-- **话题摘要：** Redis 模型窗口达到消息数阈值或字符预算任一条件时，将较早一半消息与旧摘要递归合并，最近原文继续保留。摘要为空、超长或 Redis 更新失败时恢复原窗口，不静默丢历史。
-- **长期记忆：** 只召回用户主动写入且与独立查询相似的内容；候选先扩大，再按 `userId` 和 MongoDB 启用状态过滤，最终限制 Top-K。
-
-话题状态最多保留最近 5 个 key，并与话题消息、摘要使用相同 TTL。工具调用发散或连接异常时只清理当前话题的模型窗口；删除业务会话时同步清理已知话题窗口、摘要和话题状态。
-
-### 各存储的职责
-
-| 存储 | 数据 | 生命周期与用途 |
-| --- | --- | --- |
-| MongoDB `chat_messages` | 完整用户/助手业务消息 | 前端展示、查询改写、跨话题恢复 |
-| Redis topic state | 当前话题和最近 5 个话题 key | 决定继续、切换或返回哪个模型窗口 |
-| Redis ChatMemory | 每个话题最近原始消息，默认最多 20 条 | LangChain4j 最终回答和 Tool Calling |
-| Redis summary | 每个话题的递归摘要 | 原始窗口压缩后的连续上下文，随 TTL 过期 |
-| MongoDB + Milvus long-term memory | 用户主动录入的偏好或长期事实 | 跨会话语义召回 |
-
-当前话题识别仍部分依赖模型输出，确定性保护主要覆盖显式六位股票代码；相关消息筛选使用词面匹配而非单独的语义模型。会话锁也是单 JVM 内锁。多实例和严格多租户场景仍需要分布式并发控制、认证主体及存储层过滤。
-
-## 工具与失败语义
-
-系统注册七个业务工具：
-
-| Tool | 作用 |
-| --- | --- |
-| `MarketDataTool` | 实时行情 |
-| `TechnicalAnalysisTool` | 基于真实日 K 计算截止日收盘、日涨跌、MA5、MA20 与均线趋势 |
-| `FinancialAnalysisTool` | 财务报告与估值指标 |
-| `NewsRagTool` | 新闻、公告和研究资料 |
-| `TimeSeriesPredictionTool` | 调用可选外部预测服务 |
-| `StockComparisonTool` | 多股票统一口径比较 |
-| `PortfolioAnalysisTool` | 组合收益、分布和集中度分析 |
-
-工具统一返回 `ToolResult<T>`，区分 `success/data/errorCode/errorMessage/costTime`。普通 Assistant 的连续工具调用上限默认为 10；图工作流则由任务类型确定性调用工具。外部预测服务不可用不会被包装成“成功预测”，而是返回结构化失败。
-
-## 可观测性与隐私
-
-- 每次对话生成 `traceId`；工作流继续关联 `executionId`，会话使用 `sessionId`。
-- `TracingChatLanguageModel` 统一记录模型调用开始、结束、耗时与异常。
-- 为方便本地测试，模型请求和响应正文默认可见；设置 `TRACE_LOGGING_INCLUDE_CONTENT=false` 可恢复 `<redacted>`。正文受 `TRACE_LOGGING_MAX_CONTENT_LENGTH` 限制，`0` 表示不截断。配置修改后需重启后端。
-- 核心对话、RAG、知识库和工具日志默认只记录标识、长度、数量、状态与错误类型，不直接输出问题、上下文、文档标题或工具结果。
-- 异常栈、第三方 SDK 日志和显式开启的模型正文仍需要部署侧的访问控制、保留周期与集中式脱敏策略。
-
-不要在共享环境开启完整模型正文日志；部署时应设置 `TRACE_LOGGING_INCLUDE_CONTENT=false`。正文可能包含用户问题、检索上下文和模型输出。
+技术栈：Java 21、Spring Boot 3.3.0、LangChain4j 1.0.0-beta3、LangGraph4j 1.6.1、MongoDB、Redis、Milvus 2.5、React、Vite。版本以 [pom.xml](pom.xml)、[前端依赖](frontend/package.json) 和 [Compose](compose.yaml) 为准。
 
 ## 快速开始
 
-### 1. 环境要求
+### 1. 准备环境与配置
 
-- JDK 21
-- Maven 3.9+
-- Node.js 20.19+（推荐 24）
-- Docker Compose V2
-- 至少一个兼容 OpenAI Chat API 的模型凭据
-- 完整 RAG 需要 DashScope Embedding 与 Milvus
+需要 JDK 21、Maven 3.9+、Node.js 20.19+、npm 10+ 和 Docker Compose V2；前端 CI 使用 Node.js 24。
 
-### 2. 配置
-
-首次克隆时复制脱敏模板；如果本地文件已经存在，不要执行复制命令覆盖：
+首次运行时复制配置模板，`-n` 用于保留已有本地配置：
 
 ```bash
-cp src/main/resources/application.example.yml src/main/resources/application.yml
-cp .env.example .env
+cp -n src/main/resources/application.example.yml src/main/resources/application.yml
+cp -n .env.example .env
 ```
 
-在本地 `.env` 中填写密钥，再导入环境变量。真实 `application.yml`、`application-test.yml` 和 `.env` 已被 Git 忽略。
+在 `.env` 中填写模型凭据。按示例配置运行完整功能，需要 `OPENAI_API_KEY` 和 `DASHSCOPE_API_KEY`；新闻搜索至少配置 `TAVILY_API_KEY` 或 `SERPAPI_API_KEY`。飞书同步和外部预测服务按需配置。
 
 ```bash
 set -a
@@ -421,22 +48,17 @@ source .env
 set +a
 ```
 
-完整字段、最小/完整能力矩阵及隐私开关见 [配置说明](docs/configuration.md)。
+环境变量需导入启动后端的终端；使用 IDE 时配置对应的运行环境变量。配置字段和服务说明见 [配置文档](docs/configuration.md)。本地 `.env`、`application.yml` 和 `application-test.yml` 已被 Git 忽略。
 
-### 3. 启动基础设施
+### 2. 启动基础设施与应用
 
 ```bash
 docker compose up -d
 docker compose ps
-```
-
-Compose 固定 MongoDB、Redis、Milvus、etcd 与 MinIO 镜像版本，并为有状态服务配置命名卷和健康检查。
-
-### 4. 启动后端与前端
-
-```bash
 mvn spring-boot:run
 ```
+
+另开终端启动前端：
 
 ```bash
 cd frontend
@@ -444,14 +66,15 @@ npm ci
 npm run dev
 ```
 
-默认地址：
+| 入口 | 默认地址 |
+| --- | --- |
+| 前端 | `http://localhost:5173` |
+| 后端健康检查 | `http://localhost:8080/api/health` |
+| Milvus WebUI | `http://localhost:9091/webui/` |
 
-- 后端：`http://localhost:8080`
-- 健康检查：`http://localhost:8080/api/health`
-- 前端：`http://localhost:5173`
-- Milvus WebUI：`http://localhost:9091/webui/`
+Compose 提供 MongoDB、Redis、Milvus 及其 etcd、MinIO 依赖，配置了固定镜像版本、命名卷和健康检查。知识库检索需要先录入文档；外部预测工具还需要独立预测服务。
 
-### 5. 请求示例
+### 3. 发起标准分析
 
 ```bash
 curl -X POST http://localhost:8080/api/chat/send \
@@ -465,16 +88,16 @@ curl -X POST http://localhost:8080/api/chat/send \
   }'
 ```
 
-`enableTools=true` 时会先生成并校验计划；合法股票计划进入状态图，未通过则使用受工具调用上限约束的通用 Assistant。`enableRag=true` 时检索知识库并返回可展示的来源列表。
+`orderId` 在当前接口中用于传入股票标识。继续对话时携带返回的 `sessionId`。`enableRag` 控制知识检索，`enableTools` 控制工具能力；二者分别生效。
 
-需要深度投研时，显式使用异步端点和 `DEEP` 模式：
+### 4. 发起深度投研
 
 ```bash
 curl -X POST http://localhost:8080/api/research/executions \
   -H "Content-Type: application/json" \
   -d '{
     "userId": "demo-user",
-    "message": "以 2025-06-30 当时可见信息深度分析贵州茅台",
+    "message": "基于指定分析日可见的信息，分析贵州茅台的基本面、技术面和新闻风险",
     "orderId": "600519.SH",
     "analysisDate": "2025-06-30",
     "researchMode": "DEEP",
@@ -483,124 +106,255 @@ curl -X POST http://localhost:8080/api/research/executions \
   }'
 ```
 
-返回的 `executionId` 可用于查询状态或订阅 SSE；前端已在主界面提供醒目的“标准分析 / 深度投研”选择和四阶段时间线。
+接口返回 HTTP 202，以及 `executionId`、`sessionId` 和 `submittedAt`。用返回的执行 ID 查询状态或订阅事件：
 
-## 测试分层与 CI
+```text
+GET /api/research/executions/{executionId}?userId=demo-user
+GET /api/research/executions/{executionId}/events?userId=demo-user
+```
+
+事件接口使用 `text/event-stream`。前端提供模式切换、阶段时间线、来源查看和断线后的手动重连。历史日期示例用于展示时点约束，能否完成分析取决于外部来源是否提供足够的历史数据。
+
+## 执行架构
+
+```mermaid
+flowchart TD
+    UI["React 前端"] --> API["标准对话 / 异步深度投研"]
+    API --> Chat["ChatService<br/>会话串行化与流程编排"]
+    Chat --> Context["ConversationContextService<br/>问题补全、话题路由、记忆上下文"]
+    Context --> Query["独立查询"]
+    Query --> RAG["RagPipelineService<br/>Hybrid RAG"]
+    Query --> Execution["AgentExecutionService<br/>本地解析 / 模型规划 + Validator"]
+    Execution -->|合法股票计划| Graph["LangGraph4j 状态图<br/>并行工具、反思、重试、证据校验"]
+    Execution -->|无有效计划| Assistant["通用工具助手<br/>连续调用次数上限"]
+    Execution -->|工具关闭| Plain["无工具助手"]
+    RAG -.->|助手回答上下文| Execution
+    Graph --> Result["ResponseAssembler<br/>回答、来源与本轮工具记录"]
+    Assistant --> Result
+    Plain --> Result
+    Result --> Persist["ConversationPersistenceService<br/>消息保存、话题推进与摘要刷新"]
+    Graph -.-> Store["MongoDB Checkpoint / 工具记录"]
+    Graph -.-> Events["RunEvent + SSE"]
+    Events -.-> UI
+```
+
+`ChatService` 保留入口协调、同会话串行化和 MDC 追踪；上下文准备、Agent 执行、响应组装、持久化与失败处理分别交给职责服务。详细调用关系和行为约定见 [对话服务职责拆分](docs/chat-service-refactoring.md)。
+
+同一份独立查询用于 RAG、长期记忆召回和 Planner。RAG 文本不作为计划指令；工作流有最终答案时直接使用，工作流回答的事实边界是经过校验的工具证据。通用助手保留自主 Tool Calling，其约束范围与确定性股票工作流不同。
+
+## 关键实现
+
+### 1. 计划校验与并行状态图
+
+明确请求先尝试本地规则解析，不能得到有效计划时再调用无工具的 Planner。所有候选都经过 `PlanValidator`，检查意图、股票代码与任务白名单，再按任务类型映射到 Java 工具。
+
+```mermaid
+flowchart TD
+    Start([START]) --> Entry{"nextNode<br/>新执行从 INIT 开始"}
+    Entry --> Init["INIT"]
+    Entry -.->|恢复示例| Critic
+    Init --> Dispatch["DISPATCH"]
+    Dispatch --> Market["行情"]
+    Dispatch --> Technical["技术"]
+    Dispatch --> Financial["财务"]
+    Dispatch --> News["新闻"]
+    Market --> Join["TASKS_JOIN<br/>合并任务增量 + CAS 保存"]
+    Technical --> Join
+    Financial --> Join
+    News --> Join
+    Join --> Reflector["REFLECTOR<br/>结构化结果与证据校验"]
+    Reflector --> Critic["CRITIC<br/>确定性路由"]
+    Critic -->|可重试| Retry["RETRY<br/>重置问题任务"]
+    Retry --> Init
+    Critic -->|预算耗尽| Failed["FAILED"]
+    Critic -->|校验通过| Pack["EVIDENCE_PACK"]
+    Pack -->|STANDARD| Answer["ANSWER<br/>无工具生成 + 输出校验"]
+    Pack -->|DEEP| Deep["适用角色并行分析 → Judge"]
+    Deep --> Answer
+    Answer --> End([END])
+    Failed --> End
+```
+
+四类分支通过四线程执行器并行调度，只执行计划包含的任务。`WorkflowAgentState` 使用深度只读数据，节点遵循 `State → Node → Delta`：工具分支只能更新自身任务，`tasks` 按 `taskId` 合并，证据在汇合后统一重建。分支不分别覆盖整份快照，避免兄弟结果丢失和同版本 CAS 冲突。
+
+Reflector 与 Critic 都是 Java 规则。前者校验结果，后者决定重试、回答或失败；代码保留 `ADD_NEWS` 扩展路由，当前不会自动追加 Planner 未提出的新闻任务。
+
+### 2. 检查点与工具幂等恢复
+
+`ExecutionState` 是持久化快照，记录计划、任务结果、反思与裁决、重试次数、`nextNode`、图版本和计划哈希。
+
+- 串行节点和 `TASKS_JOIN` 用 `executionId + version` 做 MongoDB CAS，保存成功后发布完成事件。版本冲突拒绝旧状态写入。
+- `WorkflowRunner.resume(executionId)` 校验 `graphVersion + planHash`，从快照的下一节点恢复。当前图协议为 `stock-analysis-v3`，未完成的 v1/v2 快照不自动迁移。
+- 工具记录以 `executionId:taskId:attempt` 唯一标识一次尝试，原子保存成功结果与证据快照。汇合前中断时，已成功工具可复用记录；遗留 `STARTED` 仅对当前四类只读工具允许新 attempt 重试。
+- 恢复到证据或模型节点时重新校验任务、重建证据包，不能仅凭快照中的 `trusted`、`modelView` 或哈希放行。
+
+这是应用层 MongoDB 快照和显式恢复游标，尚未接入 LangGraph4j 原生 CheckpointSaver；恢复语义为 at-least-once，不保证任意外部副作用 Exactly-once。
+
+### 3. 从工具成功到证据可用
+
+`ToolResult.success` 只表示调用成功。行情返回 `StockQuote`，技术和财务工作流入口返回带 `BigDecimal` 指标的 `AnalysisToolPayload`，新闻返回 `List<NewsItem>`。展示文案不作为结构化数值来源。
+
+```text
+AnalysisContext → 工具成功快照 → Schema / 时点 / 来源 / 数值校验
+                → FinancialFact → EvidencePack → 回答 → ClaimEvidenceGuard
+```
+
+`AnalysisContext` 统一标的与 `analysisDate`。K 线按截止日截断，财务按披露时间约束，新闻校验发布时间；历史数据缺失时不拿当前值回填。校验同时检查必需指标、数值类型与范围、来源链接、时效和本次证据覆盖，重试历史不能补足本次缺失。
+
+`FinancialFact` 保留指标、值、单位、来源和时间，并生成稳定 `evidenceId`；`EvidencePack` 汇总本次证据、缺失项、工具失败、数据截止日和内容哈希。回答使用 `[evidence:ev-...]` 关联本轮有效证据；Guard 拒绝未知/跨包 ID、缺少引用的数值表达和超出截止日的日期，质量门禁检查重复及异常正文。标准工作流回答最多纠正一次，再失败则确定性降级。
+
+这些检查保证协议与证据关联满足规则，不证明外部数据绝对真实，也不等于逐句完成语义事实核验。具体门槛、错误码与测试见 [工作流校验说明](docs/workflow-validation.md)。
+
+### 4. Hybrid RAG 与 Parent/Child 上下文
+
+```text
+文档 → Parent 章节 → Child 分块 → Dense + BM25 → RRF
+     → 文档状态 / 活动版本过滤 → Parent 全文或命中窗口 → TopK
+```
+
+Dense 处理语义近似，BM25 补充股票代码、公司名、指标名等精确词召回，RRF 按名次融合。融合候选保留 BM25 独有命中，不再与额外的 Dense 结果取交集；`minScore` 仅用于单路 Dense 路径。Hybrid 失败可按配置降级 Dense，当前没有接入 Cross Encoder 或 LLM Reranker。
+
+长文先按标题层级划分 Parent，再按段落、句子和字符边界生成 Child。默认目标为 700 字符，常规范围 600～800，重叠 80～120；短章节和尾块按实际长度处理。索引文本包含标题路径，Parent 正文、摘要和 Child offset 保存在 MongoDB。
+
+召回后，短 Parent 返回全文，长 Parent 返回抽取式摘要与命中块前后窗口；按原文 offset 合并重叠区间。文档状态与 `activeIngestionVersion` 决定可见性，防止禁用文档和旧版本进入上下文。双存储写入、删除采用状态标记与失败补偿，仍需考虑极端故障下的对账修复。
+
+### 5. 话题路由与递归记忆
+
+| 数据 | 存储与作用 |
+| --- | --- |
+| 完整业务消息 | MongoDB；用于历史展示和近期对话查询 |
+| 当前/最近话题 | Redis；识别 `NEW / CONTINUE / SWITCH / RETURN` |
+| 话题原文窗口 | Redis；按用户、会话、话题隔离模型上下文 |
+| 话题摘要 | Redis；旧摘要与较早消息递归合并，保留最近原文 |
+| 用户长期记忆 | MongoDB + Milvus；主动录入偏好或事实，跨会话召回 |
+
+`QueryRewriteAssistant` 结合近期业务消息、当前摘要和最近话题生成独立查询。Java 处理空输出与非 JSON 降级，并对显式六位股票代码做确定性保护；同一话题使用稳定记忆 ID，支持切换股票后再返回旧话题。
+
+消息数或字符预算触发压缩时，先生成并校验新摘要，再通过 Redis Lua 比对旧消息和旧摘要，原子裁剪窗口、写入摘要并刷新 TTL。生成失败不提交压缩，生成期间窗口变化则放弃本次提交；切分点保留完整工具调用与结果组。摘要仍是有损压缩，话题识别也仍部分依赖模型。
+
+### 6. 深度投研、运行事件与复盘
+
+深度模式按证据范围选择基本面、技术面和新闻角色，结合看多、看空、风险视角并行生成独立意见，按预定顺序汇总后调用一次 Judge。每个角色最多调用一次，不挂载业务工具或会话记忆；Judge 输出经过评级、置信度、日期、正文和证据 ID 校验。部分角色失败会记录限制，Judge 失效则返回 `INSUFFICIENT_DATA`。
+
+异步研究默认使用 2 个工作线程和 32 个排队位。RunEvent 使用固定事件枚举、递增 sequence 与有界摘要，每次执行保留最近 200 条事件；SSE 回放后补发订阅间隙事件。事件不包含 Prompt、模型思考正文或工具正文。前端断线后查询执行状态补偿，并提供手动重连。
+
+**当前只支持单实例部署。** 队列与事件缓冲在进程内；进程重启时，`StartupRecoveryRunner` 将遗留非终态执行标记为失败并提示重新发起，不自动调用 `resume()`。启动补偿还会将遗留文档清理状态转为可重试失败状态；补偿失败会阻止应用就绪。
+
+成功的深度结论可幂等保存为 `ResearchDecision`。复盘服务不调用 LLM，而是计算后续 1/5/20 个交易日的标的收益和相对基准收益；只有在本次分析日已可见、且用户与标的一致的复盘才作为校准参考，不能冒充本轮证据。
+
+## 工具与 API
+
+系统注册 7 个业务工具；确定性股票工作流覆盖其中的行情、技术、财务和新闻四类。
+
+| 工具 | 用途 |
+| --- | --- |
+| `MarketDataTool` | 行情及按分析日读取数据 |
+| `TechnicalAnalysisTool` | 日 K、收盘价、涨跌幅、MA5、MA20 与均线趋势 |
+| `FinancialAnalysisTool` | 财务报告与估值指标 |
+| `NewsRagTool` | 公司新闻和官方披露检索 |
+| `TimeSeriesPredictionTool` | 调用可选外部预测服务 |
+| `StockComparisonTool` | 多股票比较 |
+| `PortfolioAnalysisTool` | 组合收益、分布与集中度分析 |
+
+新闻搜索同时尝试媒体和官方披露，校验主体、类型、来源域名和发布时间。配置发行人目录时可提取报告入口与披露日期；发现 PDF 链接不代表已读取全文或核对财务指标。来源配置与搜索流程见 [工具与证据质量说明](docs/tool-execution-and-evidence-quality.md)。
+
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| POST | `/api/chat/send` | 同步对话 |
+| POST | `/api/research/executions` | 创建异步深度投研 |
+| GET | `/api/research/executions/{executionId}` | 查询状态与结果 |
+| GET | `/api/research/executions/{executionId}/events` | SSE 事件回放与订阅 |
+| POST | `/api/chat/sessions` | 创建会话 |
+| GET | `/api/chat/users/{userId}/sessions` | 用户会话列表 |
+| GET | `/api/chat/sessions/{sessionId}/messages` | 会话消息 |
+| PATCH | `/api/chat/sessions/{sessionId}/title` | 修改标题 |
+| POST | `/api/chat/sessions/{sessionId}/close` | 关闭会话 |
+| DELETE | `/api/chat/sessions/{sessionId}` | 删除会话 |
+| POST | `/api/chat/messages/{messageId}/feedback` | 消息反馈 |
+| POST / GET | `/api/memories` | 新增/查询长期记忆 |
+| GET | `/api/memories/recall` | 语义召回长期记忆 |
+| DELETE | `/api/memories/{memoryId}` | 删除长期记忆 |
+| POST | `/api/rag/search`、`/api/rag/query` | 检索与 RAG 查询 |
+| POST / GET | `/api/knowledge/documents` | 新增/查询文档 |
+| POST | `/api/knowledge/feishu/sync` | 同步飞书文档 |
+| POST | `/api/knowledge/documents/{id}/enable`、`/api/knowledge/documents/{id}/disable` | 启用或禁用文档 |
+| DELETE | `/api/knowledge/documents/{id}` | 删除文档 |
+| GET | `/api/health`、`/api/info` | 健康与服务信息 |
+
+会话、记忆和研究查询需携带相应的 `userId`。具体请求字段见 [Controller](src/main/java/com/ljl/ai/controller)；当前 `userId` 是客户端提供的业务参数，不是经过认证的身份。
+
+## 测试与验证
 
 ```bash
-# 默认离线测试：不连接 MongoDB、Redis、Milvus 或外部模型
+# 默认离线单元/组件测试
 mvn test
 
-# 验证 integration-test Profile 配置，但跳过真实连接测试
+# 固定样本 Agent Eval
+mvn -Dtest=AgentEvalRunnerTest test
+
+# 验证集成测试 Profile，跳过真实基础设施连接
 mvn -Pintegration-test -DskipITs=true verify
 
-# 基础设施与配置就绪后显式运行 *IT
+# 基础设施与本地配置就绪后运行 *IT
 mvn -Pintegration-test verify
 
-# 前端锁文件安装与生产构建
+# 前端测试与生产构建
 npm --prefix frontend ci
 npm --prefix frontend test
 npm --prefix frontend run build
 
-# Compose 静态解析
+# Compose 配置检查
 docker compose config --quiet
 ```
 
-GitHub Actions 将后端测试和前端生产构建拆成独立 Job。公共 CI 不注入个人密钥，也不伪装执行外部集成测试。
+默认后端测试不依赖外部模型、网络或业务数据库。真实 MongoDB/Milvus 测试使用 `*IT` 和显式 Profile；新闻联网检查需单独启用 `mvn -Dtest=NewsSearchLiveTest -Dnews.live=true test`。GitHub Actions 分别运行后端默认测试与前端生产构建，前端测试可用上述命令单独执行。
 
-当前仓库包含 74 个 `*Test.java` 单元/组件测试类与 2 个 `*IT.java` 外部基础设施测试类，前端使用 Node 内置 runner 测试深度投研客户端和进度映射。这些数字只描述测试分层，不代表覆盖率；项目尚未发布覆盖率百分比。
+| 验证主题 | 代表测试 |
+| --- | --- |
+| 计划和服务编排 | `AgentExecutionPlannerTest`、`ChatServiceOrchestrationTest`、`ChatServiceWiringTest` |
+| 并行与状态增量 | `StockAnalysisWorkflowTest`、`WorkflowAgentStateTest`、`WorkflowNodeDeltaTest` |
+| 恢复与幂等 | `WorkflowRunnerTest`、`MongoExecutionStateStoreTest`、`MongoToolExecutionStoreTest` |
+| 结构化结果与恢复后的证据边界 | `WorkflowResultValidatorTest`、`StructuredToolWorkflowTest`、`WorkflowEvidenceBoundaryTest` |
+| 检索与记忆 | `RetrievalServiceTest`、`ConversationQueryRewriteTest`、`ShortTermSummaryServiceTest` |
+| 输出与深度投研 | `ClaimEvidenceGuardTest`、`WorkflowAnswerGeneratorTest`、`DeepResearchServiceTest` |
 
-离线 Agent Eval 样本位于 `src/test/resources/eval/agent-eval-cases.json`，可单独运行：
+离线 Agent Eval 使用 5 个固定样本与确定性适配器，保护规划、话题、检索、证据和恢复契约。它是回归基线，不代表真实模型准确率或投资收益；并行测试验证任务重叠执行与结果完整性，也不能代替线上延迟基准。
 
-```bash
-mvn -Dtest=AgentEvalRunnerTest test
-```
-
-## REST API
-
-| 方法 | 路径 | 说明 |
-| --- | --- | --- |
-| POST | `/api/chat/send` | 发送消息，可控制 RAG 与 Tool |
-| POST | `/api/research/executions` | 异步启动 `DEEP` 投研，返回 HTTP 202 和 executionId |
-| GET | `/api/research/executions/{executionId}` | 按 `userId` 查询执行状态、证据缺失与最终答案 |
-| GET | `/api/research/executions/{executionId}/events` | 按 `userId` 回放并订阅命名 RunEvent SSE |
-| POST | `/api/chat/sessions` | 创建空会话 |
-| GET | `/api/chat/sessions/{sessionId}/messages` | 查询会话消息 |
-| GET | `/api/chat/users/{userId}/sessions` | 查询用户会话 |
-| PATCH | `/api/chat/sessions/{sessionId}/title` | 修改会话标题 |
-| POST | `/api/chat/sessions/{sessionId}/close` | 关闭会话 |
-| DELETE | `/api/chat/sessions/{sessionId}` | 删除会话 |
-| POST | `/api/chat/messages/{messageId}/feedback` | 提交反馈 |
-| POST / GET | `/api/memories` | 新增/查询用户长期记忆 |
-| GET | `/api/memories/recall` | 语义召回用户长期记忆 |
-| DELETE | `/api/memories/{memoryId}` | 按请求中的 `userId` 校验后删除长期记忆 |
-| POST | `/api/rag/search` | 指定 Top-K 检索 |
-| POST | `/api/rag/query` | RAG 增强查询 |
-| POST / GET | `/api/knowledge/documents` | 新增/查询知识文档 |
-| POST | `/api/knowledge/feishu/sync` | 同步飞书文档 |
-| POST | `/api/knowledge/documents/{id}/enable` | 启用文档 |
-| POST | `/api/knowledge/documents/{id}/disable` | 禁用文档 |
-| DELETE | `/api/knowledge/documents/{id}` | 删除文档 |
-| GET | `/api/health`、`/api/info` | 健康与服务信息 |
-
-会话历史、长期记忆等接口还需要相应的 `userId` 参数。当前 `userId` 由客户端提供，属于业务逻辑分区字段，不是经过认证的安全主体。
-
-## 项目结构
+## 项目结构与阅读入口
 
 ```text
 src/main/java/com/ljl/ai/
-├── agent/          # AiServices、Prompt 与工具权限装配
-├── client/         # 新闻、外部服务客户端
-├── config/         # 模型、Redis、Milvus、记忆与工具配置
-├── controller/     # REST API 与异常映射
-├── knowledge/      # 文档分块、双写、状态与补偿
-├── memory/         # 话题路由、上下文筛选、Redis 消息窗口与递归摘要
-├── observability/  # 模型调用 Trace 与隐私开关
-├── planner/        # 候选计划解析、校验与任务枚举
-├── rag/            # Hybrid Search、语义复核与 RAG Pipeline
-├── research/       # 时点上下文、金融证据、深度投研与决策复盘
-├── service/        # 对话编排、长期记忆、业务消息
-├── tools/          # 七个业务 Tool
-└── workflow/       # StateGraph、Checkpoint、工具幂等、Reflector/Critic
-
-frontend/           # React + Vite，标准/深度模式与 SSE 进度
-src/test/resources/eval/ # 离线 Agent Eval 固定样本与说明
-docs/               # 配置、简历与面试材料
-compose.yaml        # 本地基础设施
-.github/workflows/  # 后端/前端 CI
+├── agent/          # 模型接口、Prompt 与工具权限
+├── client/         # 行情、新闻和外部服务
+├── config/         # 模型、存储和业务配置
+├── controller/     # REST API
+├── knowledge/      # 分层切分、文档入库与补偿
+├── memory/         # 查询改写、话题窗口与摘要
+├── observability/  # 模型 Trace、RunEvent 与事件发布
+├── planner/        # 计划解析、白名单与任务类型
+├── rag/            # 混合检索、版本过滤与父块扩展
+├── research/       # 分析时点、证据、角色分析与复盘
+├── service/        # 对话协调、职责服务与异步执行
+├── tools/          # 业务工具
+└── workflow/       # 状态图、Checkpoint、幂等与结果校验
+frontend/           # React 界面与 SSE 客户端
+src/test/           # 单元/组件、集成测试与离线样本
+docs/               # 配置、设计说明和面试材料
 ```
 
-## 关键设计取舍
+从 [ChatService](src/main/java/com/ljl/ai/service/ChatService.java) 阅读一轮对话，再进入 [AgentExecutionService](src/main/java/com/ljl/ai/service/AgentExecutionService.java) 和 [StockAnalysisWorkflow](src/main/java/com/ljl/ai/workflow/StockAnalysisWorkflow.java)。检索链路从 [RetrievalService](src/main/java/com/ljl/ai/rag/RetrievalService.java) 开始。
 
-| 取舍 | 当前选择 | 原因与代价 |
-| --- | --- | --- |
-| LLM 决策 vs Java 规则 | LLM 提议，Java 校验与路由 | 可测试、权限边界清楚；新增意图要同步规则 |
-| 自主 Tool Calling vs 确定性执行 | 通用路径自主调用，股票计划路径确定性映射 | 兼顾开放问题与关键链路可控性 |
-| Hybrid 失败处理 | 默认降级 Dense，可配置 fail-fast | 本地体验更稳；生产排障可能更偏好直接失败 |
-| 会话连续性 | MongoDB 保留完整业务历史，Redis 按话题隔离模型窗口 | 支持切换/返回话题；话题识别仍部分依赖模型 |
-| 短期上下文增长 | 原文窗口 + 递归摘要 | 控制上下文成本；摘要会有信息压缩损失 |
-| 多存储一致性 | 状态标记、重试与补偿 | 实现成本低于分布式事务，但仍需对账机制 |
-| 执行持久化粒度 | 节点级 CAS Checkpoint + 工具幂等记录 | 恢复边界更细；需维护 graphVersion/planHash，且不等于通用 Exactly-once |
-| 多角色分析成本 | 仅 `DEEP` 模式启用固定 6 角色 + Judge | 默认路径保持精简；深度模式会增加延迟和模型调用 |
-| 运行可观测性 vs 隐私 | 事件只发布受控元数据 | 可回放阶段和终态；无法通过事件流查看模型思考正文 |
+## 适用范围与后续方向
 
-## 已知边界
-
-- 没有真实交易、下单、券商账户接入或个性化投资顾问能力。
-- 没有公开可复现的真实市场收益率、线上模型准确率、QPS、P95 延迟或成本基准；离线 fixture 分数不能替代这些指标。
-- `/api` 当前没有完整的登录认证、RBAC、限流和审计体系；`userId` 是业务参数，不应当作可信身份。
-- 会话锁是单 JVM 内锁，多实例部署需要分布式并发控制。
-- 执行状态已逐节点持久化，但恢复仍是重新进入受控图并复用成功工具结果，不保证任意外部副作用 Exactly-once。
-- RunEvent 的回放缓冲和深度投研执行器是单进程实现；多实例部署需要外部消息流、分布式调度和统一游标。
-- MongoDB 与 Milvus 间使用补偿而非 ACID 事务，极端失败仍需要后台对账/修复任务。
-- 长期记忆在应用层按用户过滤；严格多租户应增加认证主体与存储层过滤。
-- 话题识别仍部分依赖模型结构化输出；显式股票代码有确定性保护，纯自然语言主题尚无独立分类评测。
-- 外部模型、新闻、飞书和预测服务的可用性与配额不由本仓库保证。
-- Compose 面向本地开发，不是生产高可用部署方案。
+- 目前是可本地复现的单实例项目，尚未具备完整认证、RBAC、限流与分布式调度；会话锁和事件缓存均在单 JVM 内。
+- MongoDB 与 Milvus 使用补偿而非跨存储 ACID 事务。长期记忆在共享候选池召回后按用户与启用状态过滤，严格多租户仍需认证主体与存储层隔离。
+- 没有公开的真实市场收益率、模型准确率、QPS、P95 或成本基准。后续应以标注数据、真实依赖集成测试和压测验证效果。
+- 模型请求/响应正文默认脱敏；`TRACE_LOGGING_INCLUDE_CONTENT` 仅用于受控排障，第三方日志与异常链仍需部署侧管理。
+- 外部行情、搜索、模型、飞书和预测服务受各自可用性与配额约束；Compose 用于本地开发。
 
 ## 简历与面试
 
-[简历与面试材料](docs/resume-and-interview.md) 提供 Java 后端、AI Agent、校招通用三版描述，以及源码能够支撑的追问要点。建议根据目标岗位选择一版，不要把三版内容全部堆进一份简历。
+[简历与面试材料](docs/resume-and-interview.md) 包含 Java 后端、AI Agent、校招通用三版项目描述，一分钟介绍，以及围绕并行状态、恢复、证据、RAG 和记忆的追问。每个主题提供源码或测试入口，便于按实际负责范围准备。
 
 ## License
 

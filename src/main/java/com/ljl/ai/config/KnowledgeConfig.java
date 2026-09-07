@@ -79,6 +79,15 @@ public class KnowledgeConfig {
          * 旧通用切分器的重叠大小。分层切分接入前保留兼容。
          */
         private int overlap = 50;
+
+        public void validate() {
+            if (minSize <= 0 || minSize > targetSize || targetSize > maxSize
+                    || minOverlap < 0 || minOverlap > maxOverlap || maxOverlap >= minSize
+                    || shortParentThreshold <= 0 || summaryMinSize <= 0
+                    || summaryMinSize > summaryMaxSize || strategyVersion == null || strategyVersion.isBlank()) {
+                throw new IllegalArgumentException("知识分块配置无效：需满足 min <= target <= max、0 <= overlap < min 和有效摘要预算");
+            }
+        }
     }
     
     @Data

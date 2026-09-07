@@ -31,6 +31,7 @@ public class DecisionReviewService {
         this.marketDataClient = marketDataClient;
     }
 
+    /** 查询同一用户和标的尚未完成的历史决策，利用截至 asOf 的行情补齐已到期的复盘周期。 */
     public List<ResearchDecision> reviewDue(String userId, String symbol, LocalDate asOf) {
         if (userId == null || userId.isBlank() || symbol == null || symbol.isBlank() || asOf == null) {
             throw new IllegalArgumentException("userId、symbol 和 asOf 不能为空");
@@ -53,6 +54,10 @@ public class DecisionReviewService {
         return List.copyOf(reviewed);
     }
 
+    /**
+     * 以分析日及之前最近收盘为基点，按后续行情条数计算各交易日周期收益，已有周期不重复计算。
+     * 标的基准价缺失时跳过，比较基准不可用时仍保留标的收益并显式标注缺失。
+     */
     private boolean review(ResearchDecision decision, LocalDate asOf) {
         List<Bar> assetBars;
         try {

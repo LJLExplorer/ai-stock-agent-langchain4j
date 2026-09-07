@@ -54,8 +54,10 @@ class StockAnalysisTaskExecutorTest {
         AnalysisContext context = new AnalysisContext("600519.SH", LocalDate.of(2025, 12, 31),
                 AnalysisContext.ResearchMode.STANDARD, "execution-1", "trace-1", "user-1", "session-1");
         when(market.getQuote("600519.SH", context)).thenReturn(ToolResult.success(mock(StockQuote.class)));
-        when(technical.analyzeTechnicalIndicators("600519.SH", "1d", context))
-                .thenReturn(ToolResult.success("technical"));
+        when(technical.technicalSnapshot("600519.SH", "1d", context))
+                .thenReturn(ToolResult.success(new com.ljl.ai.model.dto.AnalysisToolPayload(context.symbol(), context.analysisDate(),
+                        context.analysisDate(), "test source", "https://example.com/report",
+                        com.ljl.ai.research.FinancialFact.TemporalStatus.VERIFIED, java.util.Map.of())));
         StockAnalysisTaskExecutor executor = new StockAnalysisTaskExecutor(
                 market, technical, mock(FinancialAnalysisTool.class), mock(NewsRagTool.class));
 
@@ -63,7 +65,7 @@ class StockAnalysisTaskExecutorTest {
         executor.executeWithContext(StockAnalysisTask.TECHNICAL_ANALYSIS, context, "分析", "2024Q4");
 
         verify(market).getQuote(eq("600519.SH"), same(context));
-        verify(technical).analyzeTechnicalIndicators(eq("600519.SH"), eq("1d"), same(context));
+        verify(technical).technicalSnapshot(eq("600519.SH"), eq("1d"), same(context));
     }
 
     @Test
@@ -72,8 +74,10 @@ class StockAnalysisTaskExecutorTest {
         NewsRagTool news = mock(NewsRagTool.class);
         AnalysisContext context = new AnalysisContext("600519.SH", LocalDate.of(2025, 12, 31),
                 AnalysisContext.ResearchMode.STANDARD, "execution-1", "trace-1", "user-1", "session-1");
-        when(financial.analyzeFinancialReport("600519.SH", "2025Q3", context))
-                .thenReturn(ToolResult.success("financial"));
+        when(financial.financialSnapshot("600519.SH", "2025Q3", context))
+                .thenReturn(ToolResult.success(new com.ljl.ai.model.dto.AnalysisToolPayload(context.symbol(), context.analysisDate(),
+                        context.analysisDate(), "test source", "https://example.com/report",
+                        com.ljl.ai.research.FinancialFact.TemporalStatus.VERIFIED, java.util.Map.of())));
         when(news.searchStockNewsAndAnnouncements("600519.SH", "分析", 30, context))
                 .thenReturn(ToolResult.success(java.util.List.of()));
         StockAnalysisTaskExecutor executor = new StockAnalysisTaskExecutor(
@@ -82,7 +86,7 @@ class StockAnalysisTaskExecutorTest {
         executor.executeWithContext(StockAnalysisTask.FINANCIAL_ANALYSIS, context, "分析", "2025Q3");
         executor.executeWithContext(StockAnalysisTask.NEWS_ANALYSIS, context, "分析", "2025Q3");
 
-        verify(financial).analyzeFinancialReport(eq("600519.SH"), eq("2025Q3"), same(context));
+        verify(financial).financialSnapshot(eq("600519.SH"), eq("2025Q3"), same(context));
         verify(news).searchStockNewsAndAnnouncements(eq("600519.SH"), eq("分析"), eq(30), same(context));
     }
 }

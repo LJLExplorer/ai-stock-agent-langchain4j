@@ -2,6 +2,8 @@ package com.ljl.ai.tools;
 
 import com.ljl.ai.client.MarketDataClient;
 import com.ljl.ai.model.dto.ToolResult;
+import com.ljl.ai.model.dto.AnalysisToolPayload;
+import com.ljl.ai.research.FinancialFact;
 import com.ljl.ai.research.AnalysisContext;
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
@@ -24,7 +26,7 @@ public class TechnicalAnalysisTool {
 
     @Tool(name = "analyzeTechnicalIndicators", value = "基于真实日K计算股票最新收盘、日涨跌、MA5、MA20和均线趋势")
     public ToolResult<String> analyzeTechnicalIndicators(@P("股票代码") String symbol,
-                                             @P("分析周期，如 1d/1h") String period) {
+                                             @P("分析周期，仅支持 1d（日线）") String period) {
         return analyze(symbol, period, LocalDate.now());
     }
 
@@ -37,8 +39,39 @@ public class TechnicalAnalysisTool {
     }
 
     private ToolResult<String> analyze(String symbol, String period, LocalDate analysisDate) {
+        ToolResult<AnalysisToolPayload> result = snapshot(symbol, period, analysisDate);
+        if (!result.isSuccess()) {
+            ToolResult<String> failure = ToolResult.failure(result.getErrorCode(), result.getErrorMessage());
+            failure.setCostTime(result.getCostTime());
+            return failure;
+        }
+        var data = result.getData();
+        var metrics = data.metrics();
+        ToolResult<String> rendered = ToolResult.success("技术分析（腾讯财经真实日K）\n股票：" + data.symbol() + "，周期：" + period
+                + "，数据截止日：" + data.asOf()
+                + "\n最新收盘：" + metrics.get("close") + "；日涨跌：" + metrics.get("changePercent")
+                + "%；MA5：" + metrics.get("ma5") + "；MA20：" + metrics.get("ma20")
+                + "\n趋势判断：" + (metrics.get("close").compareTo(metrics.get("ma20")) >= 0
+                ? "收盘位于MA20上方" : "收盘位于MA20下方") + "。\n说明：当前仅计算基础均线与日涨跌。");
+        rendered.setCostTime(result.getCostTime());
+        return rendered;
+    }
+
+    /** 为工作流提供结构化技术指标及来源、时点信息，便于证据映射和恢复后的结果校验。 */
+    public ToolResult<AnalysisToolPayload> technicalSnapshot(String symbol, String period, AnalysisContext context) {
+        return snapshot(symbol, period, context.analysisDate());
+    }
+
+    /**
+     * 使用截止日期前的日 K 计算收盘价、日涨跌、MA5 和 MA20，至少需要二十条行情。
+     * 不支持的周期、数据不足或非法前收盘价由工具执行包装器转换为失败结果。
+     */
+    private ToolResult<AnalysisToolPayload> snapshot(String symbol, String period, LocalDate analysisDate) {
         log.info("技术分析, symbol: {}, period: {}, analysisDate: {}", symbol, period, analysisDate);
         return ToolResultExecutor.execute("TECHNICAL_ANALYSIS_ERROR", () -> {
+            if (!"1d".equalsIgnoreCase(period)) {
+                throw new IllegalArgumentException("技术分析仅支持 1d（日线）周期");
+            }
             List<MarketDataClient.DailyBar> bars = marketDataClient.getDailyBars(symbol, 60, analysisDate);
             if (bars.size() < 20) {
                 throw new IllegalStateException("历史K线不足20条");
@@ -47,12 +80,14 @@ public class TechnicalAnalysisTool {
             BigDecimal ma20 = average(bars, 20, 2);
             BigDecimal ma5 = average(bars, 5, 2);
             BigDecimal previous = bars.get(bars.size() - 2).close();
+            if (previous.signum() <= 0) {
+                throw new IllegalStateException("前收盘价必须大于零");
+            }
             BigDecimal change = close.subtract(previous).divide(previous, 4, RoundingMode.HALF_UP).multiply(BigDecimal.valueOf(100));
-            return "技术分析（腾讯财经真实日K）\n股票：" + symbol + "，周期：" + period
-                    + "，数据截止日：" + bars.get(bars.size() - 1).date()
-                    + "\n最新收盘：" + close + "；日涨跌：" + change + "%；MA5：" + ma5 + "；MA20：" + ma20
-                    + "\n趋势判断：" + (close.compareTo(ma20) >= 0 ? "收盘位于MA20上方" : "收盘位于MA20下方")
-                    + "。\n说明：当前仅计算基础均线与日涨跌。";
+            return new AnalysisToolPayload(symbol, LocalDate.parse(bars.getLast().date()), null,
+                    "Tencent Finance", "https://gu.qq.com/" + MarketDataClient.normalizeSymbol(symbol) + "/gp",
+                    FinancialFact.TemporalStatus.VERIFIED,
+                    java.util.Map.of("close", close, "changePercent", change, "ma5", ma5, "ma20", ma20));
         });
     }
 

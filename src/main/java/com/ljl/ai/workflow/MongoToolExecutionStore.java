@@ -32,6 +32,7 @@ public class MongoToolExecutionStore implements ToolExecutionStore {
         this.clock = clock;
     }
 
+    /** 以执行、任务和尝试次数组成唯一键，仅首次写入 STARTED，已有记录原样返回供调用方判断是否复用。 */
     @Override
     public ToolExecutionRecord begin(String executionId, String taskId, int attempt) {
         String id = ToolExecutionRecord.idOf(executionId, taskId, attempt);
@@ -60,6 +61,7 @@ public class MongoToolExecutionStore implements ToolExecutionStore {
                 ToolExecutionRecord.idOf(executionId, taskId, attempt), ToolExecutionRecord.class));
     }
 
+    /** 原子提交成功结果与证据；相同成功内容允许重复提交，记录已失败或成功内容不一致时拒绝覆盖。 */
     @Override
     public ToolExecutionRecord complete(String executionId, String taskId, int attempt,
                                         String resultSnapshot, List<FinancialFact> evidence) {
@@ -103,6 +105,7 @@ public class MongoToolExecutionStore implements ToolExecutionStore {
         throw new IllegalStateException("TOOL_EXECUTION_STATE_CONFLICT");
     }
 
+    /** 仅允许 STARTED 记录进入终态，条件更新使成功和失败写入不会相互覆盖。 */
     private ToolExecutionRecord transition(String executionId, String taskId, int attempt, Update update) {
         String id = ToolExecutionRecord.idOf(executionId, taskId, attempt);
         Query query = Query.query(Criteria.where("_id").is(id)

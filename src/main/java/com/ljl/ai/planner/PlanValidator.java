@@ -18,6 +18,10 @@ public class PlanValidator {
     private static final Pattern FULL_SYMBOL = Pattern.compile("\\d{6}\\.(SH|SZ|BJ)");
     private static final Pattern RAW_SYMBOL = Pattern.compile("\\d{6}");
 
+    /**
+     * 校验候选计划的意图、股票格式及任务列表，规范化标的并按原顺序去重任务。
+     * 工具名称只从受支持的任务枚举映射，返回的新计划才可进入执行层。
+     */
     public ValidatedPlan validate(AgentPlan candidate) {
         if (candidate == null) {
             return invalid("规划结果为空");

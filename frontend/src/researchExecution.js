@@ -8,7 +8,8 @@ export function taskDurationMs(task) {
 
 export function formatToolDuration(duration) {
   return typeof duration === 'number' && Number.isFinite(duration) && duration >= 0
-    ? `${duration} ms` : '耗时未记录'
+    ? `${duration} ms`
+    : '耗时未记录'
 }
 
 export const RUN_EVENT_TYPES = Object.freeze([
@@ -38,6 +39,7 @@ const PHASES = Object.freeze([
   ['RESEARCH', '多角色审议'],
   ['ANSWER', '结论生成']
 ])
+/** 统一标准与深度模式的请求入口；深度模式走异步接口并确保开启数据工具。 */
 export function buildResearchRequest(mode, payload) {
   const normalizedMode = mode === 'DEEP' ? 'DEEP' : 'STANDARD'
   const deep = normalizedMode === 'DEEP'
@@ -69,6 +71,7 @@ export function createResearchProgress(executionId) {
     totalSteps: null,
     percent: 0,
     lastSequence: 0,
+    streamId: null,
     retryCount: 0,
     missingItems: [],
     connection: 'connecting',
@@ -78,22 +81,33 @@ export function createResearchProgress(executionId) {
   }
 }
 
+/**
+ * 将运行事件归并为阶段和计数进度，同一事件流内忽略重复或过期序号。
+ * 缓存重建后 streamId 会变化，因此不能跨事件流直接比较序号。
+ */
 export function reduceResearchProgress(progress, rawEvent) {
   const event = parseRunEvent(rawEvent)
   if (!progress || progress.executionId !== event.executionId) {
     throw new Error('进度状态与 RunEvent executionId 不匹配')
   }
-  if (event.sequence <= progress.lastSequence) return progress
+  const streamChanged = event.streamId != null && event.streamId !== progress.streamId
+  if (!streamChanged && event.sequence <= progress.lastSequence) return progress
   let phases = progress.phases.map((phase) => ({ ...phase }))
   const completeThrough = (phaseId) => {
     const target = phases.findIndex((phase) => phase.id === phaseId)
-    phases = phases.map((phase, index) => index <= target ? { ...phase, status: 'completed' } : phase)
+    phases = phases.map((phase, index) =>
+      index <= target ? { ...phase, status: 'completed' } : phase
+    )
   }
   const activate = (phaseId) => {
     const target = phases.findIndex((phase) => phase.id === phaseId)
-    phases = phases.map((phase, index) => index < target
-      ? { ...phase, status: 'completed' }
-      : index === target ? { ...phase, status: 'active' } : phase)
+    phases = phases.map((phase, index) =>
+      index < target
+        ? { ...phase, status: 'completed' }
+        : index === target
+          ? { ...phase, status: 'active' }
+          : phase
+    )
   }
 
   let plannedTaskCount = progress.plannedTaskCount
@@ -150,28 +164,35 @@ export function reduceResearchProgress(progress, rawEvent) {
   }
   if (event.eventType === 'WORKFLOW_COMPLETED') completeThrough('ANSWER')
   if (event.eventType === 'WORKFLOW_FAILED') {
-    phases = phases.map((phase) => phase.status === 'active' ? { ...phase, status: 'failed' } : phase)
+    phases = phases.map((phase) =>
+      phase.status === 'active' ? { ...phase, status: 'failed' } : phase
+    )
   }
-  return withProgressMetrics({
-    ...progress,
-    phases,
-    plannedTaskCount,
-    plannedRoleCount,
-    completedToolNodes: [...completedToolNodes],
-    completedRoleNodes: [...completedRoleNodes],
-    activeRoleNodes: [...activeRoleNodes],
-    planCompleted,
-    evidenceReady,
-    answerReady,
-    lastSequence: event.sequence,
-    retryCount: progress.retryCount + (event.eventType === 'WORKFLOW_RETRYING' ? 1 : 0),
-    connection: isTerminalRunEvent(event) ? 'terminal' : 'connected',
-    canReconnect: false,
-    lastEvent: { eventType: event.eventType, node: event.node, summary: event.summary },
-    error: event.eventType === 'WORKFLOW_FAILED' ? '研究任务执行失败' : progress.error
-  }, event.eventType === 'WORKFLOW_COMPLETED')
+  return withProgressMetrics(
+    {
+      ...progress,
+      phases,
+      plannedTaskCount,
+      plannedRoleCount,
+      completedToolNodes: [...completedToolNodes],
+      completedRoleNodes: [...completedRoleNodes],
+      activeRoleNodes: [...activeRoleNodes],
+      planCompleted,
+      evidenceReady,
+      answerReady,
+      lastSequence: event.sequence,
+      streamId: event.streamId ?? progress.streamId,
+      retryCount: progress.retryCount + (event.eventType === 'WORKFLOW_RETRYING' ? 1 : 0),
+      connection: isTerminalRunEvent(event) ? 'terminal' : 'connected',
+      canReconnect: false,
+      lastEvent: { eventType: event.eventType, node: event.node, summary: event.summary },
+      error: event.eventType === 'WORKFLOW_FAILED' ? '研究任务执行失败' : progress.error
+    },
+    event.eventType === 'WORKFLOW_COMPLETED'
+  )
 }
 
+/** 断线后用执行快照补齐任务、证据和终态信息；未结束的执行保留手动重连入口。 */
 export function applyStatusCompensation(progress, status) {
   if (!progress || !status || status.executionId !== progress.executionId) {
     throw new Error('状态补偿 executionId 不匹配')
@@ -184,24 +205,27 @@ export function applyStatusCompensation(progress, status) {
     .map((task) => String(task.taskType || task.taskId || ''))
     .filter(Boolean)
   const hasConclusion = Boolean(status.researchConclusion)
-  return withProgressMetrics({
-    ...progress,
-    plannedTaskCount: tasks.length || progress.plannedTaskCount,
-    plannedRoleCount: roleNames.length || progress.plannedRoleCount,
-    completedToolNodes,
-    completedRoleNodes: hasConclusion
-      ? roleNames
-      : progress.completedRoleNodes,
-    activeRoleNodes: hasConclusion ? [] : progress.activeRoleNodes,
-    planCompleted: Boolean(status.plan) || progress.planCompleted,
-    evidenceReady: Boolean(status.evidencePack) || progress.evidenceReady,
-    answerReady: Boolean(status.finalAnswer) || progress.answerReady,
-    missingItems: evidenceLimitations(status.evidencePack),
-    connection: terminal ? 'terminal' : 'disconnected',
-    canReconnect: !terminal,
-    error: status.workflowStatus === 'FAILED'
-      ? String(status.errorMessage || '研究任务执行失败') : progress.error
-  }, status.workflowStatus === 'COMPLETED')
+  return withProgressMetrics(
+    {
+      ...progress,
+      plannedTaskCount: tasks.length || progress.plannedTaskCount,
+      plannedRoleCount: roleNames.length || progress.plannedRoleCount,
+      completedToolNodes,
+      completedRoleNodes: hasConclusion ? roleNames : progress.completedRoleNodes,
+      activeRoleNodes: hasConclusion ? [] : progress.activeRoleNodes,
+      planCompleted: Boolean(status.plan) || progress.planCompleted,
+      evidenceReady: Boolean(status.evidencePack) || progress.evidenceReady,
+      answerReady: Boolean(status.finalAnswer) || progress.answerReady,
+      missingItems: evidenceLimitations(status.evidencePack),
+      connection: terminal ? 'terminal' : 'disconnected',
+      canReconnect: !terminal,
+      error:
+        status.workflowStatus === 'FAILED'
+          ? String(status.errorMessage || '研究任务执行失败')
+          : progress.error
+    },
+    status.workflowStatus === 'COMPLETED'
+  )
 }
 
 function parseTaskCount(summary) {
@@ -214,24 +238,36 @@ function parseRoleCount(summary) {
   return match ? Number(match[1]) : null
 }
 
+/** 按已知任务和角色数量计算进度，收到成功终态前最高显示 99%，避免把阶段完成当作研究完成。 */
 function withProgressMetrics(progress, completed) {
   const taskCount = Number.isSafeInteger(progress.plannedTaskCount)
-    ? Math.max(0, progress.plannedTaskCount) : null
+    ? Math.max(0, progress.plannedTaskCount)
+    : null
   const roleCount = Number.isSafeInteger(progress.plannedRoleCount)
-    ? Math.max(0, progress.plannedRoleCount) : null
+    ? Math.max(0, progress.plannedRoleCount)
+    : null
   const totalSteps = taskCount == null || roleCount == null ? null : taskCount + roleCount + 3
-  const toolCount = taskCount == null ? 0 : progress.evidenceReady
-    ? taskCount : Math.min(taskCount, new Set(progress.completedToolNodes || []).size)
-  const completedSteps = (progress.planCompleted ? 1 : 0)
-    + toolCount
-    + (progress.evidenceReady ? 1 : 0)
-    + Math.min(roleCount || 0, new Set(progress.completedRoleNodes || []).size)
-    + (progress.answerReady ? 1 : 0)
-  const percent = completed ? 100 : totalSteps
-    ? Math.min(99, Math.floor(completedSteps * 100 / totalSteps)) : 0
+  const toolCount =
+    taskCount == null
+      ? 0
+      : progress.evidenceReady
+        ? taskCount
+        : Math.min(taskCount, new Set(progress.completedToolNodes || []).size)
+  const completedSteps =
+    (progress.planCompleted ? 1 : 0) +
+    toolCount +
+    (progress.evidenceReady ? 1 : 0) +
+    Math.min(roleCount || 0, new Set(progress.completedRoleNodes || []).size) +
+    (progress.answerReady ? 1 : 0)
+  const percent = completed
+    ? 100
+    : totalSteps
+      ? Math.min(99, Math.floor((completedSteps * 100) / totalSteps))
+      : 0
   return { ...progress, completedSteps, totalSteps, percent }
 }
 
+/** 将执行快照转换为聊天展示结果，仅成功终态提供答案，并同时保留证据来源和缺失说明。 */
 export function mapTerminalResearchResult(status) {
   const workflowStatus = status?.workflowStatus
   const terminal = workflowStatus === 'COMPLETED' || workflowStatus === 'FAILED'
@@ -246,33 +282,40 @@ export function mapTerminalResearchResult(status) {
   }
 }
 
+/** 按证据 ID 去重来源并过滤已拒绝项；时间未知项保留核对入口，同时明确标注不可用于结论。 */
 export function evidenceSourcesFromPack(evidencePack) {
   const grouped = evidencePack?.evidenceByType
   if (!grouped || typeof grouped !== 'object') return []
   const sources = new Map()
-  Object.values(grouped).flatMap((facts) => Array.isArray(facts) ? facts : []).forEach((fact) => {
-    const evidenceId = String(fact?.evidenceId || '').trim()
-    if (!evidenceId || fact?.temporalStatus === 'REJECTED' || sources.has(evidenceId)) return
-    const title = String(fact.sourceName || '数据证据').trim() || '数据证据'
-    const metric = String(fact.metric || '事实').trim() || '事实'
-    const unit = String(fact.unit || '').trim()
-    const value = String(fact.value || '').trim()
-    const type = String(fact.evidenceType || 'EVIDENCE').trim()
-    const asOf = String(fact.asOf || '').trim()
-    sources.set(evidenceId, {
-      documentId: evidenceId,
-      documentTitle: title,
-      documentType: 'EVIDENCE',
-      contentSnippet: `${metric}：${value}${unit ? ` ${unit}` : ''}`,
-      documentUrl: safeHttpUrl(fact.sourceUrl),
-      location: [type, asOf, fact.temporalStatus === 'UNKNOWN' ? '时间未核实，不用于结论' : ''].filter(Boolean).join(' · ')
+  Object.values(grouped)
+    .flatMap((facts) => (Array.isArray(facts) ? facts : []))
+    .forEach((fact) => {
+      const evidenceId = String(fact?.evidenceId || '').trim()
+      if (!evidenceId || fact?.temporalStatus === 'REJECTED' || sources.has(evidenceId)) return
+      const title = String(fact.sourceName || '数据证据').trim() || '数据证据'
+      const metric = String(fact.metric || '事实').trim() || '事实'
+      const unit = String(fact.unit || '').trim()
+      const value = String(fact.value || '').trim()
+      const type = String(fact.evidenceType || 'EVIDENCE').trim()
+      const asOf = String(fact.asOf || '').trim()
+      sources.set(evidenceId, {
+        documentId: evidenceId,
+        documentTitle: title,
+        documentType: 'EVIDENCE',
+        contentSnippet: `${metric}：${value}${unit ? ` ${unit}` : ''}`,
+        documentUrl: safeHttpUrl(fact.sourceUrl),
+        location: [type, asOf, fact.temporalStatus === 'UNKNOWN' ? '时间未核实，不用于结论' : '']
+          .filter(Boolean)
+          .join(' · ')
+      })
     })
-  })
   return [...sources.values()]
 }
 
 export function evidenceLimitations(pack) {
-  const facts = Object.values(pack?.evidenceByType || {}).flatMap((items) => Array.isArray(items) ? items : [])
+  const facts = Object.values(pack?.evidenceByType || {}).flatMap((items) =>
+    Array.isArray(items) ? items : []
+  )
   const labels = {
     NEWS_ANALYSIS: '未找到可核验的近期相关新闻或公告；不采用教程、skill 或无日期材料',
     TECHNICAL_ANALYSIS: '技术指标数据不可用',
@@ -289,16 +332,26 @@ export function evidenceLimitations(pack) {
   })
 }
 
-export function formatEvidenceCitations(content, sources = []) {
-  const byId = new Map((Array.isArray(sources) ? sources : [])
-    .filter((source) => source?.documentId)
-    .map((source) => [String(source.documentId), source]))
-  return String(content || '').replace(/\[evidence:(ev-[A-Za-z0-9._-]+)]/g, (_, evidenceId) => {
-    const source = byId.get(evidenceId)
-    const title = String(source?.documentTitle || '数据来源').replace(/[\[\]\\]/g, '').trim() || '数据来源'
-    const target = safeHttpUrl(source?.documentUrl) || `#evidence-${evidenceId}`
-    return `[证据：${title}](${target})`
-  })
+export function formatEvidenceCitations(content) {
+  // 引用保留在原始结果中供校验，正文只展示结论；来源统一由来源栏展示。
+  const evidenceId = '`?ev-[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)*`?'
+  const citationList = `(?:证据(?:ID)?|evidence)?[：:]?\\s*${evidenceId}(?:[\\s,，、;；]+${evidenceId})*\\s*`
+  const groupedCitations = new RegExp(
+    `（\\s*${citationList}）|\\(\\s*${citationList}\\)|\\[\\s*${citationList}\\]|【\\s*${citationList}】`,
+    'gi'
+  )
+  return String(content || '')
+    .split('\n')
+    .map((line) => {
+      const clean = line
+        .replace(/\[evidence:\s*ev-[A-Za-z0-9._-]+\]/gi, '')
+        .replace(/\[证据[：:][^\]\n]*\]\([^\s)]*\)/g, '')
+        .replace(groupedCitations, '')
+        .replace(new RegExp(`[，、,;；]?[ \\t]*${evidenceId}`, 'g'), '')
+        .replace(/【\s*】/g, '')
+      return clean === line ? line : clean.replace(/[^\S\n]+([，。；：！？])/g, '$1').trimEnd()
+    })
+    .join('\n')
 }
 
 function roleNamesFromPack(evidencePack) {
@@ -307,7 +360,10 @@ function roleNamesFromPack(evidencePack) {
     ...(types.has('FINANCIAL') ? ['FUNDAMENTAL'] : []),
     ...(types.has('TECHNICAL') || types.has('MARKET') ? ['TECHNICAL'] : []),
     ...(types.has('NEWS') ? ['NEWS'] : []),
-    'BULL', 'BEAR', 'RISK', 'JUDGE'
+    'BULL',
+    'BEAR',
+    'RISK',
+    'JUDGE'
   ]
 }
 
@@ -316,6 +372,7 @@ function safeHttpUrl(value) {
   return /^https?:\/\//i.test(url) ? url : null
 }
 
+/** 提交深度研究并校验返回的执行标识；返回的是接单句柄，最终结果通过事件流及状态查询获取。 */
 export async function startResearch(request, { fetchImpl = globalThis.fetch } = {}) {
   if (!request || typeof request !== 'object') throw new Error('深度投研请求不能为空')
   if (!String(request.userId || '').trim() || !String(request.message || '').trim()) {
@@ -330,7 +387,11 @@ export async function startResearch(request, { fetchImpl = globalThis.fetch } = 
   return Object.freeze({ ...data, executionId: requireExecutionId(data.executionId) })
 }
 
-export async function getResearchStatus(executionId, userId, { fetchImpl = globalThis.fetch } = {}) {
+export async function getResearchStatus(
+  executionId,
+  userId,
+  { fetchImpl = globalThis.fetch } = {}
+) {
   const id = requireExecutionId(executionId)
   const owner = String(userId || '').trim()
   if (!owner) throw new Error('userId 不能为空')
@@ -342,6 +403,7 @@ export async function getResearchStatus(executionId, userId, { fetchImpl = globa
   return data
 }
 
+/** 校验 SSE 或普通对象中的事件标识、序号、类型和摘要长度，只保留前端需要的受控字段。 */
 export function parseRunEvent(input) {
   let value = input && typeof input === 'object' && 'data' in input ? input.data : input
   try {
@@ -359,6 +421,7 @@ export function parseRunEvent(input) {
   return Object.freeze({
     executionId,
     traceId: value.traceId == null ? null : String(value.traceId),
+    streamId: value.streamId == null ? null : requireExecutionId(value.streamId),
     sequence,
     occurredAt: value.occurredAt == null ? null : String(value.occurredAt),
     eventType: value.eventType,
@@ -371,6 +434,10 @@ export function isTerminalRunEvent(event) {
   return Boolean(event && TERMINAL_EVENT_TYPES.has(event.eventType))
 }
 
+/**
+ * 订阅研究事件，终态时关闭连接；断线或非法事件触发一次状态查询补偿。
+ * 调用 close 会使在途补偿回调失效，防止切换会话后旧请求继续更新页面。
+ */
 export function subscribeResearch({
   executionId,
   userId,
@@ -386,34 +453,48 @@ export function subscribeResearch({
   if (!owner) throw new Error('userId 不能为空')
   const url = `${EXECUTION_BASE}/${encodeURIComponent(id)}/events?userId=${encodeURIComponent(owner)}`
   const source = eventSourceFactory(url)
-  if (!source || typeof source.addEventListener !== 'function' || typeof source.close !== 'function') {
+  if (
+    !source ||
+    typeof source.addEventListener !== 'function' ||
+    typeof source.close !== 'function'
+  ) {
     throw new Error('EventSource 工厂返回值非法')
   }
   let closed = false
-  const close = () => {
+  let cancelled = false
+  let compensating = false
+  const closeSource = () => {
     if (closed) return
     closed = true
     source.close()
   }
+  const close = () => {
+    cancelled = true
+    closeSource()
+  }
   const compensate = async (cause) => {
-    close()
+    if (closed || cancelled || compensating) return
+    compensating = true
+    closeSource()
     const error = cause instanceof Error ? cause : new Error('事件流连接中断')
     try {
       const status = await getResearchStatus(id, owner, { fetchImpl })
+      if (cancelled) return
       onStatus(status)
       if (['COMPLETED', 'FAILED'].includes(status.workflowStatus)) return
     } catch (statusError) {
       error.statusError = statusError
     }
-    onError(error)
+    if (!cancelled) onError(error)
   }
   const receive = (message) => {
+    if (closed || cancelled) return
     try {
       const event = parseRunEvent(message)
       if (event.executionId !== id) throw new Error('RunEvent executionId 不匹配')
       onEvent(event)
       if (isTerminalRunEvent(event)) {
-        close()
+        closeSource()
         onTerminal(event)
       }
     } catch (error) {
@@ -435,7 +516,9 @@ async function requestJson(fetchImpl, url, options) {
     data = {}
   }
   if (!response.ok) {
-    throw new Error(data.errorMessage || data.message || `接口请求失败（HTTP ${response.status}）`)
+    throw new Error(
+      data.errorMessage || data.error || data.message || `接口请求失败（HTTP ${response.status}）`
+    )
   }
   return data && typeof data === 'object' ? data : {}
 }

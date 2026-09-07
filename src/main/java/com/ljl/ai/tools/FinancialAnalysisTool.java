@@ -2,11 +2,16 @@ package com.ljl.ai.tools;
 
 import com.ljl.ai.client.FinancialDataClient;
 import com.ljl.ai.model.dto.ToolResult;
+import com.ljl.ai.model.dto.AnalysisToolPayload;
 import com.ljl.ai.research.AnalysisContext;
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+
+import java.math.BigDecimal;
+import java.util.LinkedHashMap;
+import java.util.List;
 
 @Slf4j
 @Component
@@ -48,5 +53,24 @@ public class FinancialAnalysisTool {
 
     private String value(Object value) {
         return value == null ? "未知" : value.toString();
+    }
+
+    /**
+     * 读取分析日当时可见的财务快照，将协议内指标转换为十进制数，并保留报告期、披露日及真实来源。
+     * 缺失指标保持缺失，交由工作流统一校验，避免用默认零值掩盖数据不足。
+     */
+    public ToolResult<AnalysisToolPayload> financialSnapshot(String symbol, String period, AnalysisContext context) {
+        return ToolResultExecutor.execute("FINANCIAL_DATA_ERROR", () -> {
+            var snapshot = financialDataClient.getLatest(symbol, period, context.analysisDate());
+            var metrics = new LinkedHashMap<String, BigDecimal>();
+            for (String metric : List.of("revenue", "netProfit", "revenueGrowth",
+                    "netProfitGrowth", "roe", "operatingCashFlow")) {
+                Object raw = snapshot.values().get(metric);
+                if (raw != null) metrics.put(metric, new BigDecimal(raw.toString()));
+            }
+            return new AnalysisToolPayload((String) snapshot.values().get("symbol"), snapshot.reportDate(),
+                    snapshot.publishedAt(), (String) snapshot.values().get("source"),
+                    (String) snapshot.values().get("sourceUrl"), snapshot.temporalStatus(), metrics);
+        });
     }
 }

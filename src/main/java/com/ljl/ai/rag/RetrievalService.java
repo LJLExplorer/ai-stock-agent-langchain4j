@@ -27,7 +27,6 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 /** Child 负责召回；只有当前活动入库版本可见，随后按 Parent 章节重组上下文。 */
 @Slf4j
@@ -45,8 +44,12 @@ public class RetrievalService {
         return retrieve(query, knowledgeConfig.getRetrieval().getTopK());
     }
 
+    /**
+     * 优先执行 Dense 与 BM25 的融合检索，按 MongoDB 文档状态及活动版本过滤后扩展父章节上下文。
+     * 混合检索异常时仅在配置允许的情况下退回语义检索，两条路径都先扩大候选池再过滤。
+     */
     public List<RetrievalResult> retrieve(String query, int topK) {
-        log.info("开始语义检索, queryLength: {}, topK: {}", query == null ? 0 : query.length(), topK);
+        log.info("开始知识检索, queryLength: {}, topK: {}", query == null ? 0 : query.length(), topK);
         Embedding queryEmbedding = embeddingModel.embed(query).content();
         if (milvusHybridSearchClient != null) {
             try {
@@ -54,16 +57,15 @@ public class RetrievalService {
                 List<MilvusHybridSearchResult> matches = milvusHybridSearchClient.search(query, queryEmbedding.vector(), candidateCount);
                 Map<String, String> activeVersions = activeIngestionVersions(matches.stream()
                         .map(MilvusHybridSearchResult::getDocumentId).filter(value -> !isBlank(value)).toList());
-                Set<String> verified = semanticVerifiedChildKeys(queryEmbedding, topK);
                 List<ChildCandidate> candidates = new ArrayList<>();
+                // RRF 候选保留两路召回的互补性，不再要求命中额外的 Dense 结果集。
                 for (int index = 0; index < matches.size(); index++) {
                     MilvusHybridSearchResult match = matches.get(index);
-                    if (isActiveChild(match.getDocumentId(), match.getIngestionVersion(), activeVersions)
-                            && verified.contains(contentKey(match.getDocumentId(), match.getIngestionVersion(), match.getChunkId(), match.getContent()))) {
+                    if (isActiveChild(match.getDocumentId(), match.getIngestionVersion(), activeVersions)) {
                         candidates.add(hybridCandidate(match, index));
                     }
                 }
-                log.info("Milvus Hybrid Search完成, 语义校验通过 {} 个RRF融合片段", candidates.size());
+                log.info("Milvus Hybrid Search完成, RRF候选 {} 个，文档状态与版本过滤后 {} 个", matches.size(), candidates.size());
                 return expandParentContext(candidates, topK);
             } catch (RuntimeException exception) {
                 if (!milvusConfig.isHybridSearchFallbackEnabled()) throw exception;
@@ -96,6 +98,7 @@ public class RetrievalService {
         return expandParentContext(candidates, topK);
     }
 
+    /** 将检索命中按顺序渲染为带来源和分数的参考文本，无命中时返回空上下文。 */
     public String buildAugmentedContext(String query, List<RetrievalResult> retrievalResults) {
         if (retrievalResults == null || retrievalResults.isEmpty()) return "";
         StringBuilder context = new StringBuilder("【相关知识参考】\n\n");
@@ -117,6 +120,10 @@ public class RetrievalService {
         return sources;
     }
 
+    /**
+     * 按父章节和入库版本扩展子块命中，合并后重新排序并限制结果数量。
+     * 老索引缺少层级信息或父章节不可用时保留原始子块，避免丢失已经召回的参考内容。
+     */
     private List<RetrievalResult> expandParentContext(List<ChildCandidate> candidates, int topK) {
         if (candidates.isEmpty() || topK <= 0) return List.of();
         List<ChildHit> hits = new ArrayList<>();
@@ -177,16 +184,7 @@ public class RetrievalService {
         return new ChildCandidate(chunkId, parentSectionId, segment.metadata().getString("ingestionVersion"), value(chunkIndex), result, originalOrder);
     }
 
-    private Set<String> semanticVerifiedChildKeys(Embedding queryEmbedding, int topK) {
-        EmbeddingSearchRequest request = EmbeddingSearchRequest.builder().queryEmbedding(queryEmbedding)
-                .maxResults(Math.max(topK * 4, 20)).minScore(knowledgeConfig.getRetrieval().getMinScore()).build();
-        return embeddingStore.search(request).matches().stream().map(EmbeddingMatch::embedded).filter(segment -> segment != null)
-                .map(segment -> contentKey(segment.metadata() == null ? null : segment.metadata().getString("documentId"),
-                        segment.metadata() == null ? null : segment.metadata().getString("ingestionVersion"),
-                        segment.metadata() == null ? null : segment.metadata().getString("chunkId"), segment.text()))
-                .collect(java.util.stream.Collectors.toSet());
-    }
-
+    /** 批量读取已启用且可见文档的活动版本，作为向量命中进入回答上下文前的可见性依据。 */
     private Map<String, String> activeIngestionVersions(Collection<String> documentIds) {
         if (documentIds.isEmpty()) return Map.of();
         Criteria visible = new Criteria().orOperator(Criteria.where("deleteStatus").exists(false), Criteria.where("deleteStatus").is(null),
@@ -197,6 +195,7 @@ public class RetrievalService {
         return versions;
     }
 
+    /** 仅放行活动版本的子块；兼容旧文档时要求文档和子块双方都没有入库版本。 */
     private boolean isActiveChild(String documentId, String childVersion, Map<String, String> activeVersions) {
         if (!activeVersions.containsKey(documentId)) return false;
         String activeVersion = activeVersions.get(documentId);
@@ -205,10 +204,6 @@ public class RetrievalService {
 
     private List<String> headingPath(String value) { return isBlank(value) ? List.of() : List.of(value.split("\\s*>\\s*")); }
     private Integer parseInteger(String value) { try { return isBlank(value) ? null : Integer.valueOf(value); } catch (NumberFormatException ignored) { return null; } }
-    private String contentKey(String documentId, String ingestionVersion, String chunkId, String content) {
-        return String.join("\u0000", documentId == null ? "" : documentId, ingestionVersion == null ? "" : ingestionVersion,
-                chunkId == null ? "" : chunkId, content == null ? "" : content);
-    }
     private int candidateCount(int topK) { return Math.max(1, topK * 3); }
     private int value(Integer number) { return number == null ? 0 : number; }
     private double score(Double value) { return value == null ? 0D : value; }

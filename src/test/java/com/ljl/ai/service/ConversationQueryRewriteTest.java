@@ -1,6 +1,7 @@
 package com.ljl.ai.service;
 
 import com.ljl.ai.agent.QueryRewriteAssistant;
+import com.ljl.ai.memory.ConversationContextService;
 import com.ljl.ai.memory.ConversationQuery;
 import com.ljl.ai.memory.ConversationTopicStore;
 import com.ljl.ai.memory.ShortTermSummaryService;
@@ -11,27 +12,26 @@ import org.springframework.test.util.ReflectionTestUtils;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-class ChatServiceQueryRewriteTest {
+class ConversationQueryRewriteTest {
 
     @Test
     void shouldBuildOneCanonicalExecutionQuestionFromMessageAndOrderId() {
         assertEquals("分析技术面\n当前用户正在咨询股票：600519",
-                ChatService.executionQuestion("分析技术面", "600519"));
+                ConversationContextService.executionQuestion("分析技术面", "600519"));
         assertEquals("分析600519技术面",
-                ChatService.executionQuestion("分析600519技术面", "600519"));
+                ConversationContextService.executionQuestion("分析600519技术面", "600519"));
         assertEquals("分析 600519.SH 技术面",
-                ChatService.executionQuestion("分析 600519.SH 技术面", "600519.SH"));
+                ConversationContextService.executionQuestion("分析 600519.SH 技术面", "600519.SH"));
     }
 
     @Test
     void shouldRewriteQueryWithShortTermSummaryAndUseItForLongTermRecall() {
-        ChatService service = new ChatService();
+        ConversationContextService service = new ConversationContextService();
         QueryRewriteAssistant rewriter = mock(QueryRewriteAssistant.class);
         ShortTermSummaryService summaryService = mock(ShortTermSummaryService.class);
         LongTermMemoryService longTermMemoryService = mock(LongTermMemoryService.class);
@@ -56,7 +56,7 @@ class ChatServiceQueryRewriteTest {
 
     @Test
     void shouldFallbackToOriginalQueryWhenRewriteIsBlankOrFails() {
-        ChatService service = new ChatService();
+        ConversationContextService service = new ConversationContextService();
         QueryRewriteAssistant rewriter = mock(QueryRewriteAssistant.class);
         ReflectionTestUtils.setField(service, "queryRewriteAssistant", rewriter);
         when(rewriter.rewrite("原始问题", "", "", "当前话题：general\n最近话题：")).thenReturn("   ");
@@ -70,7 +70,7 @@ class ChatServiceQueryRewriteTest {
 
     @Test
     void shouldResolveRecentConversationAndStructuredTopicMetadata() {
-        ChatService service = new ChatService();
+        ConversationContextService service = new ConversationContextService();
         QueryRewriteAssistant rewriter = mock(QueryRewriteAssistant.class);
         ConversationTopicStore.TopicState topicState = new ConversationTopicStore.TopicState(
                 "600519", List.of("600519", "300750"));
@@ -90,7 +90,7 @@ class ChatServiceQueryRewriteTest {
 
     @Test
     void explicitStockCodeShouldResolveLocallyWithoutCallingRewriteModel() {
-        ChatService service = new ChatService();
+        ConversationContextService service = new ConversationContextService();
         QueryRewriteAssistant rewriter = mock(QueryRewriteAssistant.class);
         ConversationTopicStore.TopicState topicState = new ConversationTopicStore.TopicState(
                 "600519", List.of("600519"));

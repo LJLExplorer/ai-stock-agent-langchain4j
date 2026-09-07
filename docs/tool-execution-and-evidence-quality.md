@@ -1,6 +1,6 @@
 # 工具调用与证据质量控制流程
 
-*用途：解释股票分析工作流如何调用工具、过滤无效搜索结果并校验回答，供开发排查与面试复述使用。对应代码状态：2026-09-06。*
+*用途：解释股票分析工作流如何调用工具、过滤无效搜索结果并校验回答，供开发排查与面试复述使用。对应代码状态：2026-09-07。*
 
 ---
 
@@ -41,11 +41,11 @@ flowchart TB
 | 计划任务 | 受控工具入口 | 主要数据 |
 | --- | --- | --- |
 | `MARKET_DATA` | `MarketDataTool.getQuote(symbol, context)`；无上下文入口为 `getRealtimeQuote` | 行情及其时点 |
-| `TECHNICAL_ANALYSIS` | `TechnicalAnalysisTool.analyzeTechnicalIndicators` | K 线及技术指标 |
-| `FINANCIAL_ANALYSIS` | `FinancialAnalysisTool.analyzeFinancialReport` | 财务指标、报告期和披露信息 |
+| `TECHNICAL_ANALYSIS` | `TechnicalAnalysisTool` 的结构化工作流入口 | K 线及技术指标，返回 `AnalysisToolPayload` |
+| `FINANCIAL_ANALYSIS` | `FinancialAnalysisTool` 的结构化工作流入口 | 财务指标、报告期和披露信息，返回 `AnalysisToolPayload` |
 | `NEWS_ANALYSIS` | `NewsRagTool.searchStockNewsAndAnnouncements` | 公司新闻与官方披露 |
 
-当前四类工具任务按工作流顺序执行，不是四工具并行。深度投研中的适用专家角色可以并行分析，但角色本身不挂载工具。`WorkflowReflector` 不会擅自追加新闻任务：如果计划只有技术分析，就不能宣称已经查过新闻和财报。
+当前四类工具分支从 `DISPATCH` 并行调度，只执行计划包含的任务，在 `TASKS_JOIN` 按 taskId 合并增量后统一保存检查点。分支读取只读状态，不能更新兄弟任务。深度投研中的适用专家角色也可以并行分析，但角色本身不挂载工具。`WorkflowReflector` 不会擅自追加新闻任务：如果计划只有技术分析，就不能宣称已经查过新闻和财报。
 
 代码：[PlanValidator](../src/main/java/com/ljl/ai/planner/PlanValidator.java)、[StockAnalysisTaskExecutor](../src/main/java/com/ljl/ai/workflow/StockAnalysisTaskExecutor.java)、[StockAnalysisTaskNode](../src/main/java/com/ljl/ai/workflow/StockAnalysisTaskNode.java)。
 
@@ -98,9 +98,9 @@ flowchart TB
 
 ### 工作流层：只重试失败或不可靠的任务
 
-`WorkflowReflector` 用确定性规则检查失败状态、空结果、错误文本标记，以及特定输出格式下的股票代码不匹配。`WorkflowRetryPolicy` 默认每个任务最多尝试 2 次，即初次加 1 次重试；`WorkflowCritic` 将结果收敛到回答、重试或失败等受限路由。
+`WorkflowReflector` 通过 `WorkflowResultValidator` 检查当前成功快照的 Schema、标的、时点、来源、数值与证据覆盖。`WorkflowRetryPolicy` 默认每个任务最多尝试 2 次，即初次加 1 次重试；`WorkflowCritic` 将结果收敛到回答、重试或失败等受限路由。
 
-这里不是“模型自我反思后决定真伪”。例如结果文本 `[]` 非空，可能通过任务文本检查，但新闻证据仍然为空，需要证据层标记缺失。相反，错误词匹配也可能误判包含“异常”等词的正常业务文本，因此不能把它当作完整的内容判定器。
+工具调用成功不等于结果可用于回答：空新闻列表不能满足证据覆盖，技术或财务展示文本不能代替结构化数值。正常新闻中出现“异常”“失败”不会仅因关键词被拒绝。重试历史只供审计，不能补齐本次 `currentEvidence` 的缺失；恢复到证据或模型节点时也会重新验证当前任务并重建证据包。具体协议和门槛见 [工作流校验说明](workflow-validation.md)。
 
 两层预算可能嵌套，且公司名称查询、官网目录提取、Embedding 都可能产生额外请求，所以“最多四轮新闻搜索”不等于“整条请求最多调用四次外部接口”，也不保证固定秒数内完成。
 
@@ -108,7 +108,7 @@ flowchart TB
 
 ## 📦 第五步：整理证据，而不是直接拼接原始输出
 
-`EvidencePackBuilder` 把工具结果转成 `FinancialFact`，保留证据 ID、指标或内容、来源链接、报告期、发布时间和时点状态，并记录任务失败、空证据和时间未知等缺失信息。
+`EvidencePackBuilder` 将结构化工具指标和来源映射为 `FinancialFact`，不从技术/财务展示文案中提取数值；保留证据 ID、指标或内容、来源链接、报告期、发布时间和时点状态，并记录任务失败、空证据和时间未知等缺失信息。
 
 - `VERIFIED` 表示通过当前时点规则，**不表示来源中的所有事实都经过独立核实**。
 - `UNKNOWN` 可以保留在证据包中供检查，但其正文不会进入给模型的有效证据视图；未来或已拒绝的数据不能成为本轮有效证据。
@@ -168,4 +168,4 @@ mvn -q -Dtest=NewsSearchLiveTest -Dnews.live=true test
 - 时点规则判断的是相对 `analysisDate` 是否可用；不能仅因为日期含“2026”就判定它是未来数据。
 - 来源覆盖不足时应明确缺失，不能放松过滤凑数量，也不能把未执行的板块说成已完成分析。
 
-面试题与口述答案见 [简历与面试准备，第 22 题](resume-and-interview.md)。
+面试题与口述答案见 [简历与面试问答](resume-and-interview.md)。

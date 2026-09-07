@@ -1,9 +1,11 @@
 package com.ljl.ai.rag;
 
+import com.ljl.ai.model.dto.ChatRequest;
 import com.ljl.ai.model.entity.KnowledgeSource;
 import com.ljl.ai.model.entity.RagTrace;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -18,6 +20,22 @@ public class RagPipelineService {
 
     @Resource
     private RetrievalService retrievalService;
+
+    public record ChatRetrieval(String context, List<KnowledgeSource> sources, RagTrace trace) {}
+
+    /** 按请求开关执行知识检索并生成待落库轨迹；未启用或无命中时不向助手注入知识上下文。 */
+    public ChatRetrieval retrieveForChat(ChatRequest request, String sessionId, String query) {
+        if (!Boolean.TRUE.equals(request.getEnableRag())) {
+            return new ChatRetrieval(null, null, null);
+        }
+        RagResult result = executeRag(query);
+        RagTrace trace = buildTrace(request.getUserId(), sessionId, query, result);
+        String context = result.getRetrievalResults().isEmpty() ? null : result.getAugmentedContext();
+        log.info("chat_rag_finished traceId={}, sessionId={}, resultCount={}, contextLength={}",
+                MDC.get("traceId"), sessionId, result.getRetrievalResults().size(),
+                context == null ? 0 : context.length());
+        return new ChatRetrieval(context, result.getKnowledgeSources(), trace);
+    }
 
     /**
      * 执行RAG流程
@@ -43,15 +61,21 @@ public class RagPipelineService {
                 .retrievalResults(retrievalResults).build();
     }
 
+    /** 汇总命中数量、首条分数及来源信息；消息标识和回答长度由对话落库阶段补齐。 */
     public RagTrace buildTrace(String userId, String sessionId, String query, RagResult result) {
         List<RetrievalResult> matches = result.getRetrievalResults();
+        Double topScore = 0D;
+        if (matches != null && !matches.isEmpty()) {
+            // 命中可能没有可用分数；保留 null，避免三元表达式拆箱使观测信息中断聊天。
+            topScore = matches.getFirst().getSimilarity();
+        }
         return RagTrace.builder()
                 .traceId(UUID.randomUUID().toString())
                 .userId(userId)
                 .sessionId(sessionId)
                 .query(query)
                 .retrievalCount(matches == null ? 0 : matches.size())
-                .topScore(matches == null || matches.isEmpty() ? 0D : matches.get(0).getSimilarity())
+                .topScore(topScore)
                 .sourceIds(matches == null ? List.of() : matches.stream().map(RetrievalResult::getDocumentId).toList())
                 .sourceTitles(matches == null ? List.of() : matches.stream().map(RetrievalResult::getTitle).toList())
                 .contextLength(result.getAugmentedContext() == null ? 0 : result.getAugmentedContext().length())

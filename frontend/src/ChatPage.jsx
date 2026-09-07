@@ -1,0 +1,890 @@
+import { useEffect, useRef, useState } from 'react'
+import { NavLink } from 'react-router-dom'
+import { createRequestScope } from './requestScope.js'
+import { chatFailureMessage } from './chatResponse.js'
+import {
+  applyStatusCompensation,
+  buildResearchRequest,
+  createResearchProgress,
+  taskDurationMs,
+  getResearchStatus,
+  mapTerminalResearchResult,
+  reduceResearchProgress,
+  startResearch,
+  subscribeResearch
+} from './researchExecution.js'
+import {
+  Activity,
+  CheckCircle2,
+  Clipboard,
+  Database,
+  History,
+  LoaderCircle,
+  MessageSquare,
+  PanelRight,
+  Plus,
+  Search,
+  Send,
+  Settings2,
+  Sparkles,
+  Trash2,
+  UserRound,
+  Wrench
+} from 'lucide-react'
+
+import {
+  SectionTitle,
+  Field,
+  Toggle,
+  Stat,
+  EmptyState,
+  Message,
+  SessionItem,
+  ToolItem,
+  SourceItem,
+  Muted,
+  ResearchProgress
+} from './components/ChatParts.jsx'
+
+const quickPrompts = [
+  ['实时行情', '请查询当前股票的实时行情，并说明今天的涨跌情况。'],
+  ['技术分析', '请基于真实日K分析当前股票的技术趋势。'],
+  ['财务数据', '请查询当前股票最新财务数据和报告期。'],
+  ['新闻与风险', '请搜索当前股票最近的新闻、公告和风险信息。']
+]
+
+export default function ChatPage() {
+  const [userId, setUserId] = useState('demo-user')
+  const [sessionId, setSessionId] = useState('')
+  const [sessionTitle, setSessionTitle] = useState('')
+  const [sessions, setSessions] = useState([])
+  const [sessionFilter, setSessionFilter] = useState('')
+  const [sessionsBusy, setSessionsBusy] = useState(false)
+  const [pinnedSessionIds, setPinnedSessionIds] = useState([])
+  const [symbol, setSymbol] = useState('600519')
+  const [message, setMessage] = useState('')
+  const [rag, setRag] = useState(true)
+  const [tools, setTools] = useState(true)
+  const [researchMode, setResearchMode] = useState('STANDARD')
+  const [researchRun, setResearchRun] = useState(null)
+  const [messages, setMessages] = useState([])
+  const [details, setDetails] = useState({ tools: [], sources: [], duration: null })
+  const [busy, setBusy] = useState(false)
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [deletingSessionId, setDeletingSessionId] = useState('')
+  const [savingTitle, setSavingTitle] = useState(false)
+  const [connection, setConnection] = useState('ready')
+  const [healthStatus, setHealthStatus] = useState('checking')
+  const [healthLatency, setHealthLatency] = useState(null)
+  const [memoryContent, setMemoryContent] = useState('')
+  const [memoryTags, setMemoryTags] = useState('')
+  const [memoryBusy, setMemoryBusy] = useState(false)
+  const inputRef = useRef(null)
+  const sessionsRequestRef = useRef(0)
+  const researchSubscriptionRef = useRef(null)
+  const requestScope = useRef(createRequestScope())
+
+  const resetConversation = () => {
+    requestScope.current.invalidate()
+    researchSubscriptionRef.current?.close()
+    researchSubscriptionRef.current = null
+    setResearchRun(null)
+    setMessages([])
+    setDetails({ tools: [], sources: [], duration: null })
+    setBusy(false)
+    setHistoryLoading(false)
+    setSessionsBusy(false)
+    setSavingTitle(false)
+    setDeletingSessionId('')
+    setMemoryBusy(false)
+    setConnection('ready')
+  }
+
+  const loadSessions = async (requestedUserId = userId) => {
+    const normalizedUserId = requestedUserId.trim()
+    const requestId = ++sessionsRequestRef.current
+    if (!normalizedUserId) {
+      setSessions([])
+      setSessionsBusy(false)
+      return
+    }
+    setSessionsBusy(true)
+    try {
+      const response = await fetch(
+        `/api/chat/users/${encodeURIComponent(normalizedUserId)}/sessions`
+      )
+      if (!response.ok) throw new Error('会话列表加载失败')
+      const data = await response.json()
+      if (requestId === sessionsRequestRef.current) setSessions(Array.isArray(data) ? data : [])
+    } catch (error) {
+      if (requestId === sessionsRequestRef.current) window.alert(error.message)
+    } finally {
+      if (requestId === sessionsRequestRef.current) setSessionsBusy(false)
+    }
+  }
+
+  useEffect(() => {
+    setSessionId('')
+    setSessionTitle('')
+    resetConversation()
+    setSessionFilter('')
+    loadSessions(userId)
+  }, [userId])
+
+  useEffect(() => {
+    if (!sessionId || sessionTitle) return
+    const activeSession = sessions.find((session) => session.sessionId === sessionId)
+    if (activeSession?.title) setSessionTitle(activeSession.title)
+  }, [sessions, sessionId, sessionTitle])
+
+  useEffect(() => {
+    let disposed = false
+    const checkHealth = async () => {
+      const started = performance.now()
+      try {
+        const response = await fetch(`/api/health?ts=${Date.now()}`, { cache: 'no-store' })
+        const data = await response.json().catch(() => ({}))
+        if (!response.ok || data.status !== 'UP') throw new Error('服务状态异常')
+        if (!disposed) {
+          setHealthStatus('ready')
+          setHealthLatency(Math.round(performance.now() - started))
+        }
+      } catch {
+        if (!disposed) {
+          setHealthStatus('error')
+          setHealthLatency(null)
+        }
+      }
+    }
+    checkHealth()
+    const timer = window.setInterval(checkHealth, 15000)
+    return () => {
+      disposed = true
+      window.clearInterval(timer)
+    }
+  }, [])
+
+  useEffect(
+    () => () => {
+      requestScope.current.invalidate()
+      sessionsRequestRef.current += 1
+      researchSubscriptionRef.current?.close()
+    },
+    []
+  )
+
+  const createSession = async () => {
+    const normalizedUserId = userId.trim()
+    if (!normalizedUserId) return window.alert('请填写用户 ID')
+    if (busy || sessionsBusy) return
+    resetConversation()
+    const isCurrent = requestScope.current.capture()
+    setSessionsBusy(true)
+    setBusy(true)
+    setSessionId('')
+    setSessionTitle('')
+    try {
+      const params = new URLSearchParams({ userId: normalizedUserId })
+      if (symbol.trim()) params.set('orderId', symbol.trim())
+      const response = await fetch(`/api/chat/sessions?${params}`, { method: 'POST' })
+      const data = await response.json()
+      if (!isCurrent()) return
+      if (!response.ok || !data.sessionId)
+        throw new Error(data.errorMessage || data.error || data.message || '新建会话失败')
+      setSessionId(data.sessionId)
+      setSessionTitle(data.title || '')
+      setSessions((items) => [data, ...items.filter((item) => item.sessionId !== data.sessionId)])
+    } catch (error) {
+      if (isCurrent()) window.alert(error.message)
+    } finally {
+      if (isCurrent()) {
+        setSessionsBusy(false)
+        setBusy(false)
+      }
+    }
+  }
+
+  const clearSession = () => {
+    setSessionId('')
+    setSessionTitle('')
+    resetConversation()
+  }
+
+  const saveSessionTitle = async () => {
+    const title = sessionTitle.trim()
+    if (!sessionId || !title || savingTitle) return
+    const isCurrent = requestScope.current.capture()
+    setSavingTitle(true)
+    try {
+      const response = await fetch(
+        `/api/chat/sessions/${encodeURIComponent(sessionId)}/title?userId=${encodeURIComponent(userId.trim())}`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title })
+        }
+      )
+      const data = await response.json().catch(() => ({}))
+      if (!isCurrent()) return
+      if (!response.ok)
+        throw new Error(data.errorMessage || data.error || data.message || '标题保存失败')
+      setSessionTitle(data.title || title)
+      setSessions((items) =>
+        items.map((item) =>
+          item.sessionId === sessionId ? { ...item, title: data.title || title } : item
+        )
+      )
+    } catch (error) {
+      if (isCurrent()) window.alert(error.message)
+    } finally {
+      if (isCurrent()) setSavingTitle(false)
+    }
+  }
+
+  const deleteSession = async (session) => {
+    if (busy || deletingSessionId) return
+    const title = session.title || '未命名会话'
+    if (!window.confirm(`确定删除“${title}”吗？会话消息也会一并删除。`)) return
+    const isCurrent = requestScope.current.capture()
+    setDeletingSessionId(session.sessionId)
+    try {
+      const response = await fetch(
+        `/api/chat/sessions/${encodeURIComponent(session.sessionId)}?userId=${encodeURIComponent(userId.trim())}`,
+        { method: 'DELETE' }
+      )
+      const data = await response.json().catch(() => ({}))
+      if (!isCurrent()) return
+      if (!response.ok || data.success === false)
+        throw new Error(data.errorMessage || data.error || data.message || '会话删除失败')
+      setSessions((items) => items.filter((item) => item.sessionId !== session.sessionId))
+      if (session.sessionId === sessionId) clearSession()
+    } catch (error) {
+      if (isCurrent()) window.alert(error.message)
+    } finally {
+      if (isCurrent()) setDeletingSessionId('')
+    }
+  }
+
+  const togglePin = (sessionIdToToggle) => {
+    setPinnedSessionIds((ids) =>
+      ids.includes(sessionIdToToggle)
+        ? ids.filter((id) => id !== sessionIdToToggle)
+        : [sessionIdToToggle, ...ids]
+    )
+  }
+
+  const finishDeepResearch = async (status, started, isCurrent) => {
+    if (!isCurrent()) return
+    const result = mapTerminalResearchResult(status)
+    setResearchRun((current) =>
+      current
+        ? {
+            ...applyStatusCompensation(current, status),
+            missingItems: result.missingItems
+          }
+        : current
+    )
+    if (!result.terminal) return
+    const content = result.success
+      ? result.answer || '深度投研已完成，但没有可展示的结论。'
+      : `深度投研失败：${result.error}`
+    setMessages((items) => [
+      ...items.slice(0, -1),
+      {
+        role: 'assistant',
+        content,
+        sources: result.sources,
+        error: !result.success
+      }
+    ])
+    const taskTools = Array.isArray(status.tasks)
+      ? status.tasks.map((task) => ({
+          toolName: task.taskType || task.taskId || '工作流任务',
+          success: task.status === 'COMPLETED',
+          errorMessage: task.errorMessage || null,
+          executionTime: taskDurationMs(task)
+        }))
+      : []
+    setDetails({
+      tools: taskTools,
+      sources: result.sources,
+      duration: Math.round(performance.now() - started)
+    })
+    setConnection(result.success ? 'ready' : 'error')
+    setBusy(false)
+    await loadSessions(userId)
+  }
+
+  const connectResearch = (executionId, owner, started) => {
+    researchSubscriptionRef.current?.close()
+    const scopeIsCurrent = requestScope.current.capture()
+    const isCurrent = () => scopeIsCurrent() && researchSubscriptionRef.current === subscription
+    setResearchRun((current) =>
+      current
+        ? {
+            ...current,
+            connection: 'connecting',
+            canReconnect: false,
+            error: ''
+          }
+        : { ...createResearchProgress(executionId), startedAt: started }
+    )
+    const subscription = subscribeResearch({
+      executionId,
+      userId: owner,
+      onEvent: (runEvent) => {
+        if (isCurrent())
+          setResearchRun((current) =>
+            reduceResearchProgress(current || createResearchProgress(executionId), runEvent)
+          )
+      },
+      onTerminal: async () => {
+        try {
+          await finishDeepResearch(await getResearchStatus(executionId, owner), started, isCurrent)
+        } catch (error) {
+          if (!isCurrent()) return
+          setResearchRun((current) =>
+            current
+              ? {
+                  ...current,
+                  connection: 'disconnected',
+                  canReconnect: true,
+                  error: error.message
+                }
+              : current
+          )
+          setConnection('error')
+          setBusy(false)
+        }
+      },
+      onStatus: (status) => {
+        if (!isCurrent()) return
+        setResearchRun((current) => (current ? applyStatusCompensation(current, status) : current))
+        if (['COMPLETED', 'FAILED'].includes(status.workflowStatus))
+          void finishDeepResearch(status, started, isCurrent)
+      },
+      onError: (error) => {
+        if (!isCurrent()) return
+        setResearchRun((current) =>
+          current
+            ? {
+                ...current,
+                connection: 'disconnected',
+                canReconnect: true,
+                error: error.message || '事件流连接中断'
+              }
+            : current
+        )
+        setConnection('error')
+        setBusy(false)
+      }
+    })
+    researchSubscriptionRef.current = subscription
+    return subscription
+  }
+
+  const reconnectResearch = () => {
+    if (!researchRun?.executionId || busy) return
+    setBusy(true)
+    setConnection('loading')
+    try {
+      connectResearch(
+        researchRun.executionId,
+        userId.trim(),
+        researchRun.startedAt || performance.now()
+      )
+    } catch (error) {
+      setResearchRun((current) => ({
+        ...current,
+        connection: 'disconnected',
+        canReconnect: true,
+        error: error.message
+      }))
+      setConnection('error')
+      setBusy(false)
+    }
+  }
+
+  const submit = async (event) => {
+    event?.preventDefault()
+    const text = message.trim()
+    if (!text || busy || historyLoading) return
+    if (!userId.trim()) return window.alert('请填写用户 ID')
+    requestScope.current.invalidate()
+    researchSubscriptionRef.current?.close()
+    researchSubscriptionRef.current = null
+    setResearchRun(null)
+    const isCurrent = requestScope.current.capture()
+    setSavingTitle(false)
+    setMemoryBusy(false)
+    setDeletingSessionId('')
+    const prompt = symbol.trim() ? `${text}\n当前用户正在咨询股票：${symbol.trim()}` : text
+    setMessage('')
+    setMessages((items) => [
+      ...items,
+      { role: 'user', content: text },
+      { role: 'assistant', content: '', pending: true }
+    ])
+    setBusy(true)
+    setConnection('loading')
+    const started = performance.now()
+    let streaming = false
+    try {
+      const routed = buildResearchRequest(researchMode, {
+        sessionId: sessionId || null,
+        userId: userId.trim(),
+        message: prompt,
+        orderId: symbol.trim() || null,
+        enableRag: rag,
+        enableTools: tools
+      })
+      if (routed.asynchronous) {
+        const handle = await startResearch(routed.payload)
+        if (!isCurrent()) return
+        setSessionId(handle.sessionId || sessionId || '')
+        setResearchRun({ ...createResearchProgress(handle.executionId), startedAt: started })
+        connectResearch(handle.executionId, userId.trim(), started)
+        streaming = true
+        return
+      }
+      const response = await fetch(routed.endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(routed.payload)
+      })
+      const raw = await response.text()
+      if (!isCurrent()) return
+      let data
+      try {
+        data = raw ? JSON.parse(raw) : {}
+      } catch {
+        throw new Error(raw || `接口请求失败（HTTP ${response.status}）`)
+      }
+      if (data.sessionId) setSessionId(data.sessionId)
+      if (!response.ok || data.success === false) throw new Error(chatFailureMessage(data))
+      setSessionId(data.sessionId || '')
+      setMessages((items) => [
+        ...items.slice(0, -1),
+        {
+          role: 'assistant',
+          content: data.content || '接口返回空内容',
+          sources: data.knowledgeSources || []
+        }
+      ])
+      setDetails({
+        tools: data.toolInvocations || [],
+        sources: data.knowledgeSources || [],
+        duration: Math.round(performance.now() - started)
+      })
+      await loadSessions(userId)
+      if (!isCurrent()) return
+      setConnection('ready')
+    } catch (error) {
+      if (!isCurrent()) return
+      setMessages((items) => [
+        ...items.slice(0, -1),
+        { role: 'assistant', content: `请求失败：${error.message}`, error: true }
+      ])
+      setConnection('error')
+    } finally {
+      if (!streaming && isCurrent()) setBusy(false)
+    }
+  }
+
+  const selectSession = async (session) => {
+    if (busy || session.sessionId === sessionId) return
+    setSessionId(session.sessionId)
+    setSessionTitle(session.title || '')
+    if (session.orderId) setSymbol(session.orderId)
+    resetConversation()
+    const isCurrent = requestScope.current.capture()
+    setHistoryLoading(true)
+    try {
+      const response = await fetch(
+        `/api/chat/sessions/${encodeURIComponent(session.sessionId)}/messages?userId=${encodeURIComponent(userId.trim())}`
+      )
+      if (!response.ok) throw new Error('会话加载失败')
+      const data = await response.json()
+      if (!isCurrent()) return
+      setMessages(
+        data.map((item) => ({
+          role: item.role?.toLowerCase() === 'user' ? 'user' : 'assistant',
+          content: item.content || '',
+          sources: item.knowledgeSources || []
+        }))
+      )
+    } catch (error) {
+      if (isCurrent()) window.alert(error.message)
+    } finally {
+      if (isCurrent()) setHistoryLoading(false)
+    }
+  }
+
+  const visibleSessions = sessions
+    .filter((session) => {
+      const query = sessionFilter.trim().toLowerCase()
+      if (!query) return true
+      return [session.title, session.orderId, session.sessionId]
+        .filter(Boolean)
+        .some((value) => value.toLowerCase().includes(query))
+    })
+    .sort(
+      (a, b) =>
+        Number(pinnedSessionIds.includes(b.sessionId)) -
+        Number(pinnedSessionIds.includes(a.sessionId))
+    )
+
+  const copySession = async () => {
+    if (sessionId) await navigator.clipboard?.writeText(sessionId)
+  }
+  const saveMemory = async () => {
+    const content = memoryContent.trim()
+    if (!userId.trim()) return window.alert('请填写用户 ID')
+    if (!content || memoryBusy) return
+    const isCurrent = requestScope.current.capture()
+    setMemoryBusy(true)
+    try {
+      const response = await fetch('/api/memories', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: userId.trim(),
+          content,
+          tags: memoryTags
+            .split(',')
+            .map((tag) => tag.trim())
+            .filter(Boolean)
+        })
+      })
+      const data = await response.json()
+      if (!isCurrent()) return
+      if (!response.ok)
+        throw new Error(data.errorMessage || data.error || data.message || '长期记忆保存失败')
+      setMemoryContent('')
+      setMemoryTags('')
+      window.alert('长期记忆已保存')
+    } catch (error) {
+      if (isCurrent()) window.alert(error.message)
+    } finally {
+      if (isCurrent()) setMemoryBusy(false)
+    }
+  }
+  const choosePrompt = (prompt) => {
+    setMessage(prompt.replace('当前股票', symbol || '当前股票'))
+    inputRef.current?.focus()
+  }
+
+  return (
+    <div className="app-shell">
+      <header className="topbar">
+        <div className="topbar-start">
+          <div className="brand">
+            <span className="brand-mark">
+              <Activity size={17} />
+            </span>
+            <div>
+              <strong>Stock Insight Agent</strong>
+              <small>股票研究与预测工作台</small>
+            </div>
+          </div>
+          <div className="stat-grid header-stat-grid">
+            <Stat label="会话" value={sessionId ? '已建立' : '未发送'} />
+            <Stat label="响应时间" value={details.duration ? `${details.duration} ms` : '-'} />
+          </div>
+        </div>
+        <div className="top-actions">
+          <nav className="route-nav" aria-label="主导航">
+            <NavLink to="/" end>
+              <MessageSquare size={15} />
+              问答
+            </NavLink>
+            <NavLink to="/knowledge">
+              <Database size={15} />
+              知识库
+            </NavLink>
+          </nav>
+          <label className="top-user">
+            <UserRound size={15} />
+            <span>用户 ID</span>
+            <input
+              value={userId}
+              onChange={(e) => {
+                resetConversation()
+                sessionsRequestRef.current += 1
+                setUserId(e.target.value)
+              }}
+              aria-label="用户 ID"
+            />
+          </label>
+          <span
+            className={`connection ${healthStatus}`}
+            title={healthLatency ? `最近检测 ${healthLatency} ms` : '每 15 秒自动检测'}
+          >
+            <i />
+            {healthStatus === 'checking'
+              ? '检测服务中'
+              : healthStatus === 'error'
+                ? '服务异常'
+                : '服务可用'}
+            {healthLatency && healthStatus === 'ready' ? <small>{healthLatency}ms</small> : null}
+          </span>
+          <button className="button" onClick={createSession} disabled={sessionsBusy || busy}>
+            <Plus size={15} />
+            新建会话
+          </button>
+        </div>
+      </header>
+      <main className="workspace">
+        <aside className="panel sidebar">
+          <SectionTitle icon={<Settings2 size={14} />} title="会话设置" />
+          <div className="history-section">
+            <SectionTitle icon={<History size={14} />} title="历史会话" />
+            <div className="history-search">
+              <Search size={14} />
+              <input
+                value={sessionFilter}
+                onChange={(e) => setSessionFilter(e.target.value)}
+                placeholder="搜索标题、股票或 ID"
+              />
+            </div>
+            <div className="session-list">
+              {sessionsBusy && !sessions.length ? (
+                <Muted>会话加载中…</Muted>
+              ) : visibleSessions.length ? (
+                visibleSessions.map((session) => (
+                  <SessionItem
+                    key={session.sessionId}
+                    session={session}
+                    active={session.sessionId === sessionId}
+                    pinned={pinnedSessionIds.includes(session.sessionId)}
+                    deleting={deletingSessionId === session.sessionId}
+                    onClick={() => selectSession(session)}
+                    onPin={() => togglePin(session.sessionId)}
+                    onDelete={() => deleteSession(session)}
+                  />
+                ))
+              ) : (
+                <Muted>{sessionFilter ? '没有匹配的会话' : '还没有历史会话'}</Muted>
+              )}
+            </div>
+          </div>
+          <SectionTitle icon={<Sparkles size={14} />} title="分析上下文" />
+          <Field label="当前股票代码">
+            <input
+              value={symbol}
+              placeholder="例如 600519"
+              onChange={(e) => setSymbol(e.target.value)}
+            />
+          </Field>
+          <Toggle label="启用 RAG" checked={rag} onChange={setRag} />
+          <Toggle label="启用工具调用" checked={tools} onChange={setTools} />
+          <div className="memory-section">
+            <SectionTitle icon={<Database size={14} />} title="长期记忆" />
+            <p className="memory-hint">主动保存用户偏好，后续对话会按语义召回。</p>
+            <textarea
+              className="memory-input"
+              value={memoryContent}
+              onChange={(e) => setMemoryContent(e.target.value)}
+              placeholder="例如：我偏好关注新能源和半导体行业"
+            />
+            <input
+              value={memoryTags}
+              onChange={(e) => setMemoryTags(e.target.value)}
+              placeholder="标签，用逗号分隔"
+            />
+            <button
+              className="button subtle full memory-button"
+              onClick={saveMemory}
+              disabled={memoryBusy || !memoryContent.trim()}
+            >
+              {memoryBusy ? '保存中…' : '保存为长期记忆'}
+            </button>
+          </div>
+          <button className="button subtle full" onClick={clearSession}>
+            <Trash2 size={15} />
+            清空当前会话
+          </button>
+        </aside>
+
+        <section className="panel conversation">
+          <div className="conversation-head">
+            <div className="conversation-title">
+              <div className="eyebrow">RESEARCH CHAT</div>
+              <div className="title-row">
+                <input
+                  className="conversation-title-input"
+                  value={sessionTitle}
+                  maxLength={80}
+                  placeholder="研究对话"
+                  onChange={(e) => setSessionTitle(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') saveSessionTitle()
+                  }}
+                  disabled={!sessionId}
+                />
+                <button
+                  className="icon-button title-save"
+                  title={sessionId ? '保存会话标题' : '新建会话后可编辑标题'}
+                  onClick={saveSessionTitle}
+                  disabled={!sessionId || !sessionTitle.trim() || savingTitle}
+                >
+                  {savingTitle ? (
+                    <LoaderCircle className="spin" size={15} />
+                  ) : (
+                    <CheckCircle2 size={15} />
+                  )}
+                </button>
+              </div>
+              <p>
+                {sessionId
+                  ? `当前会话 ID：${sessionId}`
+                  : '输入问题，Agent 会按需调用行情、技术、财务和资讯工具'}
+              </p>
+            </div>
+            <button className="button subtle" onClick={copySession} disabled={!sessionId}>
+              <Clipboard size={15} />
+              复制 ID
+            </button>
+          </div>
+          <section className="research-command-bar" aria-label="分析模式">
+            <div className="research-mode-copy">
+              <strong>选择分析模式</strong>
+              <span>
+                {researchMode === 'DEEP'
+                  ? '固定多角色审议 · 可查看实时阶段'
+                  : '快速完成常规行情、技术、财务与新闻分析'}
+              </span>
+            </div>
+            <div className="research-mode-tabs" role="radiogroup" aria-label="研究模式">
+              <button
+                type="button"
+                role="radio"
+                aria-checked={researchMode === 'STANDARD'}
+                className={researchMode === 'STANDARD' ? 'active' : ''}
+                onClick={() => setResearchMode('STANDARD')}
+                disabled={busy}
+              >
+                标准分析<small>同步返回</small>
+              </button>
+              <button
+                type="button"
+                role="radio"
+                aria-checked={researchMode === 'DEEP'}
+                className={researchMode === 'DEEP' ? 'active deep' : ''}
+                onClick={() => setResearchMode('DEEP')}
+                disabled={busy}
+              >
+                <Sparkles size={14} />
+                深度投研<small>证据审议</small>
+              </button>
+            </div>
+            {researchRun ? (
+              <ResearchProgress run={researchRun} onReconnect={reconnectResearch} />
+            ) : null}
+          </section>
+          <div className="message-list">
+            {historyLoading ? (
+              <p role="status">正在加载历史消息…</p>
+            ) : messages.length === 0 ? (
+              <EmptyState />
+            ) : (
+              messages.map((item, index) => <Message key={index} {...item} />)
+            )}
+          </div>
+          <form className="composer" onSubmit={submit}>
+            <textarea
+              ref={inputRef}
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault()
+                  submit(e)
+                }
+              }}
+              placeholder="例如：帮我分析 600519 的行情、技术面和近期风险……"
+            />
+            <div className="composer-foot">
+              <span>Enter 发送 · Shift + Enter 换行</span>
+              <button
+                className={`button primary ${researchMode === 'DEEP' ? 'deep-submit' : ''}`}
+                disabled={busy || historyLoading || !message.trim()}
+              >
+                {busy || historyLoading ? (
+                  <LoaderCircle className="spin" size={16} />
+                ) : researchMode === 'DEEP' ? (
+                  <Sparkles size={16} />
+                ) : (
+                  <Send size={16} />
+                )}
+                {historyLoading
+                  ? '加载会话中…'
+                  : researchMode === 'DEEP'
+                    ? '启动深度投研'
+                    : '发送分析'}
+              </button>
+            </div>
+          </form>
+        </section>
+
+        <aside className="panel inspector">
+          <SectionTitle icon={<PanelRight size={14} />} title="执行检查" />
+          <div className="sample-block">
+            <div className="block-heading">
+              <span>
+                <Sparkles size={14} />
+                试试这些
+              </span>
+              <em>快捷提问</em>
+            </div>
+            <div className="sample-list">
+              {quickPrompts.map(([label, prompt]) => (
+                <button
+                  key={label}
+                  type="button"
+                  className="sample-button"
+                  onClick={() => choosePrompt(prompt)}
+                >
+                  <span>{label}</span>
+                  <MessageSquare size={13} />
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="inspector-block inspector-tools">
+            <div className="block-heading">
+              <span>
+                <Wrench size={14} />
+                工具调用
+              </span>
+              <em>{details.tools.length}</em>
+            </div>
+            <div className="inspector-list">
+              {details.tools.length ? (
+                details.tools.map((tool, index) => <ToolItem key={index} tool={tool} />)
+              ) : (
+                <Muted>发送请求后显示工具执行结果</Muted>
+              )}
+            </div>
+          </div>
+          <div className="inspector-block inspector-sources">
+            <div className="block-heading">
+              <span>
+                <Database size={14} />
+                知识与证据来源
+              </span>
+              <em>{details.sources.length}</em>
+            </div>
+            <div className="inspector-list">
+              {details.sources.length ? (
+                details.sources.map((source, index) => <SourceItem key={index} source={source} />)
+              ) : (
+                <Muted>运行检索或分析后显示引用来源</Muted>
+              )}
+            </div>
+          </div>
+        </aside>
+      </main>
+    </div>
+  )
+}

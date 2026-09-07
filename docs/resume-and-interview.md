@@ -1,266 +1,311 @@
-# 简历描述与面试准备
+# 简历描述与面试问答
 
-这份材料只使用当前仓库能够由代码、测试或配置证明的事实。不要补写未经压测的 QPS/P95、未经评测的准确率/收益率，也不要把本地 Compose 描述成生产部署。
+这份材料按当前仓库实现编写。简历部分可按岗位选用，口述部分用于组织回答，源码与测试入口用于准备追问。项目周期、团队规模、个人分工和上线效果请按真实经历补充；只保留自己实际负责、能解释设计和验证过程的内容。
 
-## 使用原则
+## 简历项目描述
 
-- 一份简历选择最匹配岗位的一版项目描述，不要三版叠加。
-- 项目标题后给一句定位，再写 3～4 条“问题—设计—结果”。
-- “结果”优先写可验证的工程结果，例如默认测试离线化、CI 自动构建、冲突写入被拒绝；没有数据就不要编性能数字。
-- 面试前至少能从入口类沿调用链讲到一处测试，不要只背 README。
+### Java 后端岗位
 
-## Java 后端岗位版本
+**Stock Insight Agent｜Java AI 股票研究系统**
 
-### 项目名称
+技术栈：Java 21、Spring Boot、LangChain4j、LangGraph4j、MongoDB、Redis、Milvus。
 
-Stock Insight Agent｜Java AI 股票研究与知识检索系统
+面向股票研究场景构建后端服务，支持多轮对话、行情与财务分析、知识检索和异步深度投研，重点处理外部调用失败、并发状态更新和长任务恢复。
 
-### 一句话描述
+- 设计 Plan-and-Execute 工作流，将本地/模型候选计划经 Java 白名单校验后映射到四类只读工具；通过只读图状态、任务增量和按 taskId 合并支持分支并行，避免共享对象修改与结果覆盖。
+- 实现串行节点及并行汇合点的 MongoDB CAS Checkpoint，使用图版本、计划哈希和 nextNode 校验并恢复执行；以 executionId、taskId、attempt 保存工具成功快照，恢复时复用已完成调用。
+- 构建结构化工具结果与金融证据校验链，检查 Schema、标的、时点、来源、数值和必需指标；将问题任务纳入有界重试，并在模型入口重新验证恢复快照。
+- 拆分对话上下文、Agent 执行、响应组装和持久化职责；在 Redis 中维护话题窗口与递归摘要，通过 Lua 比对旧消息和旧摘要后原子压缩，避免摘要生成期间覆盖新消息。
 
-基于 Java 21、Spring Boot、MongoDB、Redis 和 Milvus 构建的股票研究后端，通过逐节点 Checkpoint、工具幂等、金融时点约束和证据门禁管理 LLM 与外部数据的不确定性。
+如岗位更重视异步服务，可将最后一条替换为：
 
-### 简历要点
+- 实现异步深度投研接口，以有界线程池控制接单量，通过带 sequence 的 SSE 事件回放、状态查询补偿和终态处理展示任务进度；进程启动时补偿遗留非终态执行。
 
-- 设计 Planner 提议、Java 白名单校验、StateGraph 执行的 Plan-and-Execute 链路；图节点成功后以 `executionId + version` CAS 落库，并以 `graphVersion + planHash` 拒绝不兼容恢复。
-- 为只读投研工具设计 `executionId:taskId:attempt` 幂等记录，原子保存成功结果与证据快照；恢复时直接复用已成功记录，避免重复调用外部工具。
-- 建立 `AnalysisContext -> FinancialFact -> EvidencePack -> ClaimEvidenceGuard` 金融证据链，按分析日截断 K 线、披露日和新闻，并拒绝跨包引用、无引用数字及晚于数据截止日的结论。
-- 以 MongoDB 保留完整业务历史，在 Redis 中维护活动/最近话题及按 `userId + sessionId + topicKey` 隔离的模型窗口；通过结构化查询改写识别继续、切换和返回话题，并以“旧摘要 + 较早消息”递归压缩窗口，失败时恢复原始消息。
+### AI Agent / LLM 应用岗位
 
-### 适合追问的关键词
+**Stock Insight Agent｜Plan-and-Execute 与 Hybrid RAG 研究助手**
 
-CAS Checkpoint、状态机、工具幂等、At-least-once、时点一致性、证据溯源、有界线程池、SSE 回放、话题级缓存。
+技术栈：LangChain4j、LangGraph4j、Spring Boot、Milvus、MongoDB、Redis、React。
 
-## AI Agent / LLM 应用岗位版本
+围绕股票研究中的任务规划、证据不足和多轮上下文问题，构建可校验、可追踪的 Agent 应用，提供标准分析与深度投研两种模式。
 
-### 项目名称
+- 将计划生成、工具执行与答案生成分离：本地规则或 Planner 提出计划，Validator 校验后交给状态图执行；Reflector/Critic 采用确定性规则，答案节点使用无工具模型并校验输出。
+- 建立 AnalysisContext、FinancialFact 和 EvidencePack，统一分析日期、结构化指标与来源；校验当前工具快照及证据覆盖，回答阶段检查证据 ID、数值引用和日期边界。
+- 实现 Milvus Dense + BM25 + RRF 混合检索，保留关键词独有命中；按文档状态与活动版本过滤后，以 Parent/Child 分层恢复章节全文或相关窗口。
+- 实现话题级记忆和可选深度投研：独立查询统一用于检索、记忆召回与规划；适用角色基于共享证据并行分析，由单次 Judge 裁决，再由 Java 校验结构化结论，配套离线契约评测。
 
-Stock Insight Agent｜可控 Plan-and-Execute 与 Hybrid RAG
+### 校招通用岗位
 
-### 一句话描述
+**Stock Insight Agent｜Java 全栈 AI 研究助手**
 
-基于 LangChain4j 与 LangGraph4j 构建的可恢复股票研究 Agent，以金融时点、证据引用、受控事件和可选多角色审议降低数据穿越、无依据结论与工具失控风险。
+技术栈：Java 21、Spring Boot、LangChain4j/LangGraph4j、MongoDB、Redis、Milvus、React、Vite。
 
-### 简历要点
+实现覆盖股票研究、知识库和会话管理的全栈应用，提供标准问答、异步深度投研和来源展示。
 
-- 将 LLM 限制为候选计划生成器，使用 `PlanValidator` 校验意图、股票代码和任务枚举；工作流以逐节点 Checkpoint 和工具幂等恢复，答案节点不注册工具。
-- 将工作流中的行情、技术、财务和新闻结果映射为带稳定 `evidenceId`、时点和来源的 `EvidencePack`；用 Claim–Evidence Guard 确定性拒绝未知 ID、无引用数字和超过数据截止日的日期。
-- 在 Milvus 2.5 中构建 Dense COSINE 与 BM25 Sparse 双路检索，以 RRF 融合并用带阈值的 Dense 结果复核候选；结合 Parent/Child 分片让 Child 负责召回，命中后恢复同章节全文或相关窗口。
-- 提供默认 `STANDARD` 和可选 `DEEP` 双模式：深度模式固定编排基本面、技术面、新闻、看多、看空、风险与 Judge，通过不含 Prompt/思维链正文的 RunEvent SSE 展示进度；建立 5 样本离线 Agent Eval 回归基线。
+- 接入 7 个业务工具，针对行情、技术、财务和新闻构建计划校验、并行执行、失败重试和检查点恢复链路。
+- 使用 Dense、BM25 和 RRF 构建混合检索，将长文按 Parent/Child 分层切分，结合版本过滤和父章节扩展组织回答上下文。
+- 使用 MongoDB 保存业务历史，Redis 保存话题状态、近期消息与递归摘要，支持多轮追问、切换股票和返回旧话题。
+- 实现 React 标准/深度模式与 SSE 进度展示，提供本地 Compose、离线后端测试、前端测试和 CI 构建入口。
 
-### 适合追问的关键词
+一份简历选一版、保留 3～4 条即可。结果优先写可验证的行为，如“冲突写入被拒绝”“恢复复用成功工具记录”，没有实验依据就不补写准确率、性能提升或收益数字。
 
-Agent 可控性、Evidence Grounding、Point-in-time、多角色审议、结构化输出校验、RunEvent/SSE、Agent Eval、RRF、话题路由、记忆污染。
+## 一分钟项目介绍
 
-## 校招通用版本
+> 这是一个基于 Java 的股票研究 Agent，用户可以查询行情、技术指标、财务和新闻，也可以导入资料做知识库问答。
+>
+> 我重点解决的是模型与外部数据进入后端之后，怎么保证执行过程可控。系统先用本地规则或模型生成计划，再由 Java 校验；合法计划进入 LangGraph4j 状态图，并行调用需要的工具。工具返回后还要检查结构、股票、时间和证据，失败任务只在预算内重试。
+>
+> 执行状态保存在 MongoDB，恢复时按检查点继续，并复用成功的工具记录。回答基于结构化证据生成，再检查引用和输出质量。多轮对话则通过话题级 Redis 窗口和递归摘要保持上下文。
+>
+> 当前我主要用离线测试验证并发、恢复和证据边界；真实模型质量和线上性能还需要独立评测。
 
-### 项目名称
+按实际分工调整“我”的表述。展开时选一条最熟悉的链路讲透，例如“并行分支如何合并并恢复”或“工具成功为什么仍可能被拒绝”。
 
-Stock Insight Agent｜Java 全栈 AI 研究助手
+## 架构与工程设计
 
-### 一句话描述
+### 1. 一次请求经过哪些模块？
 
-独立完成的 Java 全栈 AI 项目，覆盖 Agent 编排、RAG、分层记忆、前后端交互、本地基础设施和持续集成。
+`ChatService` 先解析会话，再让 `ConversationContextService` 补全问题、改写独立查询并选择话题记忆。独立查询交给 RAG、长期记忆召回和 `AgentExecutionService`；后者根据开关和计划选择工作流或助手。结果由 `ResponseAssembler` 组装，最后由 `ConversationPersistenceService` 保存业务消息，再推进话题和刷新摘要。
 
-### 简历要点
+这里区分用户原文、补全后的模型问题和独立检索查询：原文用于业务记录，独立查询用于检索和规划。工作流已有最终答案时直接复用，不再次调用通用助手改写。
 
-- 使用 Spring Boot + LangChain4j/LangGraph4j 实现股票研究 Agent，接入 7 类业务工具，通过计划白名单、逐节点 Checkpoint、工具幂等和受控重试约束执行。
-- 使用 Milvus Dense + BM25 + RRF 构建混合知识检索；将长文按章节构建 Parent/Child 分片，由 Child 负责精确召回，命中后补充同章节相邻内容与 Parent 摘要。
-- 使用 MongoDB 保存完整对话与决策复盘，使用 Redis 管理话题级原文窗口和递归摘要；将查询改写结果统一用于检索、长期记忆和任务规划。
-- 实现标准/深度双模式 React 界面，通过 SSE 展示计划、证据、多角色审议和结论阶段，支持断线状态补偿与手动重连；配套后端离线测试和前端生产构建。
+入口：[ChatService](../src/main/java/com/ljl/ai/service/ChatService.java)、[职责拆分说明](chat-service-refactoring.md)。验证：[ChatServiceOrchestrationTest](../src/test/java/com/ljl/ai/service/ChatServiceOrchestrationTest.java)。
 
-## 高频追问与回答边界
+### 2. 为什么拆 ChatService？会不会只是把代码搬到别的类？
 
-### 1. 为什么要 Planner + Validator，不能直接让模型调用工具吗？
+拆分依据是职责和失败语义。上下文服务负责准备输入，执行服务负责选路与调用，组装器负责来源和响应，持久化服务负责保存顺序，失败处理器负责受控提示和记忆清理。中间结果使用字段明确的 record 传递，主服务负责协调。
 
-模型擅长理解意图，但输出不是可信指令。Planner 不注册 Tool，只输出候选计划；Validator 在 Java 中校验固定意图、股票代码和任务枚举。合法计划才进入确定性执行路径。普通开放问题仍保留自主 Tool Calling，但有连续调用次数上限。
+验证也围绕行为：消息保存失败后不能继续推进话题；异步请求必须沿用预分配 executionId；响应只能收集本轮工具记录；同一会话的锁必须覆盖读取上下文到保存消息的全程。拆类不会自动产生跨存储事务，这些失败语义仍需要明确维护。
 
-代码入口：`AgentPlannerAssistant`、`ChatService.planForExecution`、`PlanValidator`。
+验证：[ChatServiceOrchestrationTest](../src/test/java/com/ljl/ai/service/ChatServiceOrchestrationTest.java)、[ChatServiceWiringTest](../src/test/java/com/ljl/ai/service/ChatServiceWiringTest.java)、[ResponseAssemblerTest](../src/test/java/com/ljl/ai/service/ResponseAssemblerTest.java)。
 
-### 2. Reflector 和 Critic 都是模型吗？
+### 3. 为什么用 Planner + Validator？每次都调用规划模型吗？
 
-不是。当前两者都是确定性 Java 规则。Reflector 检查任务状态、空结果、错误关键词和标的一致性；Critic 把结果限制为 `RETRY/ADD_NEWS/ANSWER/FAILED` 路由。当前 `ADD_NEWS` 没有由 Reflector 生成，属于保留扩展点，不能说已经动态补新闻。
+明确请求优先走本地解析，不能得到有效计划时才调用 Planner。Planner 不注册工具，只提出候选计划；Java 校验意图、股票代码和任务枚举，规范化标的并去重任务。合法计划才进入确定性工具映射。
 
-代码入口：`WorkflowReflector`、`WorkflowCritic`。
+普通开放问题保留通用 Tool Calling 降级路径，并设置连续调用次数上限。因此应说明“股票工作流受确定性计划约束”，不能声称所有请求都经过同一套任务与证据门禁。
 
-### 3. 四个任务节点是真并行吗？
+入口：[AgentExecutionService](../src/main/java/com/ljl/ai/service/AgentExecutionService.java)、[PlanValidator](../src/main/java/com/ljl/ai/planner/PlanValidator.java)。验证：[AgentExecutionPlannerTest](../src/test/java/com/ljl/ai/service/AgentExecutionPlannerTest.java)。
 
-代码把它们建成从 INIT 分支、在 REFLECTOR 汇合的独立 StateGraph 节点，但项目没有并发执行与性能测试证据。因此只能描述为分支/Fan-out-Fan-in 拓扑，不能承诺并行提速。
+### 4. 为什么引入状态图，直接写几个 if/else 不行吗？
 
-### 4. Checkpoint 能从任意节点恢复吗？
+固定的一次性调用用普通方法就可以。这个项目有并行任务、问题任务重试、证据检查、标准/深度分支和检查点恢复，需要显式保存“已经完成什么、为什么重试、下一步去哪”。状态图把这些状态与路由集中表达，也让节点可以独立验证。
 
-现在每个节点动作成功后都会先更新 `lastCompletedNode`，再用 `executionId + version` CAS 保存，成功后才发布 `NODE_COMPLETED`；`CRITIC` 路由也在返回前落库。`resume` 会先校验 `graphVersion` 和 `planHash`，然后从最近 Checkpoint 重新进入图，已成功工具通过幂等记录零调用恢复。
+代价是要维护状态 Schema、增量合并规则和图版本。项目使用 LangGraph4j 编排节点，MongoDB 快照、兼容性检查和工具幂等是应用层自己实现的。
 
-但它不是 LangGraph 原生的任意节点游标续跑，也不保证任意外部副作用 Exactly-once；当前只对四类明确只读的投研工具开放遗留 `STARTED` 的下一 attempt 重试。
+入口：[StockAnalysisWorkflow](../src/main/java/com/ljl/ai/workflow/StockAnalysisWorkflow.java)、[WorkflowRunner](../src/main/java/com/ljl/ai/workflow/WorkflowRunner.java)。
 
-代码入口：`WorkflowRunner`、`StockAnalysisWorkflow.stateNode`、`MongoExecutionStateStore`、`MongoToolExecutionStore`。
+### 5. 四个工具任务是真并行吗？怎么避免共享状态冲突？
 
-### 5. 乐观锁冲突为什么不自动重试覆盖？
+四类分支从 `DISPATCH` 分发，通过 `addParallelNodeExecutor` 配置四线程执行器，在 `TASKS_JOIN` 汇合；只执行计划中存在的任务。图状态使用深度只读数据，每个分支返回自身任务的 delta，不能修改兄弟任务。合并时任务按 taskId 更新，事件序号取最大值，证据包在汇合后统一重建。
 
-因为旧状态不能在只知道新版本号的情况下安全合并。Store 只在期望版本匹配时替换；冲突直接抛出，让上层重新加载和重新决策。把旧对象换成最新版本号再次保存会绕过锁并造成丢失更新。
+分支不会各自用同一个 version 写整份 MongoDB 快照，汇合后才做一次 CAS。测试通过四分支同时到达的屏障验证重叠执行和结果完整性；可以说实现了并行，不能据此说延迟降低了某个比例。每次图运行都有独立线程池，生产扩展仍需考虑总并发量。
 
-### 6. 为什么 Hybrid Search 后还做 Dense 复核？
+入口：[WorkflowAgentState](../src/main/java/com/ljl/ai/workflow/WorkflowAgentState.java)。验证：[StockAnalysisWorkflowTest](../src/test/java/com/ljl/ai/workflow/StockAnalysisWorkflowTest.java)、[WorkflowNodeDeltaTest](../src/test/java/com/ljl/ai/workflow/WorkflowNodeDeltaTest.java)。
 
-RRF 是排名融合分数，不等于语义相似度。候选很少时，不相关文档也可能获得可见排名。因此项目使用同一查询向量跑带 `minScore` 的 Dense 检索，以 `documentId + ingestionVersion + chunkId + content` 验证融合候选，再过滤文档启用/删除状态。
+### 6. Checkpoint 保存在哪里？能恢复到哪一步？
 
-### 7. BM25 与 Dense 分别解决什么问题？
+串行节点和并行汇合点将 `ExecutionState` 保存到 MongoDB，包含任务、结果、裁决、重试状态和 nextNode。节点结果与下一步路由一起 CAS 提交，成功后才发布完成事件。
 
-BM25 对股票代码、公司名、指标名等精确词更敏感；Dense 对同义表达和语义近似更稳。RRF 在不强行对齐两种分数量纲的情况下融合名次。代价是两路检索与复核增加查询成本。
+显式调用 `resume(executionId)` 时，先检查 graphVersion 和 planHash，再从 nextNode 进入图。例如 CRITIC 已提交就从 EVIDENCE_PACK 继续；工具成功但汇合尚未保存，则重走分发并复用工具成功记录。当前不是 LangGraph4j 原生 CheckpointSaver，也不是任意外部调用的指令级续跑。
 
-### 8. 短期摘要会不会丢信息？
+入口：[WorkflowRunner](../src/main/java/com/ljl/ai/workflow/WorkflowRunner.java)。验证：[WorkflowRunnerTest](../src/test/java/com/ljl/ai/workflow/WorkflowRunnerTest.java)。
 
-会，任何有损压缩都有风险。当前按话题维护原文窗口，只压缩较早一半并保留最近原文；消息数或字符预算任一到达就触发摘要，避免窗口先淘汰旧消息。摘要为空、超过长度限制或 Redis 更新失败时不提交淘汰结果，并尝试恢复原始窗口；摘要和消息使用相同 TTL。
+### 7. CAS 冲突为什么不换个最新版本号再写？
 
-更严格的场景还可以增加结构化事实槽位、摘要版本和离线忠实度评测。当前没有摘要准确率数据，所以不能说完全无损。
+版本号保护的是整份状态的因果关系。旧快照读到版本 5 时，只能在数据库仍为版本 5 的条件下更新；如果别人已提交版本 6，替换版本号后重写旧内容会丢掉别人的更新。
 
-代码入口：`ShortTermSummaryService`、`RedisChatMemoryStore`、`ConversationSummaryAssistant`。
+当前冲突直接拒绝写入，上层应重新加载并判断下一步。异常处理也基于最后成功提交的快照，不能用失败分支中的旧状态覆盖其他执行者的结果。
 
-### 9. 多轮追问和话题切换是怎么处理的？为什么不直接拼接完整历史？
+入口：[MongoExecutionStateStore](../src/main/java/com/ljl/ai/workflow/MongoExecutionStateStore.java)。验证：[MongoExecutionStateStoreTest](../src/test/java/com/ljl/ai/workflow/MongoExecutionStateStoreTest.java)、[WorkflowRunnerTest](../src/test/java/com/ljl/ai/workflow/WorkflowRunnerTest.java)。
 
-完整历史直接拼接会把旧股票、过期时间范围和寒暄一起带入 RAG 与 Planner；单纯截取最近 N 条又无法支持“回到刚才的茅台”。因此项目把业务历史与模型上下文分开：MongoDB 保存完整消息，Redis 保存当前/最近话题以及每个话题独立的 LangChain4j 消息窗口。
+### 8. 工具幂等能做到 Exactly-once 吗？
 
-每轮先读取最近 30 条业务消息，其中最后 12 条按 6,000 字符预算交给 `QueryRewriteAssistant`。模型结合当前问题、当前话题摘要和最近话题，输出：
+当前记录键是 `executionId:taskId:attempt`，一次尝试从 STARTED 转为 SUCCEEDED 或 FAILED，成功结果和证据快照一起保存。恢复时直接复用成功记录，避免再次调用已经完成的工具。
 
-```json
-{
-  "standaloneQuery": "贵州茅台2025年现金流情况",
-  "topicKey": "600519",
-  "topicRelation": "CONTINUE",
-  "confidence": 0.96
-}
-```
+但如果外部调用成功后、保存结果前进程崩溃，数据库只看到 STARTED，无法证明外部是否已经执行。因此对当前四类只读工具允许新 attempt 重试，整体是 at-least-once。若将来接入下单等写操作，需要外部服务支持业务幂等键、结果查询和对账，不能照搬只读工具策略。
 
-后端不会把这段输出直接当成可信状态：调用失败或空输出时退回原问题，非 JSON 输出按普通改写文本兼容；原问题或改写结果出现明确六位股票代码时，用代码覆盖模型给出的 topicKey 和关系。归一化后的 topicKey 生成稳定 UUID，与 `userId:sessionId` 组合成话题级 memoryId，因此切换股票会进入新窗口，`RETURN` 可以回到旧窗口。
+入口：[MongoToolExecutionStore](../src/main/java/com/ljl/ai/workflow/MongoToolExecutionStore.java)。验证：[MongoToolExecutionStoreTest](../src/test/java/com/ljl/ai/workflow/MongoToolExecutionStoreTest.java)。
 
-同一个 standaloneQuery 同时交给 RAG、长期记忆召回和 Planner，避免三个模块分别解析出不同标的。最终 Assistant 仍收到用户原话；显式上下文最多选择 8 条与当前话题相关的消息，并过滤“好的、谢谢、收到”等低信息内容。本轮成功保存业务消息后才更新活动话题，失败不会提前改变状态。
+### 9. 服务重启后会自动恢复深度投研吗？
 
-这个设计仍有边界：自然语言 topicKey 部分依赖模型，确定性保护目前主要覆盖六位股票代码；消息相关性使用词面匹配，不是单独的语义分类器。面试中应把它描述为“模型识别 + Java 校验 + 话题级隔离”，不要说成完全消除了记忆污染。
+当前不会。`WorkflowRunner.resume()` 是显式恢复能力；异步研究的队列和事件缓冲在进程内。启动时 `StartupRecoveryRunner` 将上次遗留的非终态执行，包括只接单未运行的占位记录，标记为失败，提示用户重新发起。补偿失败会阻止应用就绪。
 
-代码入口：`QueryRewriteAssistant`、`ConversationQuery`、`ConversationContextService`、`ConversationTopicStore`、`ChatService.resolveRetrievalQuery`。
+这套启动策略要求单实例部署。要支持多实例自动接管，需要持久任务队列、执行租约或分布式锁、失效实例识别和外部事件流，不能简单让多个实例共享同一业务库。
 
-### 10. 文档如何进行 Parent/Child 分片？
+入口：[StartupRecoveryRunner](../src/main/java/com/ljl/ai/listener/StartupRecoveryRunner.java)、[ResearchExecutionService](../src/main/java/com/ljl/ai/service/ResearchExecutionService.java)。
 
-入库先用 Markdown 或中文编号标题划分 Parent Section；再在每个 Parent 内优先按中文段落切分，超长时继续按句子、字符兜底，生成 600～800 字符、80～120 字符重叠的 Child。每个 Child 继承完整 `headingPath`、`stockCode`、`year`、`tags`，并保留 `parentSectionId` 与 `chunkIndex`；只有 Child 写入向量库并参与 Dense/BM25 召回。
+## 工具结果、证据与深度投研
 
-命中后只在同一 Parent 内补充前后相邻 Child，并按入库时保存的原始 offset 合并重叠区间、恢复正文顺序。短 Parent 直接返回全文；长 Parent 返回标题路径、抽取式摘要和命中窗口。这样避免整章向量被稀释，也避免单个命中块丢失前后论据。
+### 10. Reflector 和 Critic 是模型吗？工具返回 success 为什么还要检查？
 
-长 Parent 摘要不调用模型，而是从首段和带有财务关键词、数字、百分比或金额单位的句子中抽取，上限 600 字符。Child 的 Embedding 文本额外拼入完整标题路径；窗口恢复使用入库时保存的原文 offset 合并重叠区间，不依赖字符串去重。
+两者都是 Java 规则。success 只能说明工具调用成功，返回值仍可能缺字段、股票不匹配、过期或缺少可引用证据。Reflector 检查结构化快照及本次证据，输出带 taskId、code、field 的问题列表；Critic 在有限路由内决定重试、回答或失败。
 
-代码入口：`HierarchicalDocumentChunker`、`ParentContextAssembler`、`RetrievalService`。
+当前不再靠正文出现“异常”“失败”来判断结果无效，正常负面新闻也应被保留。`ADD_NEWS` 是保留路由，当前 Reflector 不会自动追加 Planner 未提出的新闻任务。
 
-### 11. 长期记忆如何避免用户串数据？
+入口：[WorkflowReflector](../src/main/java/com/ljl/ai/workflow/WorkflowReflector.java)、[WorkflowResultValidator](../src/main/java/com/ljl/ai/workflow/WorkflowResultValidator.java)。验证：[WorkflowResultValidatorTest](../src/test/java/com/ljl/ai/workflow/WorkflowResultValidatorTest.java)。
 
-向量写入携带 `userId/memoryId`，召回先扩大共享候选池，再按用户过滤，并到 MongoDB 校验记录是否启用。但这仍是应用层隔离；没有认证的 `userId` 不能作为生产安全边界。
+### 11. 结构化工具结果具体校验什么？
 
-### 12. MongoDB 与 Milvus 如何保证一致性？
+行情使用 StockQuote，技术与财务使用含 BigDecimal 指标的 AnalysisToolPayload，新闻使用 NewsItem 列表。校验包括 JSON 形状和类型、必需指标、标的一致性、数据及披露时间、HTTP(S) 来源、数值范围，以及快照与证据是否对应。
 
-当前不是分布式事务，而是状态标记、重试和补偿。新增元数据失败会清理向量；文档删除先标记、再删除向量、最后删除元数据。极端故障仍需对账任务，所以不能表述为强一致。
+例如技术任务要求 close、changePercent、ma5、ma20，不能拿一段“均线向好”的文本代替。利润、现金流和增长率允许负值；数值范围按指标定义，不能给所有百分比套同一个上限。各类证据还配置了不同的时效门槛，这些是项目策略，不是行业统一标准。
 
-### 13. 如何防止模型泄露用户内容到日志？
+细则：[工作流校验说明](workflow-validation.md)。验证：[StructuredToolWorkflowTest](../src/test/java/com/ljl/ai/workflow/StructuredToolWorkflowTest.java)。
 
-`TracingChatLanguageModel` 默认用 `<redacted>` 代替模型请求和响应正文；显式开启时仍应用最大长度。核心业务日志已收敛为长度、数量、状态和错误类型；但第三方 SDK、异常链以及显式开启的模型正文仍需要集中脱敏、访问控制和保留周期，不能只依赖一个开关。
+### 12. 历史分析怎么避免使用未来数据？
 
-### 14. 项目有什么测试证据？
+先把 analysisDate 固定在 AnalysisContext 中，并传给工具。K 线截断到分析日，财务同时关注报告期与披露日，新闻按发布时间筛选。比如一份年报的报告期属于去年，但今年才披露，就不能用于披露日前的历史判断。
 
-默认 `mvn test` 运行离线单元/组件测试；真实 MongoDB 和 Milvus 连接测试使用 `*IT` 命名并由 Maven Profile 显式执行。仓库当前有 74 个 `*Test.java` 测试类和 2 个 `*IT.java`，前端使用 Node 内置 runner 覆盖深度投研请求、SSE 和进度映射。CI 独立运行 JDK 21 后端测试与前端生产构建。没有发布覆盖率数字就不要口头编一个。
+时间未知的数据不能当作已验证事实，历史缺失也不能拿当前行情补上。这里约束的是本系统可接纳的数据时点，不能证明供应商的历史数据没有后续修订。
 
-### 15. 历史时点分析如何防止“偷看未来”？
+入口：[AnalysisContext](../src/main/java/com/ljl/ai/research/AnalysisContext.java)。验证：[PointInTimeDataContractTest](../src/test/java/com/ljl/ai/client/PointInTimeDataContractTest.java)。
 
-`AnalysisContext` 把标的和 `analysisDate` 作为整条工作流共享的不可变边界。日 K 线只保留截止日之前数据，财务数据按当时已披露的报告选择，新闻过滤未来发布时间。历史数据缺失时不回退为当前值；时点无法确定的事实会标记 `UNKNOWN`。
+### 13. EvidencePack 与把工具结果拼进 Prompt 有什么区别？能消除幻觉吗？
 
-代码入口：`AnalysisContextResolver`、`MarketDataClient`、`TechnicalAnalysisTool`、`FinancialAnalysisTool`、`NewsRagTool`。
+EvidencePack 先将结构化指标和来源映射为 FinancialFact，保存 evidenceId、值、单位、时间与来源，并单独记录缺失和失败。模型拿到的是从这些事实渲染的有界上下文，展示长文本不再是事实解析入口。
 
-### 16. EvidencePack 和普通把工具结果拼进 Prompt 有什么区别？
+生成后检查引用是否属于本轮有效证据，含数值表达的内容是否带引用，日期是否越界，再检查重复和异常文本。标准工作流回答最多纠正一次，仍不通过则降级。这能拦截一部分明确违规输出，但“引用存在”不等于“证据支持整句话”，不能称为完全消除幻觉或逐句事实核验。
 
-EvidencePack 先把工具结果规范化为 `FinancialFact`，每条事实有稳定 `evidenceId`、指标/数值/单位、期间、来源、发布时间和时点状态，同时显式记录数据缺失和工具失败。回答中的数字行必须引用当前证据 ID，跨包 ID 和未来日期会被 Java Guard 拒绝。这不证明证据源本身绝对正确，但能检查“结论是否指向本轮允许的证据”。
+入口：[EvidencePackBuilder](../src/main/java/com/ljl/ai/research/EvidencePackBuilder.java)、[ClaimEvidenceGuard](../src/main/java/com/ljl/ai/research/ClaimEvidenceGuard.java)。验证：[ClaimEvidenceGuardTest](../src/test/java/com/ljl/ai/research/ClaimEvidenceGuardTest.java)。
 
-代码入口：`FinancialFact`、`EvidencePackBuilder`、`ClaimEvidenceGuard`、`WorkflowAnswerGenerator`。
+### 14. 从 ANSWER 节点恢复，会不会绕过之前的校验？
 
-### 17. 深度投研是自由协作的 Multi-Agent 吗？
+模型入口会重新验证当前任务快照，并重建 EvidencePack。检查点中的 trusted、modelView 或 evidenceHash 都不能直接作为放行依据；有效任务缺少证据包时可以重建，任务无效则在调用模型前拒绝。
 
-不是。它刻意采用固定、有界的编排：基本面、技术面、新闻、看多、看空、风险各最多一次，最后由 Judge 输出结构化 JSON。所有角色共享同一 EvidencePack，不挂载工具或会话记忆。Judge 结果还要经过评级、置信度、日期和证据 ID 校验；角色失败可降级继续，Judge 失效则返回 `INSUFFICIENT_DATA`。这牺牲自由度换取调用上限和权限边界。
+同样，重试后只能使用本次 currentEvidence。历史结果和历史证据保留用于审计，不能补齐本次缺失指标。图协议升级为 stock-analysis-v3，未完成的旧版快照拒绝恢复，避免旧协议绕过新校验。
 
-代码入口：`DeepResearchAssistant`、`DeepResearchService`、`ResearchConclusion`。
+验证：[WorkflowEvidenceBoundaryTest](../src/test/java/com/ljl/ai/workflow/WorkflowEvidenceBoundaryTest.java)。
 
-### 18. SSE 事件流如何同时做到可观测和不泄露推理正文？
+### 15. 新闻搜索怎么过滤低质量结果？官方链接就可信吗？
 
-`RunEvent` 只有固定事件枚举、节点、递增 sequence、时间和最多 500 字符的受控摘要，没有 Prompt、模型响应或工具正文字段。SSE 先回放每个 execution 最近 200 条事件，再从 sequence 游标订阅，终态自动关闭。前端断线后会关闭旧 EventSource，用状态接口补偿一次，由用户手动重连。
+先构造公司新闻或公告主题查询，不把用户整段策略、教程指令原样交给搜索引擎。媒体与官方来源都要尝试；候选经过内容类型、主体、HTTP(S) 链接和发布时间筛选，媒体再按配置进行语义过滤，官方结果还要在本地校验域名。
 
-代码入口：`RunEvent`、`InMemoryRunEventPublisher`、`ResearchExecutionController`、`frontend/src/researchExecution.js`。
+官方报告目录可以证明发现了某份报告的入口和披露日期，不能据此声称已解析 PDF 全文或验证财务指标。财务数据 API 链接也应保留真实来源身份。搜索有补查预算，工作流另有任务重试预算，两者会嵌套，不能将搜索轮数当作总外部调用次数。
 
-### 19. 决策复盘为什么不放进聊天记忆？
+入口：[NewsSearchClient](../src/main/java/com/ljl/ai/client/NewsSearchClient.java)。验证：[NewsSearchClientTest](../src/test/java/com/ljl/ai/client/NewsSearchClientTest.java)。流程：[工具与证据质量说明](tool-execution-and-evidence-quality.md)。
 
-聊天记忆保存用户语境和偏好，决策复盘保存可审计的当时判断与后验结果。`ResearchDecision` 绑定执行 ID、标的、分析日、评级、证据哈希和图版本；`DecisionReviewService` 不调用 LLM，而是计算 1/5/20 个交易日后收益和相对基准。只有在本次分析日已经可见的复盘才能作为校准参考，并且不能充当本轮证据。
+### 16. 深度投研是自由协作的 Multi-Agent 吗？
 
-代码入口：`ResearchDecisionService`、`DecisionReviewService`、`ChatService.prepareDecisionReviews`。
+它采用固定、有界的角色编排。根据证据范围选择适用的基本面、技术面和新闻角色，再结合看多、看空、风险视角；角色并行生成独立意见，按预定顺序收集后交给单次 Judge。每个角色最多调用一次，共享同一个证据包，不挂载工具和会话记忆。
 
-### 20. Agent Eval 的 1.0 代表模型准确率吗？
+角色异常输出会被丢弃并记录限制；Judge JSON 还要检查评级、置信度范围、日期、正文和证据 ID。部分角色失败可以降级继续，Judge 失败或没有有效角色则返回证据不足。它提供的是受控的多视角分析，没有自由创建 Agent、任意通信或自动扩权能力。
 
-不代表。当前 5 个样本与函数式适配器都是固定、离线的，用来保护 Planner、话题路由、RAG、证据和恢复契约不被代码改动破坏。它的 accuracy 1.0、Recall@3 1.0、nDCG@3 0.9197、引用覆盖 1.0 和数字一致性 1.0 只是 fixture 基线。真正的线上质量还需要标注数据集、模型/提示版本、多次采样、成本和延迟统计，因此必须使用显式 Profile，不进入默认 CI。
+入口：[DeepResearchService](../src/main/java/com/ljl/ai/research/DeepResearchService.java)。验证：[DeepResearchServiceTest](../src/test/java/com/ljl/ai/research/DeepResearchServiceTest.java)、[WorkflowAnswerGeneratorTest](../src/test/java/com/ljl/ai/workflow/WorkflowAnswerGeneratorTest.java)。
 
-代码入口：`AgentEvalRunner`、`AgentEvalRunnerTest`、`src/test/resources/eval/agent-eval-cases.json`。
+### 17. SSE 如何避免断线后进度错乱？
 
-### 21. 如果模型生成结果和预期不一样，应该怎么排查？
+事件带 executionId、递增 sequence、固定类型、节点和受控摘要。服务端保留每次执行最近 200 条事件，回放后按游标补发订阅间隙事件。前端断线后关闭旧 EventSource，查询状态补偿；任务未结束时显示手动重连，终态则收口。
 
-我不会看到结果不对就马上修改 Prompt，而是先固定现场，再沿整个生成链路逐层排查。因为用户最终看到的内容通常不只由模型决定，还受到输入处理、上下文、知识检索、工具调用、模型参数和后处理规则的共同影响。
+断线不会取消后台研究。事件流不含 Prompt、模型思考和工具正文，但缓存有界且只在内存里，不能保证无限历史回放或跨实例消费。后台默认 2 个工作线程、32 个排队位，队列满时受控拒绝接单。
 
-1. **先明确什么叫“不符合预期”。** 要区分事实错误、遗漏关键信息、没有遵循指令、格式不合法、引用错误和单纯的措辞差异。大模型不是字符串模板，只要事实和业务约束正确，两次回答表达不同不一定是问题。预期最好转换成可以检查的标准，例如必填字段、事实正确率、引用覆盖率、格式通过率或人工评分规则。
-2. **保存并固定复现条件。** 记录原始输入、系统 Prompt、对话历史、检索内容、工具返回、模型及 Prompt 版本、温度、最大输出长度等参数。对于依赖实时数据的系统，还要保存当时的数据快照。然后在相同条件下重复运行，判断问题是稳定出现还是偶发出现。即使温度设得较低，模型服务也不一定完全确定，所以不能只比较单次结果。
-3. **检查进入模型之前的数据。** 确认输入有没有被截断、转义或错误改写，对话历史是否混入了无关内容，角色顺序是否正确。如果是 RAG 系统，要检查召回文档是否相关、关键文档有没有漏召回、排序是否合理以及拼接后是否超过上下文窗口；如果是 Agent，还要检查任务规划、工具选择、调用参数和工具返回值。上游上下文错误时，模型往往只是基于错误输入生成了一个看似合理的答案。
-4. **检查 Prompt 和指令冲突。** 查看系统指令、业务规则、Few-shot 示例和用户要求之间是否互相矛盾，输出要求是否足够明确，示例是否覆盖当前场景。对于 JSON 等结构化输出，要给出明确 Schema，并区分“模型没有按要求生成”和“生成正确但解析器不兼容”。Prompt 很长时还要关注关键指令的位置，避免规则被大量上下文淹没。
-5. **检查模型与生成参数。** 对比模型版本、温度、Top P、最大 Token、停止词和超时重试配置。输出突然被截断，可能是最大 Token 或停止词问题；回答波动过大，可能与采样参数有关；模型升级后同一 Prompt 行为变化，则需要重新做回归评测。排查时一次只调整一个变量，否则无法判断到底是哪项修改起作用。
-6. **检查后处理和业务校验。** 模型原始响应正确，不代表最终展示结果一定正确。还要检查 JSON 解析、字段映射、内容截断、敏感词过滤、缓存、重试、降级和兜底逻辑。有时系统展示的是第二次重试或缓存中的旧答案，而不是当前看到的那次模型原始输出，因此日志或链路追踪应能关联一次请求的各个阶段。
-7. **区分数据问题、工程问题和模型能力问题。** 输入或知识源错误属于数据问题；上下文拼接、调用参数、解析和缓存错误属于工程问题；在输入正确、约束清晰且链路正常的情况下，模型仍稳定答错，才考虑更换模型、优化 Prompt、增加示例，或者把关键规则改成确定性代码校验。对于金额、权限、状态流转等强约束，不应该只依赖模型自行遵守。
-8. **修复后做回归验证。** 用原始失败样本验证修复，同时补充正常、边界和异常样本，避免只修好一个 Case。确定性逻辑使用单元测试，端到端效果使用固定评测集；有随机性的模型调用需要多次采样，比较通过率、事实正确性、格式正确性、成本和延迟。最后记录模型、Prompt 和数据版本，便于以后判断结果变化来自哪一部分。
+入口：[InMemoryRunEventPublisher](../src/main/java/com/ljl/ai/observability/InMemoryRunEventPublisher.java)、[前端执行客户端](../frontend/src/researchExecution.js)。验证：[ResearchExecutionServiceTest](../src/test/java/com/ljl/ai/service/ResearchExecutionServiceTest.java)、[前端执行测试](../frontend/src/researchExecution.test.js)。
 
-面试时可以总结为：先把“预期”变成可验证指标并固定复现现场，再按照“输入与上下文—检索或工具—Prompt—模型参数—后处理”的顺序逐层对账；先排除数据和工程问题，最后才把原因归到模型能力或随机性上。
+### 18. 决策复盘为什么不放进聊天记忆？
 
-### 22. 在通用 Agent 系统中，怎样安全调用工具并过滤低质量结果？
+聊天记忆保留用户语境和偏好，决策复盘记录当时结论及后来结果。ResearchDecision 绑定执行 ID、标的、分析日、评级、置信度、证据哈希与图版本；复盘服务使用历史 K 线确定性计算后续 1/5/20 个交易日的收益及相对基准收益，不调用 LLM。
 
-我通常把这条链路拆成“规划、执行、过滤、重试、生成、校验”六个阶段。核心思路是：模型可以提出工具调用建议，但调用权限、参数边界、结果是否可用以及失败后的处理，都由确定性代码控制。
+只召回同一用户、同一标的，且后验结果在本次 analysisDate 已可见的复盘。它作为校准参考单独传入，不能充当本轮 evidenceId，也不能据此说系统已经自动训练或优化交易策略。
 
-1. **建立工具注册表。** 每个工具都声明名称、用途、输入 Schema、超时、权限和返回结构。模型只能从白名单中选择工具，执行层还要校验参数类型、取值范围和调用上下文，不能直接执行模型生成的方法名、SQL 或命令。
-2. **根据意图生成执行计划。** 简单请求可以用规则直接路由，复杂请求再由 Planner 拆解任务。计划进入执行层前需要去重、补全依赖并检查权限，避免重复调用、越权调用和为了“看起来完整”而调用无关工具。
-3. **把工具返回当成候选数据。** 先检查调用状态、Schema、空值、长度和编码，再检查来源可信度、主题相关性、时间有效性、重复内容以及是否真正回答了当前问题。教程、广告、技能说明、代码仓库等是否过滤，应由当前任务类型决定，不能依靠固定黑名单处理所有场景。
-4. **组合确定性规则和语义判断。** 域名、时间、权限、必填字段等强约束使用代码校验；相关性和内容质量可以使用关键词、分类器、Embedding 或模型评分。语义模型只负责补充判断，不能绕过安全和业务硬规则。
-5. **设置有界重试与降级。** 超时、限流和临时网络错误可以采用退避重试；参数错误和权限错误通常不应原样重试。结果不足时可以改写查询、切换备用数据源或缩小问题范围，但必须有最大轮数、时间和成本预算。预算耗尽后返回部分结果或明确说明数据不足，不能用无关内容凑数。
-6. **生成前后都做校验。** 进入模型前，把合格结果规范化为带来源、时间和唯一标识的证据；生成后检查结构、引用、事实约束、敏感信息和异常重复。校验失败可以有限次数地纠正，再失败就使用确定性兜底，不能把未通过校验的原始回答直接展示给用户。
+入口：[DecisionReviewService](../src/main/java/com/ljl/ai/research/DecisionReviewService.java)、[ResearchDecisionService](../src/main/java/com/ljl/ai/research/ResearchDecisionService.java)。
 
-面试时可以总结为：**工具调用不是“模型选一个函数然后直接返回结果”，而是一条受控的数据处理流水线。模型负责理解和规划，代码负责权限、参数、质量门槛、重试预算和最终验收；查不到可靠信息时，宁可明确降级，也不把低质量结果包装成答案。**
+## RAG、记忆与存储
 
-常见追问：
+### 19. BM25、Dense 和 RRF 分别解决什么问题？为什么不再做 Dense 交集复核？
 
-- **为什么不能只靠 Prompt？** Prompt 是软约束，不能替代权限校验、参数校验、超时、预算和数据质量规则。影响安全或业务正确性的约束必须落到代码中。
-- **为什么不能只看向量相似度？** 相似只表示文本接近，不代表来源可信、时间正确或事实有效。通常先做硬规则过滤，再用语义评分排序或补充筛选。
-- **哪些错误应该重试？** 网络抖动、限流和可恢复的服务异常可以重试；权限失败、参数非法、明确的业务拒绝不应盲目重试。每次重试都要受次数、总耗时和成本预算约束。
-- **没有可靠结果怎么办？** 返回已验证的部分结果并说明缺口，或者明确返回数据不足。系统应区分“工具调用成功”和“证据足以回答问题”，不能为了完成回答而伪造信息。
-- **如何测试？** 单元测试覆盖参数、过滤、重试和降级分支；契约测试验证第三方返回结构；集成测试验证工具链路；离线评测集检查相关性与引用；少量显式联网冒烟测试验证真实来源，但不能用一次通过代替长期质量指标。
+BM25 补充代码、公司名和指标名等精确词匹配，Dense 处理语义近似；RRF 按排名融合，避免直接混合量纲不同的分数。如果融合后再强制与 Dense 命中取交集，BM25 独有结果会被删掉，双路召回就失去了互补性。
 
-本项目中的具体落地案例见 [工具调用与证据质量控制流程](tool-execution-and-evidence-quality.md)。
+当前保留 RRF 候选，先过滤文档状态与活动版本，再扩展 Parent。RRF 分数不是余弦相似度，不能使用 Dense 的 minScore 阈值；该阈值只用于单路 Dense 路径。现在尚无独立 Reranker，后续可在候选过滤后评估重排收益和成本。
 
-## 不要写进简历的表述
+入口：[RetrievalService](../src/main/java/com/ljl/ai/rag/RetrievalService.java)。验证：[RetrievalServiceTest](../src/test/java/com/ljl/ai/rag/RetrievalServiceTest.java)。
 
-- “生产级高可用 Agent 平台”
-- “四任务并行，性能提升 XX%”
-- “LangGraph 原生任意节点游标续跑、所有外部副作用 Exactly-once”
-- “离线 fixture accuracy 就是线上模型准确率”或“预测收益率 XX%”
-- “多角色可自由创建 Agent、任意调工具和相互通信”
-- “完成用户鉴权和严格多租户隔离”
-- “查询改写能够 100% 准确识别话题，彻底解决上下文污染”
-- “实现 MongoDB 与 Milvus 强一致事务”
-- “打开模型正文日志也绝对不会包含用户内容”
+### 20. 为什么使用 Parent/Child，分块参数怎么选？
 
-这些能力当前没有实现或没有可复现实验。主动说明边界通常比堆砌夸大词更能体现工程判断。
+召回需要较小、主题集中的片段，回答需要保留论据上下文。入库先识别标题层级生成 Parent，再按段落、句子和字符边界生成 Child；默认目标 700 字符，常规范围 600～800，重叠 80～120，短章节和尾块按实际长度处理。Child 的索引文本加入完整标题路径。
 
-## 面试前建议演示
+命中后短 Parent 返回全文，长 Parent 返回抽取式摘要与命中块相邻窗口，按原始 offset 合并重叠区间。这增加了存储元数据和 Parent 查询成本。当前参数是工程默认值，若要证明最优，需要在标注查询集上比较 Recall@K、上下文长度和延迟。
 
-1. 执行 `mvn test`，说明默认测试为什么不连接基础设施。
-2. 展示 `PlanValidatorTest` 和 `StockAnalysisWorkflowTest`，讲清模型提议与代码决策边界。
-3. 展示 `RetrievalServiceTest`，解释 RRF 分数为何还需语义复核。
-4. 展示 `ConversationContextServiceTest` 与 `ChatServiceQueryRewriteTest`，演示继续话题、切换股票、非 JSON 降级和显式代码保护。
-5. 展示 `ShortTermSummaryServiceTest`，解释消息数/字符双预算、摘要 TTL 和失败时如何保护原始消息。
-6. 展示 `WorkflowRunnerTest` 和 `MongoToolExecutionStoreTest`，解释节点 Checkpoint、版本/计划校验与工具幂等恢复。
-7. 展示 `ClaimEvidenceGuardTest`，演示跨包引用、无证据数字和未来日期被确定性拒绝。
-8. 在前端切换到深度投研，讲解 executionId、四阶段 RunEvent 时间线、断线补偿和终态收口。
-9. 运行 `AgentEvalRunnerTest`，说明 fixture 基线与真实模型评测的边界。
-10. 执行 `docker compose config --quiet` 和前端 `npm test && npm run build`，证明仓库具备可复现入口。
-11. 展示 `NewsSearchClientTest`、`DeepResearchServiceTest` 和 `WorkflowAnswerGeneratorTest`，讲解“候选过滤—官方补查—证据校验—输出降级”；需要联网演示时再显式启用 `NewsSearchLiveTest`，并说明接口额度与效果验证边界。
+入口：[HierarchicalDocumentChunker](../src/main/java/com/ljl/ai/knowledge/HierarchicalDocumentChunker.java)、[ParentContextAssembler](../src/main/java/com/ljl/ai/rag/ParentContextAssembler.java)。
+
+### 21. 怎么处理“那它去年呢”和“回到刚才的茅台”？
+
+每轮把当前问题、近期业务消息、当前话题摘要和最近话题交给 QueryRewriteAssistant，得到 standaloneQuery、topicKey、topicRelation 和 confidence。Java 处理失败、空输出和非 JSON 情况，并对显式六位股票代码做确定性保护。
+
+归一化话题生成稳定记忆 ID，与用户、会话组合；CONTINUE 复用当前窗口，SWITCH 进入另一个窗口，RETURN 回到已有窗口。独立查询同时供 RAG、长期记忆召回和 Planner 使用，业务消息保存后才推进活动话题。自然语言话题仍部分依赖模型，不能保证完全杜绝串话题。
+
+入口：[ConversationContextService](../src/main/java/com/ljl/ai/memory/ConversationContextService.java)。验证：[ConversationQueryRewriteTest](../src/test/java/com/ljl/ai/service/ConversationQueryRewriteTest.java)。
+
+### 22. 递归摘要如何避免丢消息和覆盖并发更新？
+
+消息数或字符预算触发时，将较早一半消息与旧摘要合并，最近原文继续保留；切分点不能拆散 AI 工具调用和对应结果组。先生成摘要，检查非空与长度，再提交压缩。
+
+Redis Lua 会比较生成摘要前的消息列表和旧摘要，匹配后才原子执行裁剪、新摘要写入与 TTL 刷新。生成失败不提交压缩，窗口或旧摘要变化则放弃本次提交。因此不能描述为“先删原文，失败再拿旧列表覆盖回去”。这能保护并发写入，但摘要本身仍是有损压缩。
+
+入口：[ShortTermSummaryService](../src/main/java/com/ljl/ai/memory/ShortTermSummaryService.java)、[RedisChatMemoryStore](../src/main/java/com/ljl/ai/memory/RedisChatMemoryStore.java)。验证：[ShortTermSummaryServiceTest](../src/test/java/com/ljl/ai/memory/ShortTermSummaryServiceTest.java)、[RedisMemoryCompactionTest](../src/test/java/com/ljl/ai/memory/RedisMemoryCompactionTest.java)。
+
+### 23. MongoDB、Redis、Milvus 为什么都需要？如何保证一致性和用户隔离？
+
+MongoDB 保存业务消息、文档元数据、执行快照和决策；Redis 保存有 TTL 的模型窗口、摘要和话题状态；Milvus 负责知识与长期记忆的向量召回。数据职责不同，模型窗口不能代替完整业务历史。
+
+知识文档通过状态标记、活动入库版本和失败补偿维护可见性。长期记忆先扩大共享向量候选池，再按 userId 和 MongoDB 启用状态过滤。当前没有跨 MongoDB/Milvus 的 ACID 事务，应用层用户过滤也不等于完整鉴权；生产化还需认证主体、存储层隔离和对账任务。
+
+入口：[KnowledgeIngestionService](../src/main/java/com/ljl/ai/knowledge/KnowledgeIngestionService.java)、[KnowledgeService](../src/main/java/com/ljl/ai/knowledge/KnowledgeService.java)、[LongTermMemoryService](../src/main/java/com/ljl/ai/service/LongTermMemoryService.java)。
+
+## 排障、验证与设计取舍
+
+### 24. 模型回答不符合预期，你怎么排查？
+
+先把“不符合预期”分类成事实错误、漏项、引用错误、格式错误或表达差异，再固定问题、分析日期、模型配置和当时的数据快照。通过 traceId、executionId 关联链路，按顺序检查：
+
+1. 原问题是否被错误补全，topicKey 和独立查询是否选错标的。
+2. RAG 是否漏召回，文档版本过滤和上下文预算是否丢掉关键资料。
+3. 计划和工具参数是否正确，工具快照是否通过 Schema、时点与证据检查。
+4. 模型输入是否完整，Prompt 是否冲突，输出是否因长度或超时被截断。
+5. 原始回答与最终展示是否一致，问题是否来自解析、Guard、降级或前端映射。
+
+排除上游与后处理问题后，再调整 Prompt 或模型参数，一次改变一个变量，用回归样本比较。诊断正文只在受控环境采集；默认日志和 RunEvent 不能当作完整模型输入快照。
+
+入口：[TracingChatLanguageModel](../src/main/java/com/ljl/ai/observability/TracingChatLanguageModel.java)、[WorkflowAnswerGenerator](../src/main/java/com/ljl/ai/workflow/WorkflowAnswerGenerator.java)。
+
+### 25. 通用 Agent 怎样控制工具调用与低质量结果？
+
+我会按“规划、执行、结果检查、有限重试、生成、输出校验”组织链路。工具白名单、参数类型、权限和预算由代码控制；工具返回先作为候选数据，检查来源、时间、完整性和业务相关性，再规范化为证据。数据不足时说明缺口，不能用无关内容凑答案。
+
+本项目已经落地的是计划白名单、确定性工具映射、结构化返回、证据校验、任务重试上限和答案门禁。统一租户权限、全链路时间/成本预算、按错误类别退避重试等属于可继续完善的设计，不能把通用设计建议都说成已实现功能。
+
+### 26. 你怎么证明这个项目有效？Agent Eval 高分说明什么？
+
+我会分三层说明证据：单元/组件测试验证状态、边界和失败语义；显式集成测试验证真实存储和来源；标注数据与真实模型评测才用于回答生成质量问题。
+
+当前 `mvn test` 默认离线，真实 MongoDB/Milvus 用 `*IT` 和 Profile 执行，新闻联网用例需显式启用。Agent Eval 使用 5 个固定样本与确定性适配器验证规划、话题、检索、证据和恢复契约，即使得分为 1.0，也不是线上模型准确率。CI 运行后端默认测试和前端生产构建；前端测试可单独执行。
+
+入口：[AgentEvalRunnerTest](../src/test/java/com/ljl/ai/eval/AgentEvalRunnerTest.java)、[评测样本](../src/test/resources/eval/agent-eval-cases.json)、[CI 配置](../.github/workflows/ci.yml)。
+
+### 27. 这个项目最值得展开的难点是什么？下一步做什么？
+
+可以选“并行执行后的可信恢复”来讲：分支不能修改共享状态，所以使用只读输入与 taskId 增量；分支不分别覆盖快照，而在汇合点 CAS 保存；工具成功但汇合前崩溃时，用工具记录恢复；恢复后还要重新校验当前证据，不能只信已完成状态。这条链路同时涉及并发、持久化、失败语义和模型输入边界。
+
+下一步按需求排序：先建立真实标注集与延迟/成本基线，再评估重排、摘要质量和数据源覆盖；需要部署扩容时，再引入认证、分布式调度、持久事件流和对账。不要把增加模型角色数量当作效果改善的直接证据。
+
+## 表述边界速查
+
+| 可以据当前实现说明 | 缺少依据或尚未实现的说法 |
+| --- | --- |
+| 四类工具分支并行，测试验证重叠执行与结果完整性 | 性能提升 XX%、达到某个线上 QPS/P95 |
+| 应用层 CAS 快照、显式游标恢复和工具成功记录复用 | 原生任意节点恢复、通用 Exactly-once、重启自动续跑 |
+| 结构化证据与输出规则拦截明确违规内容 | 完全消除幻觉、自动验证所有新闻和财务事实 |
+| 多角色共享证据、并行分析后单次 Judge | 自由创建 Agent、任意调工具和相互通信 |
+| 话题窗口、递归摘要与应用层用户过滤 | 无损摘要、100% 话题识别、完整多租户鉴权 |
+| 补偿与活动版本控制文档可见性 | MongoDB 与 Milvus 强一致事务 |
+| 离线契约评测与可复现测试入口 | fixture 分数等于模型准确率或投资收益 |
+
+## 面试前的演示顺序
+
+1. 从 `ChatService.chatInternal` 讲一轮请求，区分原文、独立查询、工作流答案与消息落库。
+2. 展示 `StockAnalysisWorkflowTest` 与 `WorkflowNodeDeltaTest`，说明分支并行、增量合并和写入边界。
+3. 展示 `WorkflowRunnerTest` 与 `WorkflowEvidenceBoundaryTest`，说明汇合前中断、成功工具复用和恢复后重验。
+4. 展示 `RetrievalServiceTest`、`ConversationQueryRewriteTest` 和 `ShortTermSummaryServiceTest`，说明 BM25 独有命中、话题返回和摘要提交。
+5. 基础设施与模型配置就绪后演示深度投研：接单、SSE 进度、来源、断线状态补偿。数据不足时说明触发了哪条规则。
+6. 运行离线 Eval，解释固定样本能证明什么，再给出真实质量评测的后续方案。
+
+默认验证命令见 [README](../README.md#测试与验证)。面试中只陈述实际执行过的测试和观察到的结果。

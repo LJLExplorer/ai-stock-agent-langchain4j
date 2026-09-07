@@ -2,6 +2,7 @@ package com.ljl.ai.research;
 
 import com.ljl.ai.client.NewsSearchClient;
 import com.ljl.ai.model.entity.StockQuote;
+import com.ljl.ai.model.dto.AnalysisToolPayload;
 import com.ljl.ai.planner.StockAnalysisTask;
 import com.ljl.ai.workflow.ExecutionTask;
 import com.ljl.ai.workflow.TaskStatus;
@@ -36,9 +37,24 @@ public class EvidencePackBuilder {
     private static final Pattern PUBLISHED_DATE = Pattern.compile("披露日期[：:]\\s*(\\d{4}-\\d{2}-\\d{2}|未知)");
     private static final int MODEL_VIEW_BUDGET = 12_000;
 
+    /** 将各类工具数据映射为带单位、来源和时点状态的事实；兼容旧文本结果，并拒绝缺少映射上下文的输入。 */
     public List<FinancialFact> map(StockAnalysisTask task, Object data, AnalysisContext context) {
         if (task == null || data == null || context == null) {
             return List.of();
+        }
+        if (data instanceof AnalysisToolPayload payload
+                && (task == StockAnalysisTask.TECHNICAL_ANALYSIS || task == StockAnalysisTask.FINANCIAL_ANALYSIS)) {
+            var type = task == StockAnalysisTask.TECHNICAL_ANALYSIS
+                    ? FinancialFact.EvidenceType.TECHNICAL : FinancialFact.EvidenceType.FINANCIAL;
+            var temporal = status(task == StockAnalysisTask.FINANCIAL_ANALYSIS
+                    ? payload.publishedAt() : payload.asOf(), payload.temporalStatus(), context);
+            Instant published = payload.publishedAt() == null ? null
+                    : payload.publishedAt().atStartOfDay(ZoneId.of("Asia/Shanghai")).toInstant();
+            return payload.metrics().entrySet().stream().filter(entry -> entry.getValue() != null)
+                    .map(entry -> new FinancialFact(type, entry.getKey(), entry.getValue().toPlainString(),
+                            metricUnit(entry.getKey()), metricUnit(entry.getKey()).startsWith("CNY") ? "CNY" : null,
+                            payload.asOf() == null ? null : payload.asOf().toString(), payload.asOf(), published,
+                            payload.sourceName(), payload.sourceUrl(), Instant.now(), null, null, temporal)).toList();
         }
         return switch (task) {
             case MARKET_DATA -> mapMarket(data, context);
@@ -50,6 +66,18 @@ public class EvidencePackBuilder {
         };
     }
 
+    private String metricUnit(String metric) {
+        return switch (metric) {
+            case "close", "ma5", "ma20" -> "CNY/share";
+            case "revenue", "netProfit", "operatingCashFlow" -> "CNY";
+            default -> "%";
+        };
+    }
+
+    /**
+     * 仅汇总已完成任务的当前证据，过滤被拒绝及超出分析日期的事实，再按证据 ID 去重和排序。
+     * 同时记录缺失与失败项，并生成稳定证据哈希、数据截止时间及供模型使用的事实文本。
+     */
     public EvidencePack build(AnalysisContext context, List<ExecutionTask> tasks) {
         Map<String, FinancialFact> unique = new LinkedHashMap<>();
         List<String> missing = new ArrayList<>();
@@ -63,7 +91,8 @@ public class EvidencePackBuilder {
                     missing.add(task.getTaskType().name());
                     failures.add(task.getTaskId() + ": " + value(task.getErrorMessage()));
                 }
-                List<FinancialFact> evidence = task.getEvidence();
+                List<FinancialFact> evidence = task.getStatus() == TaskStatus.COMPLETED
+                        ? task.getCurrentEvidence() : List.of();
                 if (task.getStatus() == TaskStatus.COMPLETED && (evidence == null || evidence.isEmpty())) {
                     missing.add(task.getTaskType().name());
                 }
@@ -188,6 +217,7 @@ public class EvidencePackBuilder {
                 && (fact.asOf() == null || !fact.asOf().isAfter(context.analysisDate()));
     }
 
+    /** 将数据自带状态与统一分析日期合并判断：保留拒绝状态，时间缺失标记未知，未来数据标记拒绝。 */
     private FinancialFact.TemporalStatus status(LocalDate factDate, FinancialFact.TemporalStatus supplied,
                                                 AnalysisContext context) {
         if (supplied == FinancialFact.TemporalStatus.REJECTED) {
@@ -238,6 +268,7 @@ public class EvidencePackBuilder {
         return fact.asOf() == null ? null : fact.asOf().atStartOfDay().toInstant(ZoneOffset.UTC);
     }
 
+    /** 只把时间已核实的事实写入模型上下文，按整条事实控制正文预算，并附上缺失项。 */
     private String modelView(List<FinancialFact> facts, List<String> missing) {
         StringBuilder view = new StringBuilder();
         for (FinancialFact fact : facts) {
