@@ -45,6 +45,10 @@ public class KnowledgeIngestionService {
         this.hybridCollectionManager = hybridCollectionManager;
     }
 
+    /**
+     * 为本次入库生成独立版本，依次保存父章节、子块语义向量及混合检索索引。
+     * 任一步失败仅补偿本次版本；全部成功后由调用方发布活动版本，避免检索读到半成品。
+     */
     public IngestionResult ingest(KnowledgeDocument document) {
         if (document == null || document.getDocumentId() == null || document.getDocumentId().isBlank()) {
             throw new IllegalArgumentException("知识文档及 documentId 不能为空");
@@ -100,6 +104,7 @@ public class KnowledgeIngestionService {
         }
     }
 
+    /** 将父章节草稿及子块偏移转换为持久化记录，供检索后按原文位置扩展上下文和定位引用。 */
     private List<KnowledgeSection> toSections(KnowledgeDocument document, String ingestionVersion,
                                                ChunkedDocument chunked) {
         List<KnowledgeSection> sections = new ArrayList<>();

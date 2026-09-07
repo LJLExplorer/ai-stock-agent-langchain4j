@@ -2,7 +2,6 @@ package com.ljl.ai.workflow;
 
 import com.ljl.ai.planner.StockAnalysisTask;
 import org.springframework.stereotype.Component;
-import org.springframework.util.StringUtils;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -14,15 +13,25 @@ import java.util.List;
 public class WorkflowReflector {
 
     private final WorkflowRetryPolicy retryPolicy;
+    private final WorkflowResultValidator resultValidator;
 
     public WorkflowReflector() {
         this(2);
     }
 
     public WorkflowReflector(int maxAttempts) {
-        this.retryPolicy = new WorkflowRetryPolicy(maxAttempts);
+        this(maxAttempts, new WorkflowResultValidator());
     }
 
+    public WorkflowReflector(int maxAttempts, WorkflowResultValidator resultValidator) {
+        this.retryPolicy = new WorkflowRetryPolicy(maxAttempts);
+        this.resultValidator = resultValidator;
+    }
+
+    /**
+     * 综合任务终态、结果校验和剩余尝试次数，决定结果是否可信及哪些任务需要重试。
+     * 未完成任务或耗尽重试次数会阻止可信判定，并保留结构化问题供后续路由和诊断使用。
+     */
     public ReflectionDecision reflect(ExecutionState state) {
         if (state == null || state.getTasks() == null || state.getTasks().isEmpty()) {
             return new ReflectionDecision(false, List.of(), List.of(), "执行状态为空");
@@ -31,15 +40,26 @@ public class WorkflowReflector {
         List<String> retryTaskIds = new ArrayList<>();
         List<StockAnalysisTask> additionalTasks = new ArrayList<>();
         List<String> reasons = new ArrayList<>();
-        String expectedSymbol = state.getPlan() == null ? null : state.getPlan().getSymbol();
+        List<WorkflowResultValidator.ValidationIssue> issues = new ArrayList<>();
         boolean terminalFailure = false;
 
         for (ExecutionTask task : state.getTasks()) {
-            if (task.getStatus() == TaskStatus.FAILED
-                    || (task.getStatus() == TaskStatus.COMPLETED && !reliable(task, expectedSymbol))) {
+            if (task == null || task.getStatus() != TaskStatus.COMPLETED && task.getStatus() != TaskStatus.FAILED) {
+                terminalFailure = true;
+                issues.add(new WorkflowResultValidator.ValidationIssue(task == null ? null : task.getTaskId(),
+                        "TASK_INCOMPLETE", "status", "任务尚未完成"));
+                reasons.add("任务尚未完成");
+                continue;
+            }
+            List<WorkflowResultValidator.ValidationIssue> taskIssues = task.getStatus() == TaskStatus.FAILED
+                    ? List.of(new WorkflowResultValidator.ValidationIssue(task.getTaskId(),
+                    "TOOL_FAILED", "status", "工具执行失败")) : resultValidator.validate(state, task);
+            issues.addAll(taskIssues);
+            if (!taskIssues.isEmpty()) {
+                taskIssues.forEach(issue -> reasons.add(task.getTaskId() + ": " + issue.code()
+                        + "(" + issue.field() + ") " + issue.message()));
                 if (retryPolicy.canRetry(task)) {
                     retryTaskIds.add(task.getTaskId());
-                    reasons.add(task.getTaskId() + "结果为空或不可信");
                 } else {
                     terminalFailure = true;
                     reasons.add(task.getTaskId() + "超过最大重试次数");
@@ -51,22 +71,19 @@ public class WorkflowReflector {
         // 新闻任务必须由 Planner 明确提出并经过 PlanValidator 放行。
         boolean trusted = retryTaskIds.isEmpty() && additionalTasks.isEmpty() && !terminalFailure;
         return new ReflectionDecision(trusted, retryTaskIds, additionalTasks,
-                reasons.isEmpty() ? "全部任务结果通过校验" : String.join("；", reasons));
-    }
-
-    private boolean reliable(ExecutionTask task, String expectedSymbol) {
-        String result = task.getResult();
-        if (!StringUtils.hasText(result) || result.toUpperCase().contains("ERROR")
-                || result.contains("失败") || result.contains("异常") || result.contains("exception")) {
-            return false;
-        }
-        if (expectedSymbol != null && result.contains("股票：") && !result.contains(expectedSymbol)) {
-            return false;
-        }
-        return true;
+                reasons.isEmpty() ? "全部任务结果通过校验" : String.join("；", reasons), issues);
     }
 
     public record ReflectionDecision(boolean trusted, List<String> retryTaskIds,
-                                     List<StockAnalysisTask> additionalTasks, String reason) {
+                                     List<StockAnalysisTask> additionalTasks, String reason,
+                                     List<WorkflowResultValidator.ValidationIssue> issues) {
+        public ReflectionDecision {
+            issues = issues == null ? List.of() : List.copyOf(issues);
+        }
+
+        public ReflectionDecision(boolean trusted, List<String> retryTaskIds,
+                                  List<StockAnalysisTask> additionalTasks, String reason) {
+            this(trusted, retryTaskIds, additionalTasks, reason, List.of());
+        }
     }
 }

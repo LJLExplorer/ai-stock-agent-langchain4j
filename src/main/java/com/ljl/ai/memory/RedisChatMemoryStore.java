@@ -50,6 +50,7 @@ public class RedisChatMemoryStore implements ChatMemoryStore {
         return PREFIX + memoryId;
     }
 
+    /** 按存储顺序还原模型消息；损坏的数据抛出异常，避免静默丢失历史后继续对话。 */
     @Override
     public List<ChatMessage> getMessages(Object memoryId) {
         List<String> values = redis.opsForList().range(key(memoryId), 0, -1);
@@ -69,6 +70,7 @@ public class RedisChatMemoryStore implements ChatMemoryStore {
         }
     }
 
+    /** 使用 Redis 事务整体替换消息窗口并刷新 TTL，使读者不会看到删除与逐条写入之间的中间状态。 */
     @Override
     public void updateMessages(Object memoryId, List<ChatMessage> messages) {
         String redisKey = key(memoryId);

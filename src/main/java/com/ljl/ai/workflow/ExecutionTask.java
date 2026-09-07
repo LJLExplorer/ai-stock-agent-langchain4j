@@ -23,6 +23,8 @@ public class ExecutionTask {
     private List<String> resultHistory = new ArrayList<>();
     /** 每次成功执行得到的结构化证据按 evidenceId 追加去重。 */
     private List<FinancialFact> evidence = new ArrayList<>();
+    /** 本次成功结果的证据；历史证据仅供审计，不能替本次结果通过校验。 */
+    private List<FinancialFact> currentEvidence = new ArrayList<>();
     private String errorMessage;
     private LocalDateTime startedAt;
     private LocalDateTime completedAt;
@@ -66,6 +68,9 @@ public class ExecutionTask {
             throw new IllegalStateException("任务未运行，不能完成: " + status);
         }
         status = TaskStatus.COMPLETED;
+        result = taskResult;
+        currentEvidence = taskEvidence == null ? new ArrayList<>() : new ArrayList<>(taskEvidence);
+        errorMessage = null;
         if (taskResult != null && !taskResult.isBlank()) {
             result = taskResult;
             if (resultHistory == null) {
@@ -99,6 +104,7 @@ public class ExecutionTask {
         attempts = Math.max(attempts, completedAttempt);
         status = TaskStatus.COMPLETED;
         result = taskResult;
+        currentEvidence = restoredEvidence == null ? new ArrayList<>() : new ArrayList<>(restoredEvidence);
         if (resultHistory == null) {
             resultHistory = new ArrayList<>();
         }

@@ -16,6 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
@@ -29,11 +30,18 @@ import static org.mockito.Mockito.when;
 
 class WorkflowRunnerTest {
 
+    // 本组测试验证图编排；工具结果的 Schema/证据规则由 Validator/Reflector 测试负责。
+    private WorkflowReflector routingReflector() {
+        WorkflowResultValidator validator = mock(WorkflowResultValidator.class);
+        when(validator.validate(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any())).thenReturn(List.of());
+        return new WorkflowReflector(2, validator);
+    }
+
     @Test
     void resumesRealWorkflowAfterTransientAnswerFailureWithoutRepeatingCompletedTools() {
         ExecutionTask task = ExecutionTask.pending("market", StockAnalysisTask.MARKET_DATA);
         task.start();
-        task.complete("股票：600519.SH；价格：1500");
+        WorkflowTestResults.complete(task);
         ExecutionState state = ExecutionState.planned("resume-answer", "session", "分析", List.of(task));
         state.setPlan(plan());
         StockAnalysisTaskExecutor executor = mock(StockAnalysisTaskExecutor.class);
@@ -41,26 +49,29 @@ class WorkflowRunnerTest {
         var attempts = new java.util.concurrent.atomic.AtomicInteger();
         doAnswer(invocation -> {
             if (attempts.incrementAndGet() == 1) throw new IllegalStateException("temporary outage");
-            state.setFinalAnswer("恢复后生成的结论");
+            invocation.<ExecutionState>getArgument(0).setFinalAnswer("恢复后生成的结论");
             return null;
-        }).when(answer).generate(state);
+        }).when(answer).generate(any());
 
         ExecutionStateStore store = mock(ExecutionStateStore.class);
         var persistedVersion = new java.util.concurrent.atomic.AtomicLong(-1);
         List<WorkflowStatus> savedStatuses = new java.util.ArrayList<>();
-        when(store.load(state.getExecutionId())).thenAnswer(invocation -> persistedVersion.get() < 0
-                ? Optional.empty() : Optional.of(state));
-        when(store.save(eq(state), anyLong())).thenAnswer(invocation -> {
+        var persisted = new java.util.concurrent.atomic.AtomicReference<ExecutionState>();
+        when(store.load(state.getExecutionId())).thenAnswer(invocation -> Optional.ofNullable(persisted.get())
+                .map(WorkflowAgentState::copyOf));
+        when(store.save(any(), anyLong())).thenAnswer(invocation -> {
+            ExecutionState current = invocation.getArgument(0);
             long expectedVersion = invocation.getArgument(1);
             assertEquals(persistedVersion.get(), expectedVersion);
-            assertTrue(state.getVersion() > expectedVersion);
-            persistedVersion.set(state.getVersion());
-            savedStatuses.add(state.getWorkflowStatus());
-            return state;
+            assertTrue(current.getVersion() > expectedVersion);
+            persistedVersion.set(current.getVersion());
+            persisted.set(WorkflowAgentState.copyOf(current));
+            savedStatuses.add(current.getWorkflowStatus());
+            return current;
         });
         InMemoryRunEventPublisher events = new InMemoryRunEventPublisher();
         WorkflowRunner runner = new WorkflowRunner(new StockAnalysisWorkflow(
-                new StockAnalysisTaskNode(executor), new WorkflowReflector(), new WorkflowCritic(), answer, events),
+                new StockAnalysisTaskNode(executor), routingReflector(), new WorkflowCritic(), answer, events),
                 store, events);
 
         assertThrows(RuntimeException.class, () -> runner.run(state));
@@ -186,7 +197,7 @@ class WorkflowRunnerTest {
 
         assertThrows(IllegalStateException.class, () -> new WorkflowRunner(workflow, store, publisher).run(state));
 
-        assertEquals(WorkflowStatus.FAILED, state.getWorkflowStatus());
+        verify(store).save(argThat(snapshot -> snapshot.getWorkflowStatus() == WorkflowStatus.FAILED), eq(0L));
         assertTrue(publisher.snapshot("unfinished").stream()
                 .noneMatch(event -> event.eventType() == RunEvent.EventType.WORKFLOW_COMPLETED));
     }
@@ -221,8 +232,8 @@ class WorkflowRunnerTest {
             throw new IllegalStateException("upstream failure");
         }).when(workflow).run(eq(state), any());
         assertThrows(IllegalStateException.class, () -> new WorkflowRunner(workflow, store, events).run(state));
-        verify(store).save(state, 0);
-        assertEquals(WorkflowStatus.FAILED, state.getWorkflowStatus());
+        verify(store).save(argThat(snapshot -> snapshot.getWorkflowStatus() == WorkflowStatus.FAILED
+                && snapshot.getVersion() == 1), eq(0L));
         assertEquals(RunEvent.EventType.WORKFLOW_FAILED, events.snapshot("exec-failed").getLast().eventType());
     }
 
@@ -300,30 +311,31 @@ class WorkflowRunnerTest {
         doAnswer(invocation -> {
             ExecutionTask current = invocation.getArgument(1);
             current.start();
-            current.complete("股票：600519.SH；价格：1500");
+            WorkflowTestResults.complete(current);
             return null;
-        }).when(taskNode).execute(any(), eq(task));
+        }).when(taskNode).execute(any(), any());
         StockAnalysisWorkflow workflow = new StockAnalysisWorkflow(
-                taskNode, new WorkflowReflector(), new WorkflowCritic(), null, events);
+                taskNode, routingReflector(), new WorkflowCritic(), null, events);
         ExecutionStateStore store = mock(ExecutionStateStore.class);
         when(store.save(any(), anyLong())).thenAnswer(invocation -> invocation.getArgument(0));
         ExecutionState state = ExecutionState.planned("exec-order", "session-1", "分析", List.of(task));
         state.setPlan(plan());
 
-        new WorkflowRunner(workflow, store, events).run(state);
+        ExecutionState result = new WorkflowRunner(workflow, store, events).run(state);
 
         var ordered = inOrder(store, taskNode);
         ordered.verify(store).save(state, -1);
-        ordered.verify(store).save(state, 0);
-        ordered.verify(taskNode).execute(state, task);
-        assertEquals("ANSWER", state.getLastCompletedNode());
+        ordered.verify(store).save(argThat(snapshot -> "INIT".equals(snapshot.getLastCompletedNode())), eq(0L));
+        ordered.verify(taskNode).execute(argThat(snapshot -> snapshot != state
+                && snapshot.getExecutionId().equals(state.getExecutionId())), any());
+        assertEquals("ANSWER", result.getLastCompletedNode());
         List<RunEvent> published = events.snapshot(state.getExecutionId());
         assertEquals(RunEvent.EventType.PLAN_CREATED, published.getFirst().eventType());
         assertTrue(published.getFirst().summary().contains("taskCount=1"));
         assertEquals(RunEvent.EventType.WORKFLOW_COMPLETED, published.getLast().eventType());
         assertEquals(LongStream.rangeClosed(1, published.size()).boxed().toList(),
                 published.stream().map(RunEvent::sequence).toList());
-        assertEquals(published.getLast().sequence(), state.getEventSequence());
+        assertEquals(published.getLast().sequence(), result.getEventSequence());
         assertTrue(published.stream().anyMatch(event -> event.eventType() == RunEvent.EventType.NODE_STARTED));
         assertTrue(published.stream().anyMatch(event -> event.eventType() == RunEvent.EventType.NODE_COMPLETED));
     }
@@ -332,12 +344,12 @@ class WorkflowRunnerTest {
     void shouldNotPublishAFalseTerminalStateWhenCheckpointOwnershipIsLost() {
         InMemoryRunEventPublisher events = new InMemoryRunEventPublisher();
         StockAnalysisWorkflow workflow = new StockAnalysisWorkflow(
-                null, new WorkflowReflector(), new WorkflowCritic(), null, events);
+                null, routingReflector(), new WorkflowCritic(), null, events);
         ExecutionStateStore store = mock(ExecutionStateStore.class);
         ExecutionState state = ExecutionState.planned("exec-checkpoint", "session-1", "分析", List.of());
         state.setPlan(plan());
         when(store.save(state, -1)).thenReturn(state);
-        when(store.save(state, 0)).thenThrow(new CheckpointConflictException("exec-checkpoint", 0));
+        when(store.save(any(), eq(0L))).thenThrow(new CheckpointConflictException("exec-checkpoint", 0));
 
         assertThrows(RuntimeException.class,
                 () -> new WorkflowRunner(workflow, store, events).run(state));
@@ -348,13 +360,14 @@ class WorkflowRunnerTest {
         assertTrue(published.stream().noneMatch(event -> event.eventType() == RunEvent.EventType.NODE_COMPLETED));
     }
 
-    @Test
-    void shouldRejectIncompatibleGraphVersionBeforeResume() {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"stock-analysis-v0", "stock-analysis-v1"})
+    void shouldRejectIncompatibleGraphVersionBeforeResume(String oldVersion) {
         StockAnalysisWorkflow workflow = mock(StockAnalysisWorkflow.class);
         ExecutionStateStore store = mock(ExecutionStateStore.class);
         ExecutionState state = ExecutionState.planned("exec-old", "session-1", "分析", List.of());
         state.setPlan(plan());
-        state.setGraphVersion("stock-analysis-v0");
+        state.setGraphVersion(oldVersion);
         state.setPlanHash(WorkflowRunner.planHash(state.getPlan()));
         when(store.load("exec-old")).thenReturn(java.util.Optional.of(state));
 

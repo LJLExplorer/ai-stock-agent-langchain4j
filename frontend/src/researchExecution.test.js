@@ -266,7 +266,7 @@ test('tracks the actual concurrently active research roles', () => {
   assert.equal(progress.plannedRoleCount, 5)
 })
 
-test('renders evidence ids as readable links and maps the source inspector data', () => {
+test('hides inline evidence citations while retaining the source inspector data', () => {
   const pack = {
     evidenceByType: {
       TECHNICAL: [
@@ -289,8 +289,29 @@ test('renders evidence ids as readable links and maps the source inspector data'
 
   assert.equal(sources.length, 1)
   assert.equal(sources[0].documentType, 'EVIDENCE')
-  assert.match(answer, /\[证据：Tencent Finance\]\(https:\/\/gu\.qq\.com\/sh600519\/gp\)/)
-  assert.doesNotMatch(answer, /\[evidence:/)
+  assert.equal(sources[0].documentId, 'ev-technical')
+  assert.equal(sources[0].documentUrl, 'https://gu.qq.com/sh600519/gp')
+  assert.equal(answer, '趋势向上')
+  assert.equal(
+    formatEvidenceCitations(
+      '基本面修复不确定（ev-ae0c52514d3aa6bce8ad9ccb, ev-330d28ffddc8cb87a2ba2023）'
+    ),
+    '基本面修复不确定'
+  )
+  assert.equal(
+    formatEvidenceCitations('- 趋势向上 [evidence:ev-technical]\n\n- 风险仍在 (ev-a, ev-b)。'),
+    '- 趋势向上\n\n- 风险仍在。'
+  )
+  assert.equal(formatEvidenceCitations('风险（利润下滑，ev-a）'), '风险（利润下滑）')
+  assert.equal(formatEvidenceCitations('来源 `ev-technical`'), '来源')
+  assert.equal(
+    formatEvidenceCitations('趋势向上 [证据：Tencent Finance](https://gu.qq.com)'),
+    '趋势向上'
+  )
+  assert.equal(
+    formatEvidenceCitations('证据不足（截至 2026-09-07）。[公告](https://example.com)'),
+    '证据不足（截至 2026-09-07）。[公告](https://example.com)'
+  )
 })
 
 test('maps stream compensation and terminal execution state for reconnect UI', () => {

@@ -10,6 +10,7 @@ import java.util.List;
  */
 @Data
 @Builder
+@lombok.extern.jackson.Jacksonized
 public class AgentPlan {
     private String intent;
     private String symbol;

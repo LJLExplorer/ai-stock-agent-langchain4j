@@ -5,6 +5,10 @@ import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.data.message.UserMessage;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
+import org.springframework.boot.env.YamlPropertySourceLoader;
+import org.springframework.core.env.StandardEnvironment;
+import org.springframework.core.io.FileSystemResource;
+import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
@@ -20,9 +24,19 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @EnabledIfSystemProperty(named = "review.redis.port", matches = "\\d+")
 class RedisMemoryCompactionTest {
     @Test
-    void scriptCommitsAllKeysAndRejectsStaleSnapshotsAndWrongTypesBeforeWriting() {
-        LettuceConnectionFactory factory = new LettuceConnectionFactory("127.0.0.1",
+    void scriptCommitsAllKeysAndRejectsStaleSnapshotsAndWrongTypesBeforeWriting() throws Exception {
+        StandardEnvironment environment = new StandardEnvironment();
+        new YamlPropertySourceLoader().load("local", new FileSystemResource("src/main/resources/application.yml"))
+                .forEach(source -> environment.getPropertySources().addLast(source));
+        RedisStandaloneConfiguration configuration = new RedisStandaloneConfiguration(
+                environment.getProperty("spring.data.redis.host", "localhost"),
                 Integer.parseInt(System.getProperty("review.redis.port")));
+        configuration.setDatabase(environment.getProperty("spring.data.redis.database", Integer.class, 0));
+        String username = environment.getProperty("spring.data.redis.username", "");
+        if (!username.isBlank()) configuration.setUsername(username);
+        String password = environment.getProperty("spring.data.redis.password", "");
+        if (!password.isEmpty()) configuration.setPassword(password);
+        LettuceConnectionFactory factory = new LettuceConnectionFactory(configuration);
         factory.afterPropertiesSet();
         StringRedisTemplate redis = new StringRedisTemplate(factory);
         String id = "review-" + UUID.randomUUID();

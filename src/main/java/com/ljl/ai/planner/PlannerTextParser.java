@@ -15,6 +15,10 @@ public final class PlannerTextParser {
     private PlannerTextParser() {
     }
 
+    /**
+     * 从规划文本和用户问题提取首个股票代码及受限任务类型，无代码时返回 null。
+     * 未匹配分析维度时默认查询行情；返回的候选计划仍须经过 PlanValidator 校验后执行。
+     */
     public static AgentPlan parse(String plannerText, String userMessage) {
         String planner = plannerText == null ? "" : plannerText;
         String combined = planner + "\n" + (userMessage == null ? "" : userMessage);

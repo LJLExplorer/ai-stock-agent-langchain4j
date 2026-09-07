@@ -2229,7 +2229,8 @@ body .sample-button {
 }
 
 body .inspector-tools {
-  flex: 0 1 176px;
+  flex: 0 1 200px;
+  min-height: 132px;
 }
 body .inspector-sources {
   flex: 1 1 auto;

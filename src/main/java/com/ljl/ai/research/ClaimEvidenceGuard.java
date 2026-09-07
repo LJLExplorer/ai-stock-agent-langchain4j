@@ -23,6 +23,10 @@ public final class ClaimEvidenceGuard {
     private static final Pattern URL = Pattern.compile("https?://\\S+");
     private static final Pattern ORDERED_LIST_PREFIX = Pattern.compile("^\\s*\\d+[.)、]\\s+");
 
+    /**
+     * 检查引用是否属于当前包中的已核实时点证据、日期是否越界，以及含数值的每行是否带有效引用。
+     * 此处验证引用约束，不判断自然语言结论是否由证据充分支持；空回答交给文本质量校验处理。
+     */
     public Validation validate(String answer, EvidencePack evidencePack) {
         if (answer == null || answer.isBlank()) {
             return Validation.passed();

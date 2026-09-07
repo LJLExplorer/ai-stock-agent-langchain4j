@@ -18,8 +18,10 @@ class ChatServiceCreateSessionTest {
     @Test
     void researchRequiresAnExistingActiveSession() {
         ChatMemoryService memory = mock(ChatMemoryService.class);
-        ChatService service = new ChatService();
-        ReflectionTestUtils.setField(service, "chatMemoryService", memory);
+        ChatServiceFixture fixture = new ChatServiceFixture();
+        ChatService service = fixture.service;
+        ReflectionTestUtils.setField(fixture.persistence, "chatMemoryService", memory);
+        ReflectionTestUtils.setField(fixture.context, "chatMemoryService", memory);
         assertThrows(IllegalArgumentException.class,
                 () -> service.requireSessionForExecution("missing", "user-1"));
 
@@ -35,8 +37,10 @@ class ChatServiceCreateSessionTest {
     @Test
     void sessionDeletedAfterAcceptanceMustNotCreateAReplacementSession() {
         ChatMemoryService memory = mock(ChatMemoryService.class);
-        ChatService service = new ChatService();
-        ReflectionTestUtils.setField(service, "chatMemoryService", memory);
+        ChatServiceFixture fixture = new ChatServiceFixture();
+        ChatService service = fixture.service;
+        ReflectionTestUtils.setField(fixture.persistence, "chatMemoryService", memory);
+        ReflectionTestUtils.setField(fixture.context, "chatMemoryService", memory);
         var response = service.chat(com.ljl.ai.model.dto.ChatRequest.builder()
                 .userId("user-1").sessionId("deleted").message("分析600519").build(), "accepted-execution");
 
@@ -56,8 +60,10 @@ class ChatServiceCreateSessionTest {
                 return ChatSession.builder().sessionId("new-session").userId(userId).build();
             }
         };
-        ChatService service = new ChatService();
-        ReflectionTestUtils.setField(service, "chatMemoryService", memoryService);
+        ChatServiceFixture fixture = new ChatServiceFixture();
+        ChatService service = fixture.service;
+        ReflectionTestUtils.setField(fixture.persistence, "chatMemoryService", memoryService);
+        ReflectionTestUtils.setField(fixture.context, "chatMemoryService", memoryService);
 
         ChatSession result = service.createSession(" demo-user ", "600519");
 
@@ -66,7 +72,8 @@ class ChatServiceCreateSessionTest {
 
     @Test
     void shouldRejectBlankUserId() {
-        ChatService service = new ChatService();
+        ChatServiceFixture fixture = new ChatServiceFixture();
+        ChatService service = fixture.service;
 
         assertThrows(IllegalArgumentException.class, () -> service.createSession("  ", null));
     }

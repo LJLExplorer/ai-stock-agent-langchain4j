@@ -30,7 +30,7 @@ class WorkflowReflectorTest {
     void shouldNotAddNewsTaskWhenPlanDoesNotRequestNews() {
         ExecutionTask task = ExecutionTask.pending("market", StockAnalysisTask.MARKET_DATA);
         task.start();
-        task.complete("股票：600519.SH；时间：2026-08-25；价格：1500");
+        WorkflowTestResults.complete(task);
         ExecutionState state = ExecutionState.planned("exec-1", "session-1", "查询行情", List.of(task));
         state.setPlan(AgentPlan.builder().intent("STOCK_ANALYSIS").symbol("600519.SH")
                 .tasks(List.of(StockAnalysisTask.MARKET_DATA)).build());
@@ -46,9 +46,9 @@ class WorkflowReflectorTest {
         ExecutionTask task = ExecutionTask.pending("market", StockAnalysisTask.MARKET_DATA);
         ExecutionTask news = ExecutionTask.pending("news", StockAnalysisTask.NEWS_ANALYSIS);
         task.start();
-        task.complete("股票：600519.SH；时间：2026-08-25；价格：1500");
+        WorkflowTestResults.complete(task);
         news.start();
-        news.complete("股票：600519.SH；时间：2026-08-25；新闻：经营稳定");
+        WorkflowTestResults.complete(news);
         ExecutionState state = ExecutionState.planned("exec-1", "session-1", "分析", List.of(task, news));
         AgentPlan plan = AgentPlan.builder()
                 .intent("STOCK_ANALYSIS").symbol("600519.SH")

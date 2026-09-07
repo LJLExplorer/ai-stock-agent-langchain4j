@@ -116,6 +116,10 @@ public class HierarchicalDocumentChunker {
         return new ChunkedDocument(parents, children);
     }
 
+    /**
+     * 在单个父章节内按段落或句子边界切分带重叠的子块，并合并过短尾块。
+     * 原文偏移用于后续窗口拼接，标题路径仅加入向量化文本，不混入子块正文。
+     */
     private List<ChildDraft> splitParent(String documentId, String ingestionVersion, ParentDraft parent) {
         String content = parent.getContent();
         if (content.isEmpty()) {
@@ -201,6 +205,7 @@ public class HierarchicalDocumentChunker {
         return selected >= 0 ? selected : Math.max(0, newStart - targetOverlap);
     }
 
+    /** 在长度预算内优先选择段落边界，其次句子边界；没有合适边界时按目标长度切分。 */
     private int chooseEnd(int contentLength, List<Integer> paragraphBoundaries,
                           List<Integer> sentenceBoundaries, int overlapStart) {
         int remaining = contentLength - overlapStart;

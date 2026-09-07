@@ -6,6 +6,7 @@ import com.ljl.ai.observability.RunEvent;
 import com.ljl.ai.observability.RunEventPublisher;
 import com.ljl.ai.planner.StockAnalysisTask;
 import com.ljl.ai.research.EvidencePackBuilder;
+import com.ljl.ai.research.AnalysisContext;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -62,6 +63,7 @@ public class StockAnalysisTaskNode {
         this.eventPublisher = eventPublisher;
     }
 
+    /** 跳过已完成任务；配置执行记录存储时走幂等恢复路径，否则直接执行并更新任务快照。 */
     public void execute(ExecutionState state, ExecutionTask task) {
         if (task.getStatus() == TaskStatus.COMPLETED) {
             return;
@@ -90,7 +92,7 @@ public class StockAnalysisTaskNode {
                     state.getExecutionId(), task.getTaskId(), task.getTaskType().toolName(), result.isSuccess(),
                     elapsedMillis(started), result.getErrorCode());
             if (result.isSuccess()) {
-                var evidence = evidencePackBuilder.map(task.getTaskType(), result.getData(), state.getAnalysisContext());
+                var evidence = evidencePackBuilder.map(task.getTaskType(), result.getData(), evidenceContext(state));
                 task.complete(JSON.toJSONString(result.getData()), evidence);
                 publishTool(state, task, RunEvent.EventType.TOOL_COMPLETED,
                         "status=completed,elapsedMs=" + elapsedMillis(started));
@@ -114,6 +116,10 @@ public class StockAnalysisTaskNode {
         }
     }
 
+    /**
+     * 按 executionId、taskId 和 attempt 查找执行记录，优先复用已成功的原始结果及证据。
+     * 失败记录受重试策略限制；遗留 STARTED 记录仅允许只读白名单工具以新 attempt 重试。
+     */
     private void executeIdempotently(ExecutionState state, ExecutionTask task) {
         int attempt = task.getAttempts() + 1;
         try {
@@ -163,6 +169,7 @@ public class StockAnalysisTaskNode {
         }
     }
 
+    /** 调用确定性工具并持久化本次结果；成功结果与证据一同保存后，再更新任务和发布完成事件。 */
     private void runAndRecord(ExecutionState state, ExecutionTask task, int attempt) {
         String symbol = state.getPlan() == null ? null : state.getPlan().getSymbol();
         long started = System.nanoTime();
@@ -190,7 +197,7 @@ public class StockAnalysisTaskNode {
         }
 
         String rawResult = JSON.toJSONString(result.getData());
-        var evidence = evidencePackBuilder.map(task.getTaskType(), result.getData(), state.getAnalysisContext());
+        var evidence = evidencePackBuilder.map(task.getTaskType(), result.getData(), evidenceContext(state));
         ToolExecutionRecord completed = toolExecutionStore.complete(
                 state.getExecutionId(), task.getTaskId(), attempt, rawResult, evidence);
         task.complete(completed.resultSnapshot(), completed.evidence());
@@ -199,6 +206,7 @@ public class StockAnalysisTaskNode {
         refreshEvidencePack(state);
     }
 
+    /** 从成功记录恢复结果、证据和尝试次数，无需再次调用外部工具，并据此重建证据包。 */
     private void restoreSuccess(ExecutionState state, ExecutionTask task, ToolExecutionRecord record) {
         task.restoreSuccess(record.attempt(), record.resultSnapshot(), record.evidence());
         publishTool(state, task, RunEvent.EventType.TOOL_COMPLETED,
@@ -229,10 +237,16 @@ public class StockAnalysisTaskNode {
         refreshEvidencePack(state);
     }
 
-    private void refreshEvidencePack(ExecutionState state) {
-        if (state.getAnalysisContext() != null) {
-            state.setEvidencePack(evidencePackBuilder.build(state.getAnalysisContext(), state.getTasks()));
-        }
+    /** 根据当前任务状态重新打包证据，使重试失败后已失效的证据不再作为本轮成功结果使用。 */
+    void refreshEvidencePack(ExecutionState state) {
+        state.setEvidencePack(evidencePackBuilder.build(evidenceContext(state), state.getTasks()));
+    }
+
+    private AnalysisContext evidenceContext(ExecutionState state) {
+        if (state.getAnalysisContext() != null) return state.getAnalysisContext();
+        return new AnalysisContext(state.getPlan() == null ? null : state.getPlan().getSymbol(),
+                state.getCreatedAt().toLocalDate(), null, state.getExecutionId(), state.getTraceId(),
+                state.getUserId(), state.getSessionId());
     }
 
     private long elapsedMillis(long started) {

@@ -178,6 +178,7 @@ public class KnowledgeService {
         return document;
     }
     
+    /** 将全部索引写入成功后的版本与向量清单绑定到文档，调用方保存文档后才对检索发布。 */
     private void applyIngestionResult(KnowledgeDocument document,
                                       KnowledgeIngestionService.IngestionResult ingestion) {
         document.setVectorIds(ingestion.vectorIds());

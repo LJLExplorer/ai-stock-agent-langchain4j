@@ -1,7 +1,9 @@
 package com.ljl.ai.service;
 
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.ljl.ai.model.dto.ChatRequest;
-import com.ljl.ai.model.entity.ChatMessage;
 import com.ljl.ai.planner.AgentPlan;
 import com.ljl.ai.planner.PlanValidator;
 import com.ljl.ai.planner.StockAnalysisTask;
@@ -12,11 +14,7 @@ import com.ljl.ai.research.ResearchConclusion;
 import com.ljl.ai.research.ResearchDecision;
 import com.ljl.ai.research.ResearchDecisionService;
 import com.ljl.ai.workflow.ExecutionState;
-import com.ljl.ai.workflow.ExecutionTask;
 import com.ljl.ai.workflow.WorkflowRunner;
-import ch.qos.logback.classic.Logger;
-import ch.qos.logback.classic.spi.ILoggingEvent;
-import ch.qos.logback.core.read.ListAppender;
 import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
@@ -25,21 +23,18 @@ import org.springframework.test.util.ReflectionTestUtils;
 import java.time.LocalDate;
 import java.util.List;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-class ChatServiceWorkflowTest {
+class AgentExecutionWorkflowTest {
 
     @Test
     void shouldCreatePersistableExecutionStateFromValidatedPlan() {
-        ChatService service = new ChatService();
+        AgentExecutionService service = new AgentExecutionService();
         PlanValidator.ValidatedPlan plan = new PlanValidator.ValidatedPlan(
                 true, null,
                 AgentPlan.builder().intent("STOCK_ANALYSIS").symbol("600519.SH")
@@ -55,7 +50,7 @@ class ChatServiceWorkflowTest {
 
     @Test
     void shouldUsePreallocatedExecutionIdWhenCreatingWorkflowState() {
-        ChatService service = new ChatService();
+        AgentExecutionService service = new AgentExecutionService();
         PlanValidator.ValidatedPlan plan = new PlanValidator.ValidatedPlan(
                 true, null,
                 AgentPlan.builder().intent("STOCK_ANALYSIS").symbol("600519.SH")
@@ -70,13 +65,13 @@ class ChatServiceWorkflowTest {
 
     @Test
     void shouldLogExecutionStateCreationWithTraceContext() {
-        ChatService service = new ChatService();
+        AgentExecutionService service = new AgentExecutionService();
         PlanValidator.ValidatedPlan plan = new PlanValidator.ValidatedPlan(
                 true, null,
                 AgentPlan.builder().intent("STOCK_ANALYSIS").symbol("600519.SH")
                         .tasks(List.of(StockAnalysisTask.MARKET_DATA)).build(),
                 List.of("getRealtimeQuote"));
-        Logger logger = (Logger) LoggerFactory.getLogger(ChatService.class);
+        Logger logger = (Logger) LoggerFactory.getLogger(AgentExecutionService.class);
         ListAppender<ILoggingEvent> appender = new ListAppender<>();
         appender.start();
         logger.addAppender(appender);
@@ -103,26 +98,8 @@ class ChatServiceWorkflowTest {
     }
 
     @Test
-    void shouldExposeWorkflowTasksAsToolInvocationsAndNewsSources() {
-        ExecutionTask market = ExecutionTask.pending("market", StockAnalysisTask.MARKET_DATA);
-        market.start();
-        market.complete("{\"symbol\":\"600519.SH\"}");
-        ExecutionTask news = ExecutionTask.pending("news", StockAnalysisTask.NEWS_ANALYSIS);
-        news.start();
-        news.complete("[{\"title\":\"最新公告\",\"url\":\"https://example.com/news\",\"source\":\"示例财经\"}]");
-        ExecutionState state = ExecutionState.planned("exec-1", "session-1", "分析", List.of(market, news));
-        state.setPlan(AgentPlan.builder().symbol("600519.SH").tasks(List.of()).build());
-
-        var invocations = ChatService.workflowToolInvocations(state);
-
-        assertEquals(2, invocations.size());
-        assertTrue(invocations.stream().allMatch(invocation -> Boolean.TRUE.equals(invocation.getSuccess())));
-        assertEquals("https://example.com/news", ChatService.extractWebSources(invocations).getFirst().getDocumentUrl());
-    }
-
-    @Test
     void shouldResolveDeepAnalysisContextAndInjectOnlyHistoricallyVisibleReviewsBestEffort() {
-        ChatService service = new ChatService();
+        AgentExecutionService service = new AgentExecutionService();
         AnalysisContextResolver contextResolver = mock(AnalysisContextResolver.class);
         DecisionReviewService reviewService = mock(DecisionReviewService.class);
         ResearchDecisionService decisionService = mock(ResearchDecisionService.class);
@@ -151,34 +128,6 @@ class ChatServiceWorkflowTest {
         verify(decisionService).findCompletedReviews("user-1", "600519.SH", asOf);
     }
 
-    @Test
-    void shouldSaveDeepDecisionOnlyAfterBusinessAssistantMessageWasSaved() {
-        ChatService service = new ChatService();
-        ResearchDecisionService decisionService = mock(ResearchDecisionService.class);
-        ReflectionTestUtils.setField(service, "researchDecisionService", decisionService);
-        ExecutionState deep = executionWithConclusion(AnalysisContext.ResearchMode.DEEP);
-
-        service.persistResearchDecisionAfterMessage(deep, mock(ChatMessage.class));
-        service.persistResearchDecisionAfterMessage(deep, null);
-        service.persistResearchDecisionAfterMessage(
-                executionWithConclusion(AnalysisContext.ResearchMode.STANDARD), mock(ChatMessage.class));
-
-        verify(decisionService, times(1)).save(deep);
-    }
-
-    @Test
-    void shouldNotFailResponseWhenDecisionPersistenceFails() {
-        ChatService service = new ChatService();
-        ResearchDecisionService decisionService = mock(ResearchDecisionService.class);
-        ReflectionTestUtils.setField(service, "researchDecisionService", decisionService);
-        ExecutionState state = executionWithConclusion(AnalysisContext.ResearchMode.DEEP);
-        when(decisionService.save(state)).thenThrow(new IllegalStateException("mongo unavailable"));
-
-        service.persistResearchDecisionAfterMessage(state, mock(ChatMessage.class));
-
-        verify(decisionService).save(state);
-    }
-
     private PlanValidator.ValidatedPlan validatedPlan() {
         return new PlanValidator.ValidatedPlan(true, null,
                 AgentPlan.builder().intent("STOCK_ANALYSIS").symbol("600519.SH")
@@ -196,14 +145,4 @@ class ChatServiceWorkflowTest {
         return decision;
     }
 
-    private ExecutionState executionWithConclusion(AnalysisContext.ResearchMode mode) {
-        LocalDate date = LocalDate.of(2026, 2, 1);
-        ExecutionState state = ExecutionState.planned("exec-" + mode, "session-1", "分析", List.of());
-        state.setUserId("user-1");
-        state.setAnalysisContext(new AnalysisContext("600519.SH", date, mode,
-                state.getExecutionId(), "trace-1", "user-1", "session-1"));
-        state.setResearchConclusion(new ResearchConclusion(ResearchConclusion.Rating.NEUTRAL, 0.7,
-                "结论", List.of(), List.of(), date, false, List.of()));
-        return state;
-    }
 }

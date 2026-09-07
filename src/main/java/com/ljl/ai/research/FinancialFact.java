@@ -60,6 +60,7 @@ public record FinancialFact(
                 sourceName, sourceUrl, retrievedAt, formula, inputSnapshotId, temporalStatus);
     }
 
+    /** 对带长度前缀的事实字段计算稳定 ID，避免分隔符歧义；调用方不传入抓取时间以便重复采集时复用。 */
     private static String stableEvidenceId(Object... components) {
         StringBuilder canonical = new StringBuilder();
         for (Object component : components) {

@@ -39,6 +39,7 @@ const PHASES = Object.freeze([
   ['RESEARCH', '多角色审议'],
   ['ANSWER', '结论生成']
 ])
+/** 统一标准与深度模式的请求入口；深度模式走异步接口并确保开启数据工具。 */
 export function buildResearchRequest(mode, payload) {
   const normalizedMode = mode === 'DEEP' ? 'DEEP' : 'STANDARD'
   const deep = normalizedMode === 'DEEP'
@@ -80,6 +81,10 @@ export function createResearchProgress(executionId) {
   }
 }
 
+/**
+ * 将运行事件归并为阶段和计数进度，同一事件流内忽略重复或过期序号。
+ * 缓存重建后 streamId 会变化，因此不能跨事件流直接比较序号。
+ */
 export function reduceResearchProgress(progress, rawEvent) {
   const event = parseRunEvent(rawEvent)
   if (!progress || progress.executionId !== event.executionId) {
@@ -187,6 +192,7 @@ export function reduceResearchProgress(progress, rawEvent) {
   )
 }
 
+/** 断线后用执行快照补齐任务、证据和终态信息；未结束的执行保留手动重连入口。 */
 export function applyStatusCompensation(progress, status) {
   if (!progress || !status || status.executionId !== progress.executionId) {
     throw new Error('状态补偿 executionId 不匹配')
@@ -232,6 +238,7 @@ function parseRoleCount(summary) {
   return match ? Number(match[1]) : null
 }
 
+/** 按已知任务和角色数量计算进度，收到成功终态前最高显示 99%，避免把阶段完成当作研究完成。 */
 function withProgressMetrics(progress, completed) {
   const taskCount = Number.isSafeInteger(progress.plannedTaskCount)
     ? Math.max(0, progress.plannedTaskCount)
@@ -260,6 +267,7 @@ function withProgressMetrics(progress, completed) {
   return { ...progress, completedSteps, totalSteps, percent }
 }
 
+/** 将执行快照转换为聊天展示结果，仅成功终态提供答案，并同时保留证据来源和缺失说明。 */
 export function mapTerminalResearchResult(status) {
   const workflowStatus = status?.workflowStatus
   const terminal = workflowStatus === 'COMPLETED' || workflowStatus === 'FAILED'
@@ -274,6 +282,7 @@ export function mapTerminalResearchResult(status) {
   }
 }
 
+/** 按证据 ID 去重来源并过滤已拒绝项；时间未知项保留核对入口，同时明确标注不可用于结论。 */
 export function evidenceSourcesFromPack(evidencePack) {
   const grouped = evidencePack?.evidenceByType
   if (!grouped || typeof grouped !== 'object') return []
@@ -323,21 +332,26 @@ export function evidenceLimitations(pack) {
   })
 }
 
-export function formatEvidenceCitations(content, sources = []) {
-  const byId = new Map(
-    (Array.isArray(sources) ? sources : [])
-      .filter((source) => source?.documentId)
-      .map((source) => [String(source.documentId), source])
+export function formatEvidenceCitations(content) {
+  // 引用保留在原始结果中供校验，正文只展示结论；来源统一由来源栏展示。
+  const evidenceId = '`?ev-[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)*`?'
+  const citationList = `(?:证据(?:ID)?|evidence)?[：:]?\\s*${evidenceId}(?:[\\s,，、;；]+${evidenceId})*\\s*`
+  const groupedCitations = new RegExp(
+    `（\\s*${citationList}）|\\(\\s*${citationList}\\)|\\[\\s*${citationList}\\]|【\\s*${citationList}】`,
+    'gi'
   )
-  return String(content || '').replace(/\[evidence:(ev-[A-Za-z0-9._-]+)]/g, (_, evidenceId) => {
-    const source = byId.get(evidenceId)
-    const title =
-      String(source?.documentTitle || '数据来源')
-        .replace(/[\[\]\\]/g, '')
-        .trim() || '数据来源'
-    const target = safeHttpUrl(source?.documentUrl) || `#evidence-${evidenceId}`
-    return `[证据：${title}](${target})`
-  })
+  return String(content || '')
+    .split('\n')
+    .map((line) => {
+      const clean = line
+        .replace(/\[evidence:\s*ev-[A-Za-z0-9._-]+\]/gi, '')
+        .replace(/\[证据[：:][^\]\n]*\]\([^\s)]*\)/g, '')
+        .replace(groupedCitations, '')
+        .replace(new RegExp(`[，、,;；]?[ \\t]*${evidenceId}`, 'g'), '')
+        .replace(/【\s*】/g, '')
+      return clean === line ? line : clean.replace(/[^\S\n]+([，。；：！？])/g, '$1').trimEnd()
+    })
+    .join('\n')
 }
 
 function roleNamesFromPack(evidencePack) {
@@ -358,6 +372,7 @@ function safeHttpUrl(value) {
   return /^https?:\/\//i.test(url) ? url : null
 }
 
+/** 提交深度研究并校验返回的执行标识；返回的是接单句柄，最终结果通过事件流及状态查询获取。 */
 export async function startResearch(request, { fetchImpl = globalThis.fetch } = {}) {
   if (!request || typeof request !== 'object') throw new Error('深度投研请求不能为空')
   if (!String(request.userId || '').trim() || !String(request.message || '').trim()) {
@@ -388,6 +403,7 @@ export async function getResearchStatus(
   return data
 }
 
+/** 校验 SSE 或普通对象中的事件标识、序号、类型和摘要长度，只保留前端需要的受控字段。 */
 export function parseRunEvent(input) {
   let value = input && typeof input === 'object' && 'data' in input ? input.data : input
   try {
@@ -418,6 +434,10 @@ export function isTerminalRunEvent(event) {
   return Boolean(event && TERMINAL_EVENT_TYPES.has(event.eventType))
 }
 
+/**
+ * 订阅研究事件，终态时关闭连接；断线或非法事件触发一次状态查询补偿。
+ * 调用 close 会使在途补偿回调失效，防止切换会话后旧请求继续更新页面。
+ */
 export function subscribeResearch({
   executionId,
   userId,

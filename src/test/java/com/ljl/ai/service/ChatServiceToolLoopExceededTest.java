@@ -33,7 +33,8 @@ class ChatServiceToolLoopExceededTest {
     @ParameterizedTest
     @CsvSource({"true,false", "true,true", "false,false", "false,true"})
     void shouldReturnControlledFailureEvenWhenMemoryCleanupFails(boolean toolLoopExceeded, boolean cleanupFails) {
-        ChatService chatService = new ChatService();
+        ChatServiceFixture fixture = new ChatServiceFixture();
+        ChatService chatService = fixture.service;
 
         ChatMemoryService chatMemoryService = mock(ChatMemoryService.class);
         RedisChatMemoryProvider chatMemoryProvider = mock(RedisChatMemoryProvider.class);
@@ -56,11 +57,15 @@ class ChatServiceToolLoopExceededTest {
                     .when(chatMemoryProvider).clearMemory("user-1:session-1");
         }
 
-        ReflectionTestUtils.setField(chatService, "chatMemoryService", chatMemoryService);
-        ReflectionTestUtils.setField(chatService, "chatMemoryProvider", chatMemoryProvider);
-        ReflectionTestUtils.setField(chatService, "shortTermSummaryService", shortTermSummaryService);
-        ReflectionTestUtils.setField(chatService, "longTermMemoryService", longTermMemoryService);
-        ReflectionTestUtils.setField(chatService, "stockAnalysisAssistantWithoutTools", assistant);
+        ReflectionTestUtils.setField(fixture.persistence, "chatMemoryService", chatMemoryService);
+        ReflectionTestUtils.setField(fixture.context, "chatMemoryService", chatMemoryService);
+        ReflectionTestUtils.setField(fixture.assembler, "chatMemoryProvider", chatMemoryProvider);
+        ReflectionTestUtils.setField(fixture.persistence, "chatMemoryProvider", chatMemoryProvider);
+        ReflectionTestUtils.setField(fixture.failure, "chatMemoryProvider", chatMemoryProvider);
+        ReflectionTestUtils.setField(fixture.context, "shortTermSummaryService", shortTermSummaryService);
+        ReflectionTestUtils.setField(fixture.persistence, "shortTermSummaryService", shortTermSummaryService);
+        ReflectionTestUtils.setField(fixture.context, "longTermMemoryService", longTermMemoryService);
+        ReflectionTestUtils.setField(fixture.execution, "stockAnalysisAssistantWithoutTools", assistant);
 
         ChatRequest request = ChatRequest.builder()
                 .userId("user-1")

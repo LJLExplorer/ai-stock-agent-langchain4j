@@ -43,6 +43,7 @@ public class InMemoryRunEventPublisher implements RunEventPublisher {
         this.clock = Objects.requireNonNull(clock, "clock 不能为空");
     }
 
+    /** 在单次执行的锁内分配递增序号、维护有界回放缓存并排队通知订阅者，保证事件顺序一致。 */
     @Override
     public RunEvent publish(String executionId, String traceId, RunEvent.EventType eventType,
                             String node, String summary) {
@@ -115,6 +116,7 @@ public class InMemoryRunEventPublisher implements RunEventPublisher {
         }
     }
 
+    /** 在同一锁内注册订阅并回放游标之后的缓存事件，消除快照读取与订阅建立之间的漏事件窗口。 */
     @Override
     public Subscription subscribeAfter(String executionId, long afterSequence, Consumer<RunEvent> listener) {
         if (executionId == null || executionId.isBlank()) {
@@ -171,6 +173,7 @@ public class InMemoryRunEventPublisher implements RunEventPublisher {
         }
     }
 
+    /** 获取并引用执行缓冲区；容量不足时只淘汰无使用者和订阅者的终态执行，避免清掉活跃事件流。 */
     private synchronized ExecutionEvents executionFor(String executionId) {
         ExecutionEvents existing = executions.get(executionId);
         if (existing != null) {

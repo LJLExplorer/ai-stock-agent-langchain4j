@@ -1,5 +1,6 @@
 package com.ljl.ai.service;
 
+import com.ljl.ai.memory.ConversationContextService;
 import com.ljl.ai.model.dto.ChatRequest;
 import com.ljl.ai.model.dto.ChatResponse;
 import com.ljl.ai.model.dto.ResearchExecutionResponse;
@@ -59,6 +60,10 @@ public class ResearchExecutionService implements AutoCloseable {
                 new ThreadPoolExecutor.AbortPolicy());
     }
 
+    /**
+     * 校验深度研究请求，绑定会话并保存执行占位记录，再提交到有界后台队列。
+     * 后台任务等待接单事件发布完成才运行；队列拒绝或接单失败时补写失败状态。
+     */
     public synchronized ResearchExecutionResponse start(ChatRequest request) {
         if (request == null || request.getResearchMode() != AnalysisContext.ResearchMode.DEEP) {
             throw new IllegalArgumentException("DEEP_RESEARCH_MODE_REQUIRED");
@@ -74,7 +79,7 @@ public class ResearchExecutionService implements AutoCloseable {
         ChatRequest executionRequest = copyForSession(request, sessionId);
         ExecutionState acceptedState = ExecutionState.planned(
                 executionId, sessionId,
-                ChatService.executionQuestion(request.getMessage(), request.getOrderId()), List.of());
+                ConversationContextService.executionQuestion(request.getMessage(), request.getOrderId()), List.of());
         acceptedState.setUserId(request.getUserId());
         stateStore.save(acceptedState, -1);
         ResearchTask task = new ResearchTask(executionRequest, executionId);
@@ -99,6 +104,7 @@ public class ResearchExecutionService implements AutoCloseable {
         }
     }
 
+    /** 只返回属于请求用户的执行快照，空标识或归属不匹配时按不可见处理。 */
     public Optional<ExecutionState> findOwned(String executionId, String userId) {
         if (StringUtils.isBlank(executionId) || StringUtils.isBlank(userId)) {
             return Optional.empty();
@@ -133,6 +139,7 @@ public class ResearchExecutionService implements AutoCloseable {
                 .build();
     }
 
+    /** 等待接单完成后复用对话主链路，并为异常、中断或未达到终态的研究执行补写失败记录。 */
     private void runAfterAccepted(ResearchTask task) {
         ChatRequest request = task.request;
         String executionId = task.executionId;
@@ -157,6 +164,7 @@ public class ResearchExecutionService implements AutoCloseable {
         }
     }
 
+    /** 以检查点版本为条件保存失败状态并补发终态事件；已完成的业务结果不因异步收尾异常被覆盖。 */
     private void recordFailure(ChatRequest request, String executionId, String errorCode) {
         try {
             Optional<ExecutionState> checkpoint = stateStore.load(executionId);
@@ -206,6 +214,7 @@ public class ResearchExecutionService implements AutoCloseable {
         return sanitized.substring(0, Math.min(64, sanitized.length()));
     }
 
+    /** 停止执行器，并显式将尚未运行的排队任务标为失败，避免它们永久停留在已接单状态。 */
     @Override
     @PreDestroy
     public synchronized void close() {

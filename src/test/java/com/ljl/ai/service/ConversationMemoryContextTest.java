@@ -1,5 +1,6 @@
 package com.ljl.ai.service;
 
+import com.ljl.ai.memory.ConversationContextService;
 import com.ljl.ai.memory.ShortTermSummaryService;
 import com.ljl.ai.model.entity.UserLongTermMemory;
 import org.junit.jupiter.api.Test;
@@ -10,10 +11,10 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.*;
 
-class ChatServiceIntegrationTest {
+class ConversationMemoryContextTest {
     @Test
     void shouldBuildPromptContextFromSummaryAndUserLongTermMemory() {
-        ChatService chatService = new ChatService();
+        ConversationContextService chatService = new ConversationContextService();
         ShortTermSummaryService summaryService = mock(ShortTermSummaryService.class);
         LongTermMemoryService longTermMemoryService = mock(LongTermMemoryService.class);
         when(summaryService.get("user-1:session-1")).thenReturn("用户关注新能源");

@@ -49,6 +49,10 @@ public class ShortTermSummaryService {
         return redis.opsForValue().get(summaryKey(memoryId));
     }
 
+    /**
+     * 消息数或字符预算触发时，将较早消息与旧摘要递归合并，并保留完整的工具调用与结果组。
+     * 新摘要校验通过后才原子提交；窗口已变化则放弃本次压缩，生成失败则保留原文。
+     */
     public void refresh(String memoryId) {
         List<ChatMessage> messages = memoryStore.getMessages(memoryId);
         if (messages == null || messages.isEmpty()) {

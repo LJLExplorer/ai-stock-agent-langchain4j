@@ -20,6 +20,7 @@ public class ResearchDecisionService {
         this.mongoTemplate = mongoTemplate;
     }
 
+    /** 将完整执行上下文、证据哈希和研究结论记录为待复盘决策，同一用户的已有执行决策直接返回。 */
     public ResearchDecision save(ExecutionState state) {
         if (state == null || state.getResearchConclusion() == null || state.getEvidencePack() == null
                 || state.getAnalysisContext() == null) {
@@ -40,6 +41,7 @@ public class ResearchDecisionService {
         return mongoTemplate.insert(decision);
     }
 
+    /** 只召回同一用户和标的、且后验结果在本次分析日已经可见的完整复盘，防止历史研究读取未来结果。 */
     public List<ResearchDecision> findCompletedReviews(String userId, String symbol, LocalDate analysisDate) {
         if (analysisDate == null) {
             throw new IllegalArgumentException("analysisDate 不能为空");

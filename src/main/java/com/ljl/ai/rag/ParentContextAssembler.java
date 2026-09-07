@@ -34,6 +34,7 @@ public class ParentContextAssembler {
 
     private final int shortParentThreshold;
 
+    /** 按父章节及入库版本归并子块，短章节返回全文，长章节返回命中邻域，再依据分数和命中数排序。 */
     public List<RetrievalResult> assemble(List<ChildHit> hits,
                                           Map<SectionVersionKey, KnowledgeSection> sections,
                                           int topK) {
@@ -67,6 +68,7 @@ public class ParentContextAssembler {
                 .toList();
     }
 
+    /** 为每个命中补齐前后各一个子块，并合并相交窗口，避免同一章节的相邻命中重复占用上下文。 */
     private List<AssembledWindow> buildLongParentWindows(KnowledgeSection section, List<ChildHit> hits) {
         int lastIndex = section.getChunkSpans() == null || section.getChunkSpans().isEmpty()
                 ? hits.stream().mapToInt(ChildHit::chunkIndex).max().orElse(0)
@@ -145,6 +147,7 @@ public class ParentContextAssembler {
         return extractUnion(safeContent(section.getContent()), intervals);
     }
 
+    /** 按原文偏移提取区间并集，消除子块重叠造成的重复正文，并将越界偏移限制在原文范围内。 */
     private String extractUnion(String content, List<Interval> intervals) {
         List<Interval> merged = new ArrayList<>();
         for (Interval interval : intervals) {

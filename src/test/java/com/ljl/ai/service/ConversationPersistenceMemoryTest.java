@@ -1,6 +1,7 @@
 package com.ljl.ai.service;
 
 import com.ljl.ai.memory.ChatMemoryService;
+import com.ljl.ai.memory.ConversationContextService;
 import com.ljl.ai.memory.ConversationTopicStore;
 import com.ljl.ai.memory.RedisChatMemoryProvider;
 import com.ljl.ai.memory.ShortTermSummaryService;
@@ -15,15 +16,15 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-class ChatServiceMemoryKeyTest {
+class ConversationPersistenceMemoryTest {
     @Test
     void shouldBuildUserAndSessionScopedMemoryId() {
-        assertEquals("user-1:session-1", ChatService.memoryId("user-1", "session-1"));
+        assertEquals("user-1:session-1", ConversationContextService.memoryId("user-1", "session-1"));
     }
 
     @Test
     void shouldDeleteShortTermSummaryWhenSessionIsDeleted() {
-        ChatService service = new ChatService();
+        ConversationPersistenceService service = new ConversationPersistenceService();
         ChatMemoryService chatMemoryService = mock(ChatMemoryService.class);
         RedisChatMemoryProvider memoryProvider = mock(RedisChatMemoryProvider.class);
         ShortTermSummaryService summaryService = mock(ShortTermSummaryService.class);
@@ -42,7 +43,7 @@ class ChatServiceMemoryKeyTest {
 
     @Test
     void shouldDeleteAllKnownTopicMemoriesWithSession() {
-        ChatService service = new ChatService();
+        ConversationPersistenceService service = new ConversationPersistenceService();
         ChatMemoryService chatMemoryService = mock(ChatMemoryService.class);
         RedisChatMemoryProvider memoryProvider = mock(RedisChatMemoryProvider.class);
         ShortTermSummaryService summaryService = mock(ShortTermSummaryService.class);
