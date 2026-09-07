@@ -277,7 +277,7 @@ MongoDB 保存业务消息、文档元数据、执行快照和决策；Redis 保
 
 我会分三层说明证据：单元/组件测试验证状态、边界和失败语义；显式集成测试验证真实存储和来源；标注数据与真实模型评测才用于回答生成质量问题。
 
-当前 `mvn test` 默认离线，真实 MongoDB/Milvus 用 `*IT` 和 Profile 执行，新闻联网用例需显式启用。Agent Eval 使用 5 个固定样本与确定性适配器验证规划、话题、检索、证据和恢复契约，即使得分为 1.0，也不是线上模型准确率。CI 运行后端默认测试和前端生产构建；前端测试可单独执行。
+当前 `mvn test` 默认离线，真实 MongoDB/Milvus 用 `*IT` 和 Profile 执行，新闻联网用例需显式启用。Agent Eval 使用 5 个固定样本与确定性适配器验证规划、话题、检索、证据和恢复契约，即使得分为 1.0，也不是线上模型准确率。CI 在 push/PR 时只执行后端打包和前端生产构建，后端跳过测试编译与执行；测试需手动运行，不能将构建成功描述为测试通过。
 
 入口：[AgentEvalRunnerTest](../src/test/java/com/ljl/ai/eval/AgentEvalRunnerTest.java)、[评测样本](../src/test/resources/eval/agent-eval-cases.json)、[CI 配置](../.github/workflows/ci.yml)。
 

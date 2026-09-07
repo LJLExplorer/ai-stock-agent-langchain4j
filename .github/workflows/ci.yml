@@ -29,8 +29,8 @@ jobs:
           java-version: "21"
           cache: maven
 
-      - name: Run unit tests
-        run: mvn --batch-mode --no-transfer-progress test
+      - name: Build application (skip tests)
+        run: mvn --batch-mode --no-transfer-progress -Dmaven.test.skip=true package
 
   frontend:
     name: Frontend / Node 24

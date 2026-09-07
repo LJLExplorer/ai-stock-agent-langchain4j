@@ -307,7 +307,7 @@ npm --prefix frontend run build
 docker compose config --quiet
 ```
 
-默认后端测试不依赖外部模型、网络或业务数据库。真实 MongoDB/Milvus 测试使用 `*IT` 和显式 Profile；新闻联网检查需单独启用 `mvn -Dtest=NewsSearchLiveTest -Dnews.live=true test`。GitHub Actions 分别运行后端默认测试与前端生产构建，前端测试可用上述命令单独执行。
+默认后端测试不依赖外部模型、网络或业务数据库。真实 MongoDB/Milvus 测试使用 `*IT` 和显式 Profile；新闻联网检查需单独启用 `mvn -Dtest=NewsSearchLiveTest -Dnews.live=true test`。GitHub Actions 在 push/PR 时运行后端打包与前端生产构建；后端使用 `-Dmaven.test.skip=true` 跳过测试编译和执行。测试源码保留，后端与前端测试可用上述命令手动执行；CI 通过仅表示构建通过。
 
 | 验证主题 | 代表测试 |
 | --- | --- |
