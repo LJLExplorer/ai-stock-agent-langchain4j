@@ -36,6 +36,8 @@ import java.util.concurrent.TimeUnit;
 @Slf4j
 @Component
 public class NewsSearchClient {
+    private static final int NEWS_LOOKBACK_DAYS = 366;
+    private static final int RECENT_NEWS_DAYS = 30;
     private static final MediaType JSON_TYPE = MediaType.parse("application/json");
     private static final Pattern NON_NEWS = Pattern.compile(
             "(?i)\\bskills?\\b|\\breadme\\b|安装教程|使用教程|开发教程|提示词模板|技能说明|代码仓库");
@@ -99,6 +101,57 @@ public class NewsSearchClient {
         throw new IllegalStateException("未配置 Tavily 或 SerpAPI 任一新闻搜索 API Key");
     }
 
+    /** 恢复阶段只检索交易所、巨潮和发行人域名，避免再次消费同一批媒体候选。 */
+    public List<NewsItem> searchOfficial(String stock, String query, int days, int maxResults,
+                                         LocalDate analysisDate) throws Exception {
+        List<String> entities = stockEntities(stock);
+        List<String> domains = officialDomains(stock);
+        String tavilyKey = firstConfiguredKey(configuredTavilyKey, "TAVILY_API_KEYS", "TAVILY_API_KEY");
+        if (!tavilyKey.isBlank()) {
+            java.util.concurrent.atomic.AtomicBoolean listingAttempted = new java.util.concurrent.atomic.AtomicBoolean();
+            return searchOfficialWithRetries((searchQuery, resultLimit, official) -> {
+                if (!listingAttempted.getAndSet(true)) {
+                    List<NewsItem> direct = extractIssuerListing(tavilyKey, stock, domains);
+                    if (!direct.isEmpty()) return direct;
+                }
+                return searchTavily(tavilyKey, entities.getLast(), searchQuery, days,
+                        resultLimit, analysisDate, true, domains);
+            }, entities, maxResults, analysisDate, days, domains);
+        }
+        String serpKey = firstConfiguredKey(configuredSerpApiKey, "SERPAPI_API_KEYS", "SERPAPI_API_KEY");
+        if (!serpKey.isBlank()) {
+            return searchOfficialWithRetries((searchQuery, resultLimit, official) -> searchSerpApi(
+                    serpKey, String.join(" ", entities), searchQuery, resultLimit, true, domains),
+                    entities, maxResults, analysisDate, days, domains);
+        }
+        throw new IllegalStateException("未配置 Tavily 或 SerpAPI 任一新闻搜索 API Key");
+    }
+
+    private List<NewsItem> searchOfficialWithRetries(NewsSearcher searcher, List<String> entities,
+                                                      int maxResults, LocalDate analysisDate,
+                                                      int days, List<String> domains) throws Exception {
+        Map<String, NewsItem> collected = new LinkedHashMap<>();
+        List<String> queries = List.of("财务报告 投资者关系", "公司公告 经营业绩", "业绩说明会 重大事项");
+        Exception lastFailure = null;
+        int attempts = Math.min(queries.size(), Math.max(1, maxRetries + 1));
+        for (int attempt = 0; attempt < attempts && collected.size() < Math.max(1, maxResults); attempt++) {
+            try {
+                List<NewsItem> items = filterByPublishedAt(
+                        searcher.search(queries.get(attempt), Math.max(maxResults, minRelevantResults), true), analysisDate);
+                filterNewsCandidates(items, entities, analysisDate, days).stream()
+                        .filter(item -> matchesDomain(item.url(), domains))
+                        .forEach(item -> collected.putIfAbsent(resultKey(item), item));
+            } catch (Exception exception) {
+                lastFailure = exception;
+                log.warn("news_source_search_failed sourceType=OFFICIAL, errorType={}",
+                        exception.getClass().getSimpleName());
+            }
+        }
+        if (collected.isEmpty() && lastFailure != null) throw lastFailure;
+        log.info("official_news_search_finished attempts={}, acceptedCount={}", attempts, collected.size());
+        return collected.values().stream().limit(Math.max(0, maxResults)).toList();
+    }
+
     private List<NewsItem> extractIssuerListing(String key, String stock, List<String> domains) {
         String code = stock.trim().replaceFirst("(?i)\\.(SH|SZ|BJ)$", "");
         List<String> urls = new ArrayList<>();
@@ -157,8 +210,10 @@ public class NewsSearchClient {
                 if (attempt == retryCount && collected.isEmpty()) throw exception;
                 continue;
             }
-            // 定期报告不是近一个月新闻：单独使用一年披露窗口，但绝不接纳分析日期之后的内容。
-            List<NewsItem> candidates = filterNewsCandidates(asOfItems, entities, analysisDate, official ? 366 : days);
+            // 新闻任务与工作流使用同一个时间窗；历史财报由财务任务负责，避免先接纳再判过期。
+            // 检索范围扩大到一年；最终选择时优先使用最近 30 天，只有没有近期新闻才回退到历史新闻。
+            List<NewsItem> candidates = filterNewsCandidates(asOfItems, entities, analysisDate,
+                    Math.max(days, NEWS_LOOKBACK_DAYS));
             if (official) candidates = candidates.stream().filter(item -> matchesDomain(item.url(), domains)).toList();
             // 官方披露已做域名、主体、文档类型和时点检查，不再用向量分数误删公司自己的报告。
             List<NewsItem> filtered = official ? candidates : filterByRelevance(candidates, String.join(" ", entities), newsQuery);
@@ -168,11 +223,22 @@ public class NewsSearchClient {
                 attempts,
                 collected.size(), minRelevantResults);
         int limit = Math.max(0, maxResults);
-        List<NewsItem> official = collected.values().stream().filter(item -> matchesDomain(item.url(), domains))
-                .sorted(java.util.Comparator.comparing((NewsItem item) -> item.title().contains("摘要") || item.title().contains("英文版")))
+        Instant recentCutoff = analysisDate.minusDays(RECENT_NEWS_DAYS - 1L)
+                .atStartOfDay(ZoneId.of("Asia/Shanghai")).toInstant();
+        boolean hasRecent = collected.values().stream()
+                .map(item -> parsePublishedAt(item.publishedAt()).orElse(null))
+                .anyMatch(published -> published != null && !published.isBefore(recentCutoff));
+        List<NewsItem> selectedPool = hasRecent
+                ? collected.values().stream().filter(item -> parsePublishedAt(item.publishedAt())
+                        .map(published -> !published.isBefore(recentCutoff)).orElse(false)).toList()
+                : List.copyOf(collected.values());
+        java.util.Comparator<NewsItem> newestFirst = java.util.Comparator.comparing(
+                (NewsItem item) -> parsePublishedAt(item.publishedAt()).orElse(Instant.MIN)).reversed();
+        List<NewsItem> official = selectedPool.stream().filter(item -> matchesDomain(item.url(), domains))
+                .sorted(newestFirst.thenComparing(item -> item.title().contains("摘要") || item.title().contains("英文版")))
                 .toList();
         List<NewsItem> selected = new ArrayList<>(official.stream().limit((limit + 1L) / 2).toList());
-        collected.values().stream().filter(item -> !matchesDomain(item.url(), domains))
+        selectedPool.stream().filter(item -> !matchesDomain(item.url(), domains)).sorted(newestFirst)
                 .limit(Math.max(0, limit - selected.size())).forEach(selected::add);
         official.stream().filter(item -> !selected.contains(item)).limit(Math.max(0, limit - selected.size())).forEach(selected::add);
         return List.copyOf(selected);
@@ -241,8 +307,8 @@ public class NewsSearchClient {
             if (item.title() == null || item.title().isBlank() || !isNewsUrl(item.url())
                     || NON_NEWS.matcher(text).find()) {
                 reason = "NOT_NEWS_ARTICLE";
-            } else if (entities.stream().noneMatch(entity -> text.toLowerCase(Locale.ROOT).contains(entity.toLowerCase(Locale.ROOT)))) {
-                reason = "STOCK_NOT_MATCHED";
+            // 搜索接口已经带入股票代码/公司名，媒体标题经常只写简称或事件，不再要求正文重复出现代码。
+            // 主体匹配保留为检索召回层能力，避免因中文简称、别名或标题截断误杀真实新闻。
             } else if (published.isEmpty()) {
                 reason = "PUBLICATION_TIME_UNKNOWN";
             } else if (published.get().isBefore(earliest) || !published.get().isBefore(cutoff)) {
@@ -290,7 +356,7 @@ public class NewsSearchClient {
         body.put("api_key", key);
         body.put("query", stock + " " + query);
         body.put("topic", official ? "general" : "news");
-        body.put("start_date", analysisDate.minusDays((official ? 366 : Math.max(1, days)) - 1L).toString());
+        body.put("start_date", analysisDate.minusDays(NEWS_LOOKBACK_DAYS - 1L).toString());
         body.put("end_date", analysisDate.toString());
         if (official) {
             body.put("include_domains", domains);
@@ -336,13 +402,24 @@ public class NewsSearchClient {
             JSONObject item = results.getJSONObject(i);
             if (item == null) continue;
             Object source = item.get("source");
+            String url = value(item, "url", "link");
             String sourceName = source instanceof JSONObject object ? object.getString("name")
                     : source instanceof String name ? name : "";
+            if (sourceName == null || sourceName.isBlank()) sourceName = sourceHost(url);
             items.add(new NewsItem(item.getString("title"), value(item, "content", "snippet"),
-                    value(item, "url", "link"), sourceName,
+                    url, sourceName,
                     publicationDate(item), item.getDouble("score")));
         }
         return items;
+    }
+
+    private String sourceHost(String url) {
+        try {
+            String host = URI.create(url).getHost();
+            return host == null ? "" : host;
+        } catch (RuntimeException exception) {
+            return "";
+        }
     }
 
     private String publicationDate(JSONObject item) {
@@ -394,6 +471,7 @@ public class NewsSearchClient {
             String searchText = (stock + " " + query).trim();
             Embedding queryEmbedding = embeddingModel.embed(searchText).content();
             List<NewsItem> filtered = new ArrayList<>();
+            List<NewsItem> scored = new ArrayList<>();
             for (NewsItem item : items) {
                 String documentText = (item.title() + "\n" + item.summary()).trim();
                 if (documentText.isBlank()) {
@@ -401,11 +479,19 @@ public class NewsSearchClient {
                 }
                 Embedding documentEmbedding = embeddingModel.embed(documentText).content();
                 double score = cosine(queryEmbedding.vector(), documentEmbedding.vector());
+                scored.add(item.withRelevanceScore(score));
                 if (score >= relevanceThreshold) {
                     filtered.add(item.withRelevanceScore(score));
                 } else {
                     log.debug("过滤低相关度新闻, score: {}, threshold: {}", score, relevanceThreshold);
                 }
+            }
+            // 供应商检索本身已带股票/公司查询；语义模型分数只作排序，不允许因阈值偏高把结果清空。
+            if (filtered.isEmpty() && !scored.isEmpty()) {
+                filtered.addAll(scored.stream()
+                        .sorted(java.util.Comparator.comparing(NewsItem::relevanceScore).reversed())
+                        .limit(Math.min(3, scored.size())).toList());
+                log.info("新闻语义过滤无达标结果，保留最高分候选, fallbackCount={}", filtered.size());
             }
             log.info("新闻语义过滤完成, 原始结果: {}, 保留结果: {}, threshold: {}", items.size(), filtered.size(),
                     relevanceThreshold);

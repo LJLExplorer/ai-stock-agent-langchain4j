@@ -92,7 +92,11 @@ public class AgentExecutionService {
                             MDC.get("traceId"), sessionId, executionState.getExecutionId(),
                             executionState.getWorkflowStatus(), executionState.getTasks().size());
                     assistant = stockAnalysisAssistantWithoutTools;
-                    userMessage = userMessage + "\n【工作流分析结果】\n" + executionResults(executionState);
+                    if (executionState.getWorkflowStatus() == com.ljl.ai.workflow.WorkflowStatus.FAILED) {
+                        workflowAnswer = workflowFailureAnswer(executionState);
+                    } else {
+                        userMessage = userMessage + "\n【工作流分析结果】\n" + executionResults(executionState);
+                    }
                 } else {
                     assistant = agentConfig.buildAssistantForTools(
                             new LinkedHashSet<>(validatedPlan.toolNames()));
@@ -246,5 +250,18 @@ public class AgentExecutionService {
                 .map(task -> "- " + task.getTaskType() + "（" + task.getStatus() + "）："
                         + (task.getResult() == null ? task.getErrorMessage() : task.getResult()))
                 .collect(Collectors.joining("\n"));
+    }
+
+    /** 工作流已给出失败终态时直接返回受控说明，不能再绕过校验调用普通对话模型生成投资结论。 */
+    private String workflowFailureAnswer(ExecutionState state) {
+        String completed = state.getTasks().stream()
+                .filter(task -> task.getStatus() == com.ljl.ai.workflow.TaskStatus.COMPLETED)
+                .map(task -> task.getTaskType().name()).distinct()
+                .collect(Collectors.joining("、"));
+        return "## 分析未完成\n\n"
+                + "本次结构化投研未通过证据校验，因此没有生成买入或卖出结论。\n\n"
+                + "- 已完成任务：" + (completed.isBlank() ? "无" : completed) + "\n"
+                + "- 失败原因：" + StringUtils.defaultIfBlank(state.getErrorMessage(), "工具结果未通过校验") + "\n"
+                + "- 建议：检查下方工具明细，补充有效数据后重新执行。";
     }
 }

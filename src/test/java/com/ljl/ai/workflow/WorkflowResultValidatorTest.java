@@ -192,6 +192,19 @@ class WorkflowResultValidatorTest {
     }
 
     @Test
+    void reportsNewsSchemaFailuresWithFieldPaths() {
+        var state = state(StockAnalysisTask.NEWS_ANALYSIS);
+        task(state).setResult("[{\"title\":\"新闻\",\"summary\":\"\",\"url\":\"invalid\"}]");
+
+        var issues = reflector.reflect(state).issues();
+
+        assertThat(issues).extracting(WorkflowResultValidator.ValidationIssue::field)
+                .contains("result[0].summary", "result[0].source", "result[0].url");
+        assertThat(issues).extracting(WorkflowResultValidator.ValidationIssue::code)
+                .contains("REQUIRED_FIELD_MISSING", "SCHEMA_INVALID");
+    }
+
+    @Test
     void rejectsInventedNewsEvidenceAndNullSourceWithoutThrowing() {
         var state = state(StockAnalysisTask.NEWS_ANALYSIS);
         fact(state, object -> { object.put("value", "不属于该结果"); object.remove("sourceUrl"); });

@@ -14,6 +14,8 @@ import com.ljl.ai.research.ResearchConclusion;
 import com.ljl.ai.research.ResearchDecision;
 import com.ljl.ai.research.ResearchDecisionService;
 import com.ljl.ai.workflow.ExecutionState;
+import com.ljl.ai.workflow.ExecutionTask;
+import com.ljl.ai.workflow.WorkflowStatus;
 import com.ljl.ai.workflow.WorkflowRunner;
 import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
@@ -95,6 +97,21 @@ class AgentExecutionWorkflowTest {
     @Test
     void shouldExposeExecutionResumeEntryPoint() throws NoSuchMethodException {
         assertNotNull(WorkflowRunner.class.getMethod("resume", String.class));
+    }
+
+    @Test
+    void shouldRenderControlledAnswerForFailedWorkflow() {
+        AgentExecutionService service = new AgentExecutionService();
+        ExecutionTask task = ExecutionTask.pending("news", StockAnalysisTask.NEWS_ANALYSIS);
+        task.start();
+        task.fail("新闻证据过期");
+        ExecutionState state = ExecutionState.planned("execution", "session", "分析", List.of(task));
+        state.setWorkflowStatus(WorkflowStatus.FAILED);
+        state.setErrorMessage("STALE_EVIDENCE");
+
+        String answer = ReflectionTestUtils.invokeMethod(service, "workflowFailureAnswer", state);
+
+        assertThat(answer).contains("分析未完成", "STALE_EVIDENCE", "没有生成买入或卖出结论");
     }
 
     @Test

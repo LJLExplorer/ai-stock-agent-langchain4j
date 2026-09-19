@@ -4,6 +4,10 @@ services:
   mongodb:
     image: mongo:8.0.29-noble
     restart: unless-stopped
+    environment:
+      # Docker Desktop may expose Linux 6.19-7.0.13. Disable the affected
+      # per-CPU rseq path until its VM kernel includes the upstream fix.
+      GLIBC_TUNABLES: glibc.pthread.rseq=1
     ports:
       - "${MONGODB_PORT:-27017}:27017"
     volumes:
@@ -51,16 +55,16 @@ services:
       retries: 3
 
   minio:
-    image: minio/minio:RELEASE.2024-05-28T17-19-04Z
+    image: quay.io/minio/minio:RELEASE.2024-05-28T17-19-04Z
     restart: unless-stopped
     environment:
-      MINIO_ACCESS_KEY: ${MILVUS_MINIO_ACCESS_KEY:-minioadmin}
-      MINIO_SECRET_KEY: ${MILVUS_MINIO_SECRET_KEY:-minioadmin}
+      MINIO_ROOT_USER: ${MILVUS_MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MILVUS_MINIO_SECRET_KEY:-minioadmin}
     command: ["minio", "server", "/minio_data", "--console-address", ":9001"]
     volumes:
       - milvus-minio-data:/minio_data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: ["CMD", "mc", "ready", "local"]
       interval: 30s
       timeout: 20s
       retries: 3

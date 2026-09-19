@@ -74,8 +74,25 @@ memory:
   long-term:
     top-k: ${MEMORY_LONG_TERM_TOP_K:5}
     min-score: ${MEMORY_LONG_TERM_MIN_SCORE:0.72}
+    # 自动提取与核心偏好读取默认关闭；建议先仅开启 generate-enabled 审核候选。
+    generate-enabled: ${MEMORY_LONG_TERM_GENERATE_ENABLED:false}
+    model-extraction-enabled: ${MEMORY_LONG_TERM_MODEL_EXTRACTION_ENABLED:false}
+    model-max-input-chars: ${MEMORY_LONG_TERM_MODEL_MAX_INPUT_CHARS:1000}
+    read-enabled: ${MEMORY_LONG_TERM_READ_ENABLED:false}
+    read-user-allowlist: ${MEMORY_LONG_TERM_READ_USER_ALLOWLIST:}
+    core-preference-limit: ${MEMORY_LONG_TERM_CORE_PREFERENCE_LIMIT:6}
+    context-max-chars: ${MEMORY_LONG_TERM_CONTEXT_MAX_CHARS:4000}
+    job-batch-size: ${MEMORY_LONG_TERM_JOB_BATCH_SIZE:20}
+    job-lease-seconds: ${MEMORY_LONG_TERM_JOB_LEASE_SECONDS:60}
+    job-max-attempts: ${MEMORY_LONG_TERM_JOB_MAX_ATTEMPTS:3}
+    backfill-batch-size: ${MEMORY_LONG_TERM_BACKFILL_BATCH_SIZE:100}
+    vector-cleanup-poll-delay-ms: ${MEMORY_LONG_TERM_VECTOR_CLEANUP_POLL_DELAY_MS:60000}
+    vector-rebuild-poll-delay-ms: ${MEMORY_LONG_TERM_VECTOR_REBUILD_POLL_DELAY_MS:300000}
+    max-user-recall-candidates: ${MEMORY_LONG_TERM_MAX_USER_RECALL_CANDIDATES:200}
 
 agent:
+  news-recovery:
+    enabled: ${AGENT_NEWS_RECOVERY_ENABLED:false}
   tool:
     max-sequential-invocations: ${AGENT_TOOL_MAX_SEQUENTIAL_INVOCATIONS:10}
 

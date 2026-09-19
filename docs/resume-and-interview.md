@@ -87,6 +87,32 @@
 
 入口：[AgentExecutionService](../src/main/java/com/ljl/ai/service/AgentExecutionService.java)、[PlanValidator](../src/main/java/com/ljl/ai/planner/PlanValidator.java)。验证：[AgentExecutionPlannerTest](../src/test/java/com/ljl/ai/service/AgentExecutionPlannerTest.java)。
 
+### 3.1 Planner 输出是 OpenAI 规定的 Tool Calling 格式吗？
+
+不是。当前 Planner 只返回项目定义的候选计划 JSON，例如 `{"intent":"STOCK_ANALYSIS","symbol":"600519.SH","tasks":["MARKET_DATA"]}`；`AgentExecutionService` 将这个字符串解析为 `AgentPlan`，再交由 Java Validator 校验。它不含 OpenAI 工具调用中的 `tool_calls`、调用 ID、函数名和参数等协议字段。
+
+这个边界是有意设计的：Planner 不注册业务工具，只描述“要分析什么、需要哪些受限任务”；真正的工具权限、参数补全、执行顺序和重试策略都在后端工作流中确定。若直接把 Planner 的自由文本当成可执行指令，模型可能选到未授权工具、给出不完整参数或重复调用。
+
+入口：[AgentPlannerAssistant](../src/main/java/com/ljl/ai/agent/AgentPlannerAssistant.java)、[AgentExecutionService](../src/main/java/com/ljl/ai/service/AgentExecutionService.java)。
+
+### 3.2 那什么情况下应该使用原生 Tool Calling，什么情况下用业务计划？
+
+我按执行路径的确定性划分。简单、开放的问答适合让模型通过原生 Tool Calling 自主选择少量工具；协议层由模型适配器发送工具 Schema，模型返回工具名和 JSON 参数，应用执行后把结果回传模型，直到模型给出最终回答。
+
+股票标准分析的工具集合、数据时点、执行权限和失败处理较确定，因此采用“业务计划 + 后端工作流”更合适：模型或本地规则只给出 `symbol` 和任务枚举，Java 白名单校验后由状态图执行。这样可审计、可重试、可恢复，也不会把下单类等未来高风险工具暴露给模型自由选择。深度投研这类多阶段任务可混合使用：代码固定关键状态与审批边界，模型在受限节点内完成路由、总结或专用工具选择。
+
+这不是“工作流比 Agent 更先进”，而是按风险和确定性取舍：固定步骤用代码编排，开放步骤才交给模型决策。
+
+### 3.3 当前项目的工具调用是规范的 Tool Calling 吗？
+
+需要区分两条链路。通用对话降级路径中，`StockAnalysisAssistant` 通过 LangChain4j `@Tool` 注册 `getRealtimeQuote` 等方法；模型会依据工具定义选择调用，框架执行 Java 方法并回传结果。底层若配置为 OpenAI 或 OpenAI 兼容模型，LangChain4j 会适配为该提供商的原生 function/tool-calling 协议。这是标准的 LLM Tool Calling。
+
+而股票计划校验成功后，`WorkflowRunner` 会根据已批准的任务直接调用 `StockAnalysisTaskExecutor`。这不是模型返回的 `tool_call`，而是受控的后端服务调用；同样是规范设计，但术语上应称为“工作流工具执行”，不能称为 OpenAI Tool Calling。它有任务状态、幂等记录、重试和证据校验，因此更适合本项目的核心投研链路。
+
+面试中可以概括为：**“普通开放问题保留模型原生 Tool Calling；股票分析主路径使用 Planner + Validator + Workflow，将工具执行权收回到后端。”** 观测上应记录调用来源（例如 `LLM_TOOL_CALL` 或 `WORKFLOW`），避免把两类执行混在同一条指标里。
+
+入口：[AgentConfig](../src/main/java/com/ljl/ai/agent/AgentConfig.java)、[StockAnalysisTaskNode](../src/main/java/com/ljl/ai/workflow/StockAnalysisTaskNode.java)。
+
 ### 4. 为什么引入状态图，直接写几个 if/else 不行吗？
 
 固定的一次性调用用普通方法就可以。这个项目有并行任务、问题任务重试、证据检查、标准/深度分支和检查点恢复，需要显式保存“已经完成什么、为什么重试、下一步去哪”。状态图把这些状态与路由集中表达，也让节点可以独立验证。
@@ -185,6 +211,12 @@ EvidencePack 先将结构化指标和来源映射为 FinancialFact，保存 evid
 
 入口：[NewsSearchClient](../src/main/java/com/ljl/ai/client/NewsSearchClient.java)。验证：[NewsSearchClientTest](../src/test/java/com/ljl/ai/client/NewsSearchClientTest.java)。流程：[工具与证据质量说明](tool-execution-and-evidence-quality.md)。
 
+### 15.1 新闻返回类型不对时，是把错误原样交给模型重试吗？
+
+不是。协议边界先剔除缺标题、摘要、来源或合法链接的候选；如果持久化快照仍不合法，`WorkflowResultValidator` 产生 `result[i].field` 级问题。恢复开关关闭时沿用有限确定性重试；开启后，`NewsRecoveryAdvisor` 只看到原查询、当前窗口和结构化问题，只能返回调整关键词、缩短窗口、只查官方公告或资料不足。
+
+模型建议不是工具调用指令。Java 会校验动作白名单、查询长度、1～30 天范围、窗口确实缩短以及参数没有重复；非法 JSON、越界值、重复建议或模型异常会转为 `INSUFFICIENT_DATA`，停止机械重试。这样保留模型对检索策略的判断能力，同时不让模型放宽 Schema 或自行扩张工具权限。
+
 ### 16. 深度投研是自由协作的 Multi-Agent 吗？
 
 它采用固定、有界的角色编排。根据证据范围选择适用的基本面、技术面和新闻角色，再结合看多、看空、风险视角；角色并行生成独立意见，按预定顺序收集后交给单次 Judge。每个角色最多调用一次，共享同一个证据包，不挂载工具和会话记忆。
@@ -251,6 +283,22 @@ MongoDB 保存业务消息、文档元数据、执行快照和决策；Redis 保
 
 入口：[KnowledgeIngestionService](../src/main/java/com/ljl/ai/knowledge/KnowledgeIngestionService.java)、[KnowledgeService](../src/main/java/com/ljl/ai/knowledge/KnowledgeService.java)、[LongTermMemoryService](../src/main/java/com/ljl/ai/service/LongTermMemoryService.java)。
 
+### 24. 长期记忆如何避免旧偏好复活或多实例并发覆盖？
+
+用户消息先持久化，再以 user/session/message 幂等键进入 MongoDB 任务队列。worker 使用租约领取；会话已删除或归属变化时直接结束。候选携带原文证据和落盘时间，当前偏好槽位按用户和规范化维度条件更新，较旧来源不能取得发布权；历史记录保留替代关系和来源，删除会撤销会话来源。MongoDB 是读取事实来源，向量删除失败有补偿任务，缺失向量只对仍有效的记录补建。
+
+模型提取受独立开关控制，输出必须通过类型、原文证据和用户归属校验。读取可按用户名单灰度；运行时检查任务积压、重试/死信、候选状态和向量补偿，离线固定样本覆盖长期偏好、临时要求和问句。可以说这些机制降低了错误记忆进入上下文的风险，不能在没有标注集和线上数据时宣称准确率或延迟提升。
+
+入口：[LongTermMemoryService](../src/main/java/com/ljl/ai/service/LongTermMemoryService.java)、[MemoryJobWorker](../src/main/java/com/ljl/ai/service/MemoryJobWorker.java)。验证：[MemoryEvaluationTest](../src/test/java/com/ljl/ai/eval/MemoryEvaluationTest.java)、[UserMemoryConsolidationTest](../src/test/java/com/ljl/ai/service/UserMemoryConsolidationTest.java)。
+
+### 25. 工具能并行调用吗？多个用户会排队等候吗？
+
+深度投研中技术面、基本面、新闻和风险等没有数据依赖的工具分支可以并行执行，完成后再汇合并提交一次执行状态。这样不会让四个分支各自覆盖完整 MongoDB 快照；测试验证的是分支确实重叠执行，以及汇合后的结果完整性，不据此宣称固定的延迟收益。
+
+对话入口则按会话串行：单个进程内以 `sessionId` 维护锁，同一用户的同一会话后续请求会等待前一轮完成，避免 Redis 窗口、话题状态和持久化消息交错。不同用户、或同一用户的不同会话没有共享锁，可以并行处理。当前不是全局持久队列，也没有跨实例分布式会话锁；多实例部署时需要 Redis 锁或按 `sessionId` 路由到固定消费者，外部工具并发还要受线程池、供应商限流和超时约束。
+
+入口：[ChatService](../src/main/java/com/ljl/ai/service/ChatService.java)、[StockAnalysisWorkflow](../src/main/java/com/ljl/ai/workflow/StockAnalysisWorkflow.java)。验证：[ChatServiceOrchestrationTest](../src/test/java/com/ljl/ai/service/ChatServiceOrchestrationTest.java)、[StockAnalysisWorkflowTest](../src/test/java/com/ljl/ai/workflow/StockAnalysisWorkflowTest.java)。
+
 ## 排障、验证与设计取舍
 
 ### 24. 模型回答不符合预期，你怎么排查？
@@ -286,6 +334,26 @@ MongoDB 保存业务消息、文档元数据、执行快照和决策；Redis 保
 可以选“并行执行后的可信恢复”来讲：分支不能修改共享状态，所以使用只读输入与 taskId 增量；分支不分别覆盖快照，而在汇合点 CAS 保存；工具成功但汇合前崩溃时，用工具记录恢复；恢复后还要重新校验当前证据，不能只信已完成状态。这条链路同时涉及并发、持久化、失败语义和模型输入边界。
 
 下一步按需求排序：先建立真实标注集与延迟/成本基线，再评估重排、摘要质量和数据源覆盖；需要部署扩容时，再引入认证、分布式调度、持久事件流和对账。不要把增加模型角色数量当作效果改善的直接证据。
+
+### 28. AI 应用上线后，你怎么判断应用的好坏？
+
+我不会只看模型回答是否“像人”，而是先从业务目标倒推指标，并同时观察质量、可靠性、效率和安全性。上线前用固定标注集建立基线，覆盖正常请求、边界问题和故障场景；上线后通过灰度和版本对照持续监控，避免只看平均值。
+
+质量层面按任务拆指标：检索看 Recall@K、有效来源覆盖和上下文命中；规划看合法计划率、工具选择与参数正确率；生成看事实正确率、引用准确率、任务完成率和人工采纳率。股票研究场景还要检查时点是否越界、证据是否支持结论，不能把语言流畅度当成答案正确率。
+
+工程层面看请求成功率、降级率、超时率、P50/P95 延迟、单请求 Token 与外部工具成本，以及重试、队列积压和供应商错误分布。安全层面关注越权工具调用、提示注入、敏感信息泄露和不可追溯回答。最终仍要结合业务指标，例如用户是否完成分析、是否重复追问或人工纠错；业务指标变差时，再通过 traceId 下钻到检索、工具、模型和后处理定位原因。
+
+这个项目当前已有离线契约测试、结构化证据校验、链路日志和降级状态，可证明关键边界是否工作；但还没有足够线上样本，不能直接宣称模型准确率或业务收益。完整上线方案还应补充人工标注集、线上反馈闭环、模型/Prompt 版本记录和灰度回滚阈值。
+
+### 29. 怎么保证 AI 生成代码的模块化程度？
+
+不能靠一句“请生成模块化代码”的 Prompt 保证，而要把模块边界变成模型必须遵守、工具可以检查的约束。我会先给出目录、分层职责、接口契约、依赖方向和禁止项，让 AI 先提出变更计划，再按小任务逐个实现；每个任务只允许修改明确范围，并要求通过现有测试和静态检查。
+
+设计上重点控制四件事：按业务能力和变化原因拆模块；通过接口或明确 DTO 传递数据，避免共享可变状态；依赖只能由上层指向稳定抽象，禁止跨层直接访问存储或基础设施；把配置、模型调用和外部 API 隔离在适配层，使领域逻辑可以脱离真实模型测试。生成后再用代码评审检查类是否职责过多、参数是否泄漏内部结构、是否出现循环依赖、重复逻辑和为了复用而过度抽象。
+
+在这个项目里，`ChatService` 只负责协调，上下文、执行、响应组装和持久化分别由独立服务承担；工作流节点通过不可变状态和字段明确的对象传递结果；模型接口、工具客户端和存储实现也有独立边界。测试按模块验证契约和失败语义，因此 AI 即使生成了能运行的代码，只要违反依赖方向、扩大修改范围或破坏测试，也不会被合并。
+
+面试中可以概括为：**“AI 负责加速实现，模块化由人定义边界，再由接口、目录、测试、静态规则和代码评审共同兜底。”** 模块数量多不等于模块化好，最终要看职责是否单一、依赖是否清晰、变更能否局部完成以及模块能否独立测试。
 
 ## 表述边界速查
 

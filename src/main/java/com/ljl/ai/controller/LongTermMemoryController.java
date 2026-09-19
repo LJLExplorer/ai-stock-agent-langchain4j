@@ -1,6 +1,7 @@
 package com.ljl.ai.controller;
 
 import com.ljl.ai.model.dto.LongTermMemoryRequest;
+import com.ljl.ai.model.dto.LongTermMemoryUpdateRequest;
 import com.ljl.ai.model.entity.UserLongTermMemory;
 import com.ljl.ai.service.LongTermMemoryService;
 import jakarta.validation.Valid;
@@ -14,6 +15,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.PutMapping;
 
 import java.util.List;
 import java.util.Map;
@@ -37,6 +39,12 @@ public class LongTermMemoryController {
     @GetMapping("/recall")
     public List<UserLongTermMemory> recall(@RequestParam String userId, @RequestParam String query) {
         return service.recall(userId, query);
+    }
+
+    @PutMapping("/{memoryId}")
+    public UserLongTermMemory update(@PathVariable String memoryId,
+                                     @Valid @RequestBody LongTermMemoryUpdateRequest request) {
+        return service.update(request.getUserId(), memoryId, request.getContent(), request.getTags());
     }
 
     @DeleteMapping("/{memoryId}")

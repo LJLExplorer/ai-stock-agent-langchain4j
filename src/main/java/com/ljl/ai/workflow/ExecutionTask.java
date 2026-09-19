@@ -26,6 +26,10 @@ public class ExecutionTask {
     /** 本次成功结果的证据；历史证据仅供审计，不能替本次结果通过校验。 */
     private List<FinancialFact> currentEvidence = new ArrayList<>();
     private String errorMessage;
+    /** 新闻协议失败后的受限恢复参数，随执行状态持久化。 */
+    private String recoveryQuery;
+    private Integer newsWindowDays;
+    private boolean newsOfficialOnly;
     private LocalDateTime startedAt;
     private LocalDateTime completedAt;
 
