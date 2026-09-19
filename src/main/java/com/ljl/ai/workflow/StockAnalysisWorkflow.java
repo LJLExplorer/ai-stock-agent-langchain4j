@@ -307,6 +307,14 @@ public class StockAnalysisWorkflow {
         Map<String, Object> tasks = new LinkedHashMap<>();
         for (ExecutionTask task : state.taskSnapshots()) {
             if (decision.retryTaskIds().contains(task.getTaskId())) {
+                WorkflowReflector.RecoveryDirective directive = decision.recoveryDirectives().get(task.getTaskId());
+                if (directive != null) {
+                    task.setRecoveryQuery(directive.query());
+                    task.setNewsWindowDays(directive.days());
+                    task.setNewsOfficialOnly(directive.officialOnly());
+                    log.info("news_recovery_applied executionId={}, taskId={}, days={}, officialOnly={}",
+                            state.executionId(), task.getTaskId(), directive.days(), directive.officialOnly());
+                }
                 task.retry(decision.reason());
                 tasks.put(task.getTaskId(), task);
             }

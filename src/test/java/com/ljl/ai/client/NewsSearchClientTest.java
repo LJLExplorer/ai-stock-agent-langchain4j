@@ -45,8 +45,8 @@ class NewsSearchClientTest {
         LocalDate date = LocalDate.of(2026, 9, 6);
         var results = client.searchWithRetries((query, limit, official) -> {
             searches.add(official);
-            if (official) return List.of(new NewsSearchClient.NewsItem("贵州茅台2025年年度报告", "公司经营数据",
-                    "https://www.moutai.com.cn/report.html", "贵州茅台官网", "Fri, 17 Apr 2026 08:00:00 GMT"));
+            if (official) return List.of(new NewsSearchClient.NewsItem("贵州茅台临时公告", "公司经营数据",
+                    "https://www.moutai.com.cn/report.html", "贵州茅台官网", "Thu, 20 Aug 2026 08:00:00 GMT"));
             return List.of(
                     new NewsSearchClient.NewsItem("贵州茅台新闻一", "摘要", "https://example.test/1", "媒体", "2026-09-04"),
                     new NewsSearchClient.NewsItem("贵州茅台新闻二", "摘要", "https://example.test/2", "媒体", "2026-09-04"),
@@ -69,10 +69,24 @@ class NewsSearchClientTest {
                 new NewsSearchClient.NewsItem("600519 报告", "摘要", "https://sse.com.cn.evil.test/report", "伪官网", "2026-04-17"),
                 new NewsSearchClient.NewsItem("600519 报告", "摘要", "https://www.sse.com.cn/report", "上交所", "2027-04-17"),
                 new NewsSearchClient.NewsItem("600519 报告", "摘要", "https://www.sse.com.cn/undated", "上交所", null),
-                new NewsSearchClient.NewsItem("600519 报告", "摘要", "https://www.sse.com.cn/valid", "上交所", "2026-04-17")) : List.of(),
+                new NewsSearchClient.NewsItem("600519 报告", "摘要", "https://www.sse.com.cn/valid", "上交所", "2026-08-17")) : List.of(),
                 List.of("600519"), "报告", 5, LocalDate.of(2026, 9, 6), 30, client.officialDomains("600519.SH"));
         assertEquals(List.of("https://www.sse.com.cn/valid"), results.stream().map(NewsSearchClient.NewsItem::url).toList());
         org.mockito.Mockito.verify(embedding, org.mockito.Mockito.never()).embed(any(String.class));
+    }
+
+    @Test
+    void shouldUseUrlHostWhenProviderOmitsSourceName() {
+        NewsSearchClient client = new NewsSearchClient();
+        var raw = com.alibaba.fastjson2.JSON.parseArray("""
+                [{"title":"贵州茅台公告","content":"摘要","url":"https://finance.example.com/news/1",
+                  "published_date":"2026-09-04"}]
+                """);
+
+        @SuppressWarnings("unchecked")
+        List<NewsSearchClient.NewsItem> items = ReflectionTestUtils.invokeMethod(client, "parseResults", raw);
+
+        assertEquals("finance.example.com", items.getFirst().source());
     }
 
     @Test

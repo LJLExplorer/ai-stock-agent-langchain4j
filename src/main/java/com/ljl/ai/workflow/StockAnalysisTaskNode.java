@@ -84,13 +84,13 @@ public class StockAnalysisTaskNode {
                 state.getExecutionId(), task.getTaskId(), task.getTaskType().toolName(), symbol,
                 state.getOriginalQuestion() == null ? 0 : state.getOriginalQuestion().length(), "latest", task.getAttempts());
         try {
-            ToolResult<?> result = state.getAnalysisContext() == null
-                    ? executor.execute(task.getTaskType(), symbol, state.getOriginalQuestion(), "latest")
-                    : executor.executeWithContext(task.getTaskType(), state.getAnalysisContext(),
-                    state.getOriginalQuestion(), "latest");
+            String query = task.getRecoveryQuery() == null ? state.getOriginalQuestion() : task.getRecoveryQuery();
+            int newsDays = task.getNewsWindowDays() == null ? 30 : task.getNewsWindowDays();
+            ToolResult<?> result = executeTask(state, task, symbol, query, newsDays);
             log.info("tool_execution_finished executionId={}, taskId={}, tool={}, success={}, elapsedMs={}, errorCode={}",
                     state.getExecutionId(), task.getTaskId(), task.getTaskType().toolName(), result.isSuccess(),
                     elapsedMillis(started), result.getErrorCode());
+            logToolResult(state, task, 0, result);
             if (result.isSuccess()) {
                 var evidence = evidencePackBuilder.map(task.getTaskType(), result.getData(), evidenceContext(state));
                 task.complete(JSON.toJSONString(result.getData()), evidence);
@@ -178,13 +178,13 @@ public class StockAnalysisTaskNode {
         log.info("tool_execution_started executionId={}, taskId={}, tool={}, symbol={}, queryLength={}, period={}, attempt={}",
                 state.getExecutionId(), task.getTaskId(), task.getTaskType().toolName(), symbol,
                 state.getOriginalQuestion() == null ? 0 : state.getOriginalQuestion().length(), "latest", attempt);
-        ToolResult<?> result = state.getAnalysisContext() == null
-                ? executor.execute(task.getTaskType(), symbol, state.getOriginalQuestion(), "latest")
-                : executor.executeWithContext(task.getTaskType(), state.getAnalysisContext(),
-                state.getOriginalQuestion(), "latest");
+        String query = task.getRecoveryQuery() == null ? state.getOriginalQuestion() : task.getRecoveryQuery();
+        int newsDays = task.getNewsWindowDays() == null ? 30 : task.getNewsWindowDays();
+        ToolResult<?> result = executeTask(state, task, symbol, query, newsDays);
         log.info("tool_execution_finished executionId={}, taskId={}, tool={}, success={}, elapsedMs={}, errorCode={}",
                 state.getExecutionId(), task.getTaskId(), task.getTaskType().toolName(), result.isSuccess(),
                 elapsedMillis(started), result.getErrorCode());
+        logToolResult(state, task, attempt, result);
         if (!result.isSuccess()) {
             ToolExecutionRecord failed = toolExecutionStore.fail(
                     state.getExecutionId(), task.getTaskId(), attempt, result.getErrorMessage());
@@ -214,6 +214,21 @@ public class StockAnalysisTaskNode {
         refreshEvidencePack(state);
         log.info("tool_execution_reused executionId={}, taskId={}, attempt={}",
                 state.getExecutionId(), task.getTaskId(), record.attempt());
+    }
+
+    /** 只有新闻恢复需要覆盖时间窗；其他任务继续走原入口，保持调用和测试兼容。 */
+    private ToolResult<?> executeTask(ExecutionState state, ExecutionTask task, String symbol,
+                                      String query, int newsDays) {
+        boolean news = task.getTaskType() == StockAnalysisTask.NEWS_ANALYSIS;
+        if (state.getAnalysisContext() == null) {
+            return news
+                    ? executor.execute(task.getTaskType(), symbol, query, "latest", newsDays, task.isNewsOfficialOnly())
+                    : executor.execute(task.getTaskType(), symbol, query, "latest");
+        }
+        return news
+                ? executor.executeWithContext(task.getTaskType(), state.getAnalysisContext(), query, "latest", newsDays,
+                task.isNewsOfficialOnly())
+                : executor.executeWithContext(task.getTaskType(), state.getAnalysisContext(), query, "latest");
     }
 
     private void handleRecordedFailure(ExecutionState state, ExecutionTask task, int attempt, Exception exception) {
@@ -251,6 +266,26 @@ public class StockAnalysisTaskNode {
 
     private long elapsedMillis(long started) {
         return Math.max(0L, (System.nanoTime() - started) / 1_000_000L);
+    }
+
+    /** 记录工具真实返回值的有限长度快照，便于区分 API 无结果、过滤丢弃和证据校验失败。 */
+    private void logToolResult(ExecutionState state, ExecutionTask task, int attempt, ToolResult<?> result) {
+        String payload;
+        try {
+            payload = JSON.toJSONString(result == null ? null : result.getData());
+        } catch (RuntimeException exception) {
+            payload = "<serialize_failed:" + exception.getClass().getSimpleName() + ">";
+        }
+        if (payload == null) payload = "null";
+        int maxLength = 12000;
+        String snapshot = payload.length() <= maxLength ? payload : payload.substring(0, maxLength) + "...(truncated)";
+        log.info("tool_execution_result executionId={}, taskId={}, tool={}, attempt={}, success={}, "
+                        + "dataType={}, dataLength={}, errorCode={}, errorMessage={}, data={}",
+                state.getExecutionId(), task.getTaskId(), task.getTaskType().toolName(), attempt,
+                result != null && result.isSuccess(), result == null || result.getData() == null
+                        ? "null" : result.getData().getClass().getSimpleName(), payload.length(),
+                result == null ? null : result.getErrorCode(),
+                result == null ? null : result.getErrorMessage(), snapshot);
     }
 
     private void publishTool(ExecutionState state, ExecutionTask task,

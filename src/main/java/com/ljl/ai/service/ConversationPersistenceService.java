@@ -17,6 +17,7 @@ import com.ljl.ai.workflow.ExecutionState;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -45,6 +46,12 @@ public class ConversationPersistenceService {
 
     @Resource
     private ResearchDecisionService researchDecisionService;
+
+    @Autowired(required = false)
+    private MemoryJobService memoryJobService;
+
+    @Autowired(required = false)
+    private LongTermMemoryService longTermMemoryService;
 
     /** 同步请求允许获取或创建会话；异步研究必须继续使用接单时绑定且仍可访问的会话。 */
     public ChatSession resolveSession(ChatRequest request, String preallocatedExecutionId) {
@@ -91,7 +98,7 @@ public class ConversationPersistenceService {
         String modelMemoryId = context.modelMemoryId();
         String aiResponse = response.answer();
         List<KnowledgeSource> knowledgeSources = response.knowledgeSources();
-        chatMemoryService.saveUserMessage(sessionId, originalUserMessage);
+        ChatMessage userMessage = chatMemoryService.saveUserMessage(sessionId, originalUserMessage);
         ChatMessage assistantMessage = chatMemoryService.saveAssistantMessage(sessionId, aiResponse, knowledgeSources);
         if (assistantMessage == null) {
             log.warn("保存助手消息失败, sessionId: {}", sessionId);
@@ -117,7 +124,26 @@ public class ConversationPersistenceService {
                 : originalUserMessage;
         chatMemoryService.updateSessionTitle(sessionId, title);
 
+        submitMemoryExtraction(sessionId, userMessage);
+
         return assistantMessage != null ? assistantMessage.getMessageId() : UUID.randomUUID().toString();
+    }
+
+    /** 用户原文先成功落盘再异步提交提取，任务失败不影响本轮已完成回答。 */
+    private void submitMemoryExtraction(String sessionId, ChatMessage userMessage) {
+        if (memoryJobService == null || userMessage == null) {
+            return;
+        }
+        try {
+            ChatSession session = chatMemoryService.getSession(sessionId);
+            if (session != null && StringUtils.isNotBlank(session.getUserId())) {
+                memoryJobService.enqueue(session.getUserId(), sessionId, userMessage.getMessageId(),
+                        userMessage.getContent(), userMessage.getCreateTime());
+            }
+        } catch (RuntimeException exception) {
+            log.warn("memory_extraction_submit_failed sessionId={}, errorType={}", sessionId,
+                    exception.getClass().getSimpleName());
+        }
     }
 
     /** 仅在助手消息已保存且深度结论有效时记录决策，避免把失败结论纳入后续复盘。 */
@@ -173,6 +199,9 @@ public class ConversationPersistenceService {
             throw new SecurityException("无权访问该会话");
         }
         String memoryId = memoryId(userId, sessionId);
+        if (longTermMemoryService != null) {
+            longTermMemoryService.revokeSessionSources(userId, sessionId);
+        }
         List<String> modelMemoryIds = conversationTopicStore == null
                 ? List.of(memoryId) : conversationTopicStore.modelMemoryIds(memoryId);
         for (String modelMemoryId : modelMemoryIds) {

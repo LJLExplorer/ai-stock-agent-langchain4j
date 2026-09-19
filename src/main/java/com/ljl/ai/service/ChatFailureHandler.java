@@ -56,6 +56,8 @@ public class ChatFailureHandler {
                     + (memoryCleared
                     ? "已重置本次会话的对话上下文，请换一种更具体的问法重新提问（例如明确股票代码或分析维度）。"
                     : "暂时无法清理本次会话的对话上下文，请稍后新建会话再试。");
+        } else if (hasMessage(e, "模型已停用") || hasMessage(e, "model has been disabled")) {
+            content = "当前配置的对话模型已停用，请更换 OPENAI_MODEL_NAME 后重试。";
         }
 
         return ChatResponse.builder()

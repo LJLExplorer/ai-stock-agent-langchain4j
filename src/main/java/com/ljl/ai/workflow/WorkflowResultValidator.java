@@ -187,13 +187,22 @@ public class WorkflowResultValidator {
                     return LocalDateTime.parse(stringField(quote, "timestamp").replace(' ', 'T')).toLocalDate();
                 }
                 case NEWS_ANALYSIS -> {
-                    if (!(payload instanceof JSONArray news)) throw new IllegalArgumentException("新闻必须是数组");
-                    for (Object item : news) {
-                        if (!(item instanceof JSONObject article) || !text(stringField(article, "title"))
-                                || !text(stringField(article, "summary")) || !httpUrl(stringField(article, "url"))
-                                || !text(stringField(article, "source"))) {
-                            throw new IllegalArgumentException("新闻必填字段缺失");
+                    if (!(payload instanceof JSONArray news)) {
+                        issues.add(issue(task, "SCHEMA_INVALID", "result", "新闻结果必须是数组"));
+                        return null;
+                    }
+                    for (int index = 0; index < news.size(); index++) {
+                        Object item = news.get(index);
+                        if (!(item instanceof JSONObject article)) {
+                            issues.add(issue(task, "SCHEMA_INVALID", "result[" + index + "]", "新闻条目必须是对象"));
+                            continue;
                         }
+                        for (String field : List.of("title", "summary", "source")) {
+                            if (!text(article.getString(field))) issues.add(issue(task, "REQUIRED_FIELD_MISSING",
+                                    "result[" + index + "]." + field, "新闻必填字段为空"));
+                        }
+                        if (!httpUrl(article.getString("url"))) issues.add(issue(task, "SCHEMA_INVALID",
+                                "result[" + index + "].url", "新闻链接必须是 HTTP(S) URL"));
                     }
                 }
                 case TECHNICAL_ANALYSIS, FINANCIAL_ANALYSIS -> {

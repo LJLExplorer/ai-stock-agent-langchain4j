@@ -256,7 +256,7 @@ Dense 处理语义近似，BM25 补充股票代码、公司名、指标名等精
 | `StockComparisonTool` | 多股票比较 |
 | `PortfolioAnalysisTool` | 组合收益、分布与集中度分析 |
 
-新闻搜索同时尝试媒体和官方披露，校验主体、类型、来源域名和发布时间。配置发行人目录时可提取报告入口与披露日期；发现 PDF 链接不代表已读取全文或核对财务指标。来源配置与搜索流程见 [工具与证据质量说明](docs/tool-execution-and-evidence-quality.md)。
+新闻搜索同时尝试媒体和官方披露，校验主体、类型、来源域名和发布时间。`NewsRagTool` 返回前会剔除标题、摘要、来源或 HTTP(S) 链接不完整的候选，工作流校验会保留 `result[i].field` 级错误。设置 `AGENT_NEWS_RECOVERY_ENABLED=true` 后，模型只能建议调整关键词、缩短 1～30 天窗口、切换官方公告或结束为资料不足；服务端校验动作并拒绝相同参数重试。配置发行人目录时可提取报告入口与披露日期；发现 PDF 链接不代表已读取全文或核对财务指标。来源配置与搜索流程见 [工具与证据质量说明](docs/tool-execution-and-evidence-quality.md)。
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
@@ -316,9 +316,14 @@ docker compose config --quiet
 | 恢复与幂等 | `WorkflowRunnerTest`、`MongoExecutionStateStoreTest`、`MongoToolExecutionStoreTest` |
 | 结构化结果与恢复后的证据边界 | `WorkflowResultValidatorTest`、`StructuredToolWorkflowTest`、`WorkflowEvidenceBoundaryTest` |
 | 检索与记忆 | `RetrievalServiceTest`、`ConversationQueryRewriteTest`、`ShortTermSummaryServiceTest` |
+| 长期记忆演进 | `MemoryEvaluationTest`、`UserMemoryConsolidationTest`、`MemoryJobWorkerTest`、`MemoryBackfillServiceTest` |
 | 输出与深度投研 | `ClaimEvidenceGuardTest`、`WorkflowAnswerGeneratorTest`、`DeepResearchServiceTest` |
 
 离线 Agent Eval 使用 5 个固定样本与确定性适配器，保护规划、话题、检索、证据和恢复契约。它是回归基线，不代表真实模型准确率或投资收益；并行测试验证任务重叠执行与结果完整性，也不能代替线上延迟基准。
+
+最近一次本地 `mvn test` 通过率为 **100%**（无失败、无错误；跳过的显式外部依赖用例不计入通过率）。长期记忆另有 5 条固定边界样本，覆盖长期偏好、临时要求和问句；开启模型提取后应以人工标注集继续统计误提与漏提。
+
+长期记忆采用“MongoDB 事实记录 + 向量可重建索引”：用户消息进入持久任务队列，租约 worker 负责候选提取；当前偏好以原子槽位按来源时间发布，删除会撤销来源并通过补偿任务清理向量。读取支持用户范围排序、上下文预算、名单灰度和模型提取开关。运行时可从 `memory_processing_jobs`、`user_memory_candidates`、`memory_vector_cleanup_tasks` 和 worker 日志观察积压、重试、死信、候选结果与向量补偿；日志仅输出标识、状态和错误类别。
 
 ## 项目结构与阅读入口
 

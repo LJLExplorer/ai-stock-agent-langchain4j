@@ -1,6 +1,7 @@
 package com.ljl.ai.research;
 
 import com.alibaba.fastjson2.JSON;
+import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 import com.ljl.ai.agent.DeepResearchAssistant;
 import com.ljl.ai.observability.RunEvent;
@@ -257,6 +258,8 @@ public class DeepResearchService {
         } catch (JudgeValidationException exception) {
             throw exception;
         } catch (RuntimeException exception) {
+            log.warn("deep_research_judge_json_parse_failed errorType={}, message={}",
+                    exception.getClass().getSimpleName(), exception.getMessage());
             throw new JudgeValidationException("JUDGE_INVALID_JSON", exception);
         }
         if (json == null) {
@@ -337,8 +340,16 @@ public class DeepResearchService {
     }
 
     private List<String> stringList(JSONObject json, String key) {
-        List<String> values = json.getList(key, String.class);
-        return values == null ? List.of() : List.copyOf(values);
+        JSONArray values = json.getJSONArray(key);
+        if (values == null) return List.of();
+        List<String> result = new ArrayList<>(values.size());
+        for (Object item : values) {
+            if (!(item instanceof String text) || text.isBlank()) {
+                throw new IllegalArgumentException(key + " 必须是非空字符串数组");
+            }
+            result.add(text);
+        }
+        return List.copyOf(result);
     }
 
     private String extractJson(String raw) {
@@ -351,6 +362,7 @@ public class DeepResearchService {
         if (start < 0 || end < start) {
             throw new JudgeValidationException("JUDGE_MISSING_JSON_OBJECT");
         }
+        // 兼容模型偶尔返回的 ```json ... ``` 包裹，只将对象本身交给解析器。
         return value.substring(start, end + 1);
     }
 

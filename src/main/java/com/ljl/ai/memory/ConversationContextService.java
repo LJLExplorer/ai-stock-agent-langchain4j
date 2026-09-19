@@ -10,6 +10,7 @@ import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.MDC;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -52,6 +53,9 @@ public class ConversationContextService {
 
     @Resource
     private LongTermMemoryService longTermMemoryService;
+
+    @Autowired(required = false)
+    private MemoryContextAssembler memoryContextAssembler;
 
     /** 截取最近的非空业务消息，并限制文本长度，供模型补全追问中的主语与时间范围。 */
     public String buildRewriteContext(List<ChatMessage> history) {
@@ -239,13 +243,10 @@ public class ConversationContextService {
             sections.add("【当前话题历史摘要】\n" + summary);
         }
         try {
-            List<UserLongTermMemory> memories =
-                    longTermMemoryService.recall(userId, query);
-            if (memories != null && !memories.isEmpty()) {
-                sections.add("【用户长期记忆】\n" + memories.stream()
-                        .map(memory -> "- " + memory.getContent())
-                        .collect(Collectors.joining("\n")));
-            }
+            List<UserLongTermMemory> core = longTermMemoryService.corePreferences(userId);
+            List<UserLongTermMemory> memories = longTermMemoryService.recall(userId, query);
+            String longTermContext = renderLongTermMemoryContext(core, memories);
+            if (StringUtils.isNotBlank(longTermContext)) sections.add(longTermContext);
         } catch (IllegalArgumentException e) {
             log.warn("长期记忆召回参数非法, errorType={}", e.getClass().getSimpleName());
         } catch (RuntimeException e) {
@@ -256,6 +257,22 @@ public class ConversationContextService {
                     e.getClass().getSimpleName());
         }
         return String.join("\n\n", sections);
+    }
+
+    /** 兼容旧测试夹具未装配 assembler 的情形，同时让正式路径统一施加记忆预算。 */
+    private String renderLongTermMemoryContext(List<UserLongTermMemory> core, List<UserLongTermMemory> related) {
+        if (memoryContextAssembler != null) {
+            return memoryContextAssembler.assemble(core == null ? List.of() : core,
+                    related == null ? List.of() : related);
+        }
+        List<UserLongTermMemory> values = new ArrayList<>();
+        if (core != null) values.addAll(core);
+        if (related != null) values.addAll(related);
+        if (values.isEmpty()) return "";
+        return "【用户长期记忆】\n" + values.stream()
+                .filter(java.util.Objects::nonNull)
+                .map(memory -> "- " + memory.getContent())
+                .collect(Collectors.joining("\n"));
     }
 
     private ConversationQuery parseResolvedQuery(String raw,
